@@ -1,12 +1,13 @@
 """헬퍼 유틸리티 함수"""
-from typing import Optional
+from typing import Optional, Union, List
 import aiohttp
 import logging
+from fastapi import UploadFile
 from fastapi import HTTPException
 from config.settings import (
     API_BASE_URL, VIA_SERVER_URL, VIA_MODEL_TIMEOUT,
-    OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, DEFAULT_NUM_FRAMES_PER_CHUNK,
-    DEFAULT_SUMMARIZE_PROMPT, DEFAULT_QUERY_TIMESTAMP_SUFFIX,
+    OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TRANSLATION_MODEL, OLLAMA_TIMEOUT, DEFAULT_NUM_FRAMES_PER_CHUNK,
+    DEFAULT_SUMMARIZE_PROMPT,
     DEFAULT_VIA_TARGET_RESPONSE_TIME, DEFAULT_VIA_TARGET_USECASE_EVENT_DURATION,
     DEFAULT_FRAME_WIDTH, DEFAULT_FRAME_HEIGHT, DEFAULT_TOP_K, DEFAULT_TOP_P,
     DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_SEED, DEFAULT_BATCH_SIZE,
@@ -81,7 +82,6 @@ def build_file_url(file_url: str) -> str:
 
 async def create_summarize_prompt(user_prompt: str) -> str:
     logger.info(f"user_prompt: {user_prompt}")
-    logger.info(f"DEFAULT_SUMMARIZE_PROMPT: {DEFAULT_SUMMARIZE_PROMPT}")
     """
     Ollama를 사용하여 요약 프롬프트 생성
     
@@ -93,22 +93,13 @@ async def create_summarize_prompt(user_prompt: str) -> str:
     """
     try:
         # Ollama API 호출을 위한 프롬프트 구성
-        ollama_prompt = f"""사용자 질문: "{user_prompt}"
+        ollama_prompt = f"""User question: "{user_prompt}"
 
-기본 프롬프트 형태 (참고용):
+Base prompt format (for reference):
 "{DEFAULT_SUMMARIZE_PROMPT}"
 
-작업 요청:
-위 기본 프롬프트의 구조, 스타일, 형식을 그대로 유지하면서, 사용자 질문의 주제와 내용을 반영한 새로운 비디오 요약 프롬프트를 작성해주세요.
-
-중요 지침:
-1. 기본 프롬프트의 전체 구조와 톤을 그대로 유지하세요.
-2. "You are a video monitoring system"과 같은 역할 정의 부분을 포함하세요.
-3. 타임스탬프 관련 지시사항(시작 시간과 종료 시간 포함)을 유지하세요.
-4. 사용자 질문의 핵심 주제와 요구사항을 프롬프트에 자연스럽게 통합하세요.
-5. 기본 프롬프트의 영어 문체와 형식을 그대로 따르세요.
-6. 프롬프트 텍스트만 출력하세요. 설명이나 예시는 포함하지 마세요.
-        """
+Task:
+Create a new video summarization prompt that maintains the structure, style, and format of the base prompt while reflecting the topic and content of the user's question."""
         
         # Ollama API 호출 (aiohttp 사용)
         session = await get_session()
@@ -120,14 +111,25 @@ async def create_summarize_prompt(user_prompt: str) -> str:
                     "role": "system",
                     "content": """You are a prompt generator. Your task is to transform user questions into video summarization prompts.
 
-CRITICAL RULES - YOU MUST FOLLOW:
-1. Return ONLY the prompt text itself. No examples, no samples, no timestamps.
-2. Do NOT include example outputs like "00:05:00, 00:06:00 A person is seen..." or any timestamp examples.
-3. Do NOT add any preface, explanation, quotes, or additional text.
-4. Do NOT say things like "Here is...", "Sure", "The prompt is...", or "Here's the prompt:".
-5. Output the prompt directly without any formatting, examples, or explanations.
-6. Start directly with the prompt text. Do not include any introductory phrases.
-7. The output must be a complete, usable prompt that can be directly used for video summarization."""
+ABSOLUTE REQUIREMENTS - NO EXCEPTIONS:
+
+OUTPUT FORMAT:
+• Output ONLY the prompt text itself - nothing else.
+• Start directly with the prompt text. No introductory phrases like "Here is...", "Sure", "The prompt is...", or "Here's the prompt:".
+• Do NOT include any preface, explanation, quotes, examples, samples, or timestamps.
+• Do NOT add example outputs like "00:05:00, 00:06:00 A person is seen..." or any timestamp examples.
+• The output must be a complete, usable prompt that can be directly used for video summarization.
+
+PROMPT STRUCTURE:
+• Maintain the ENTIRE structure, tone, and English style of the base prompt exactly as it is.
+• Include essential elements from the base prompt:
+  - Role definition parts like "You are a video monitoring system"
+  - Timestamp-related instructions (including start time and end time)
+• Follow the base prompt's format precisely.
+
+CONTENT INTEGRATION:
+• Naturally integrate the core topic and requirements of the user's question into the prompt.
+• Ensure the generated prompt reflects the user's intent while preserving the base prompt's framework."""
                 },
                 {
                     "role": "user",
@@ -151,7 +153,7 @@ CRITICAL RULES - YOU MUST FOLLOW:
                 generated_prompt = ollama_data.get("message", {}).get("content", "")
                 if generated_prompt:
                     generated_prompt = generated_prompt.strip()
-                    logger.info(f"Ollama를 사용하여 요약 프롬프트 생성 성공")
+                    logger.info(f"Ollama를 사용하여 요약 프롬프트 생성 성공: {generated_prompt}")
                     return generated_prompt
                 else:
                     logger.warning("Ollama 응답에 content가 없습니다. 기본 프롬프트 사용")
@@ -169,30 +171,30 @@ CRITICAL RULES - YOU MUST FOLLOW:
 
 async def build_query_prompt(prompt: str) -> str:
     """
-    Ollama를 사용하여 프롬프트를 영어로 번역하고 query_video 함수 호출을 위한 프롬프트 생성
+    Ollama를 사용하여 프롬프트를 영어로 번역
     
     Args:
         prompt: 사용자가 입력한 프롬프트
     
     Returns:
-        영어로 번역된 프롬프트 (Ollama 실패 시 원본 프롬프트 반환)
+        영어로 번역된 프롬프트 (실패 시 원본 반환)
     """
     try:
         # Ollama API 호출을 위한 프롬프트 구성
-        ollama_prompt = f"""다음 프롬프트를 영어로 번역해주세요:
-"{prompt}"
-
-번역된 프롬프트만 출력하고 다른 설명이나 지시사항은 포함하지 마세요."""
+        ollama_prompt = f"""{prompt}
+        위 문장을 영어로 번역하세요."""
         
-        # Ollama API 호출 (aiohttp 사용)
+        # Ollama API 호출 (aiohttp 사용) - 번역 전용 모델 사용
         session = await get_session()
         ollama_url = f"{OLLAMA_BASE_URL}/api/chat"
+        # 번역 전용 모델 사용 (hy-mt15-translation)
+        translation_model = OLLAMA_TRANSLATION_MODEL
         payload = {
-            "model": OLLAMA_MODEL,
+            "model": translation_model,
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are an expert translator. Translate the given prompt to English accurately and naturally. Output only the translated text without any additional explanations."
+                    "content": "You are a translator. Your only task is to translate text. Output ONLY the translated text without any explanations, instructions, or additional content. Do not include any text other than the translation result. Do not add quotation marks or any other formatting to the output."
                 },
                 {
                     "role": "user",
@@ -202,7 +204,7 @@ async def build_query_prompt(prompt: str) -> str:
             "stream": False,
             "options": {
                 "temperature": 0.0,  # 번역은 정확성이 중요하므로 낮은 temperature
-                "num_predict": 500  # 번역은 적은 토큰 수로 충분
+                "num_predict": 1000  # 충분한 토큰 수 제공
             }
         }
         
@@ -216,6 +218,11 @@ async def build_query_prompt(prompt: str) -> str:
                 translated_prompt = ollama_data.get("message", {}).get("content", "")
                 if translated_prompt:
                     translated_prompt = translated_prompt.strip()
+                    # 따옴표 제거 (정규식으로 앞뒤 따옴표 제거 - 모든 종류의 따옴표 처리)
+                    import re
+                    # 앞뒤 따옴표 제거 (큰따옴표, 작은따옴표, 유니코드 따옴표 등)
+                    translated_prompt = re.sub(r'^["\'"\u201C\u201D\u2018\u2019]+|["\'"\u201C\u201D\u2018\u2019]+$', '', translated_prompt)
+                    translated_prompt = translated_prompt.strip()  # 제거 후 다시 trim
                     logger.info(f"Ollama를 사용하여 프롬프트 영어 번역 성공")
                     return f"{translated_prompt}"
                 else:
@@ -229,8 +236,169 @@ async def build_query_prompt(prompt: str) -> str:
     except Exception as e:
         logger.warning(f"Ollama를 사용한 프롬프트 번역 중 오류 발생: {e}")
     
-    # Ollama 실패 시 원본 프롬프트와 타임스탬프 서픽스 결합
-    return f"{prompt} {DEFAULT_QUERY_TIMESTAMP_SUFFIX}"
+    # 번역 실패한 경우 원본 프롬프트 반환
+    return f"{prompt}"
+
+
+async def translate_to_korean(text: str) -> str:
+    """
+    Ollama를 사용하여 텍스트를 한국어로 번역
+    
+    Args:
+        text: 번역할 텍스트 (영어 또는 다른 언어)
+    
+    Returns:
+        한국어로 번역된 텍스트 (실패 시 원본 반환)
+    """
+
+    try:
+        logger.info(f"번역할 문장: {text}")
+        # Ollama API 호출을 위한 프롬프트 구성
+        ollama_prompt = f"""{text}
+        translate to Korean"""
+        
+        # Ollama API 호출 (aiohttp 사용) - 번역 전용 모델 사용
+        session = await get_session()
+        ollama_url = f"{OLLAMA_BASE_URL}/api/chat"
+        # 번역 전용 모델 사용 (hy-mt15-translation)
+        translation_model = OLLAMA_TRANSLATION_MODEL
+        payload = {
+            "model": translation_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a translator. Your only task is to translate the text to Korean. don't add any explanation or anything else."
+                },
+                {
+                    "role": "user",
+                    "content": ollama_prompt
+                }
+            ],
+            "stream": False,
+            "options": {
+                "temperature": 0.0,  # 번역은 정확성이 중요하므로 낮은 temperature
+                "num_predict": 1000  # 충분한 토큰 수 제공
+            }
+        }
+        
+        async with session.post(
+            ollama_url,
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=OLLAMA_TIMEOUT)
+        ) as ollama_response:
+            if ollama_response.status == 200:
+                ollama_data = await ollama_response.json()
+                translated_text = ollama_data.get("message", {}).get("content", "")
+                if translated_text:
+                    translated_text = translated_text.strip()
+                    # 따옴표 제거 (정규식으로 앞뒤 따옴표 제거 - 모든 종류의 따옴표 처리)
+                    import re
+                    # 앞뒤 따옴표 제거 (큰따옴표, 작은따옴표, 유니코드 따옴표 등)
+                    translated_text = re.sub(r'^["\'"\u201C\u201D\u2018\u2019]+|["\'"\u201C\u201D\u2018\u2019]+$', '', translated_text)
+                    translated_text = translated_text.strip()  # 제거 후 다시 trim
+                    logger.info(f"Ollama를 사용하여 한국어 번역 성공 {translated_text}")
+                    return translated_text
+                else:
+                    logger.warning("Ollama 응답에 content가 없습니다. 원본 텍스트 사용")
+            else:
+                error_text = await ollama_response.text()
+                logger.warning(f"Ollama API 호출 실패 (HTTP {ollama_response.status}): {error_text}")
+    except aiohttp.ClientConnectorError as e:
+        logger.warning(f"Ollama 서버에 연결할 수 없습니다: {e}")
+        logger.info("Ollama가 실행 중인지 확인하세요: ollama serve")
+    except Exception as e:
+        logger.warning(f"Ollama를 사용한 한국어 번역 중 오류 발생: {e}")
+    
+    # 번역 실패한 경우 원본 텍스트 반환
+    return text
+
+
+async def summarize_sentences(sentences: list) -> str:
+    """
+    여러 문장을 LLM을 사용하여 한 문장으로 요약
+    
+    Args:
+        sentences: 요약할 문장 리스트
+    
+    Returns:
+        요약된 한 문장 (실패 시 공백으로 합친 문장 반환)
+    """
+    if not sentences:
+        return ""
+    
+    # 문장이 하나면 그대로 반환
+    if len(sentences) == 1:
+        return sentences[0]
+    
+    # 빈 문장 제거
+    filtered_sentences = [s.strip() for s in sentences if s.strip()]
+    if not filtered_sentences:
+        return ""
+    
+    # 문장이 하나면 그대로 반환
+    if len(filtered_sentences) == 1:
+        return filtered_sentences[0]
+    
+    try:
+        # 문장들을 하나의 텍스트로 합치기
+        combined_text = " ".join(filtered_sentences)
+        
+        # Ollama API 호출을 위한 프롬프트 구성
+        ollama_prompt = f"""
+                    {combined_text}
+                    summarize the sentences into one concise sentence"""
+        
+        # Ollama API 호출 (aiohttp 사용)
+        session = await get_session()
+        ollama_url = f"{OLLAMA_BASE_URL}/api/chat"
+        payload = {
+            "model": OLLAMA_MODEL,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a text summarizer. Your task is to combine multiple sentences into one concise sentence. Output ONLY the summarized sentence without any explanations, instructions, or additional content. Do not include any text other than the summary result."
+                },
+                {
+                    "role": "user",
+                    "content": ollama_prompt
+                }
+            ],
+            "stream": False,
+            "options": {
+                "temperature": 0.3,  # 요약은 적당한 창의성 필요
+                "num_predict": 500  # 요약은 적은 토큰 수로 충분
+            }
+        }
+        
+        async with session.post(
+            ollama_url,
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=OLLAMA_TIMEOUT)
+        ) as ollama_response:
+            if ollama_response.status == 200:
+                ollama_data = await ollama_response.json()
+                summarized_text = ollama_data.get("message", {}).get("content", "")
+                if summarized_text:
+                    summarized_text = summarized_text.strip()
+                    # 따옴표 제거
+                    import re
+                    summarized_text = re.sub(r'^["\'"\u201C\u201D\u2018\u2019]+|["\'"\u201C\u201D\u2018\u2019]+$', '', summarized_text)
+                    summarized_text = summarized_text.strip()
+                    logger.info(f"문장 요약 성공: {len(filtered_sentences)}개 문장 -> 1개 문장")
+                    return summarized_text
+                else:
+                    logger.warning("Ollama 응답에 content가 없습니다. 원본 문장 합침")
+            else:
+                error_text = await ollama_response.text()
+                logger.warning(f"Ollama API 호출 실패 (HTTP {ollama_response.status}): {error_text}")
+    except aiohttp.ClientConnectorError as e:
+        logger.warning(f"Ollama 서버에 연결할 수 없습니다: {e}")
+        logger.info("Ollama가 실행 중인지 확인하세요: ollama serve")
+    except Exception as e:
+        logger.warning(f"Ollama를 사용한 문장 요약 중 오류 발생: {e}")
+    
+    # 요약 실패한 경우 공백으로 합친 문장 반환
+    return " ".join(filtered_sentences)
 
 
 # CHUNK_SIZES 정의 (튜플 리스트 형식: (label, value))
@@ -294,9 +462,17 @@ async def get_recommended_chunk_size(video_length):
     
     return get_closest_chunk_size(CHUNK_SIZES, recommended_chunk_size)
 
+async def check_video_type(file: UploadFile) -> bool:
+    """동영상 파일 타입 확인"""
+    if file.content_type.startswith('video/'):
+        return False
+    else:
+        return True
+
 
 def build_summarize_params(
-    video_id: str,
+    image_mode: bool,
+    video_id: Union[str, List[str]],
     chunk_duration: int,
     model: str,
     prompt: str = DEFAULT_SUMMARIZE_PROMPT,
@@ -328,7 +504,10 @@ def build_summarize_params(
     summarize_video 함수 호출을 위한 파라미터 튜플 생성
     
     Args:
-        video_id: VIA 서버의 video_id
+        image_mode: 이미지 모드 여부 (True: 이미지, False: 비디오) - 참고용, 실제로는 사용되지 않음
+        video_id: VIA 서버의 video_id (단일 문자열 또는 문자열 리스트)
+                  - 단일 문자열: 단일 파일 요약
+                  - 문자열 리스트: 멀티 이미지 요약 (이미지만 지원)
         chunk_duration: 청크 지속 시간
         model: 모델 ID
         num_frames_per_chunk: None이면 chunk_duration // 4로 자동 계산
@@ -338,6 +517,8 @@ def build_summarize_params(
         summarize_video 함수에 전달할 파라미터 튜플
     """
 
+    # image_mode는 VIA 서버에서 지원하지 않으므로 제거 (파일 업로드 시 media_type으로 구분됨)
+    # video_id는 단일 문자열 또는 리스트 모두 가능 (VIA 서버의 SummarizationQuery.id 필드가 Union[UUID, List[UUID]] 지원)
     return (
         video_id,
         prompt,

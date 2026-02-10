@@ -50,6 +50,46 @@
         </svg>
         <span v-if="!collapsed" class="ml-3 transition-opacity duration-200 text-lg text-gray-700 dark:text-white overflow-hidden whitespace-nowrap">{{ tSidebar.report }}</span>
       </RouterLink>
+      <RouterLink
+        to="/event-reviewer"
+        :class="[
+          'flex items-center rounded-md py-3 relative overflow-hidden transform transition-all duration-200 group hover:shadow hover:bg-white dark:hover:bg-gray-800 active:scale-[0.97]',
+          collapsed ? 'justify-center' : 'px-4',
+          isActive('/event-reviewer')
+        ]">
+        <svg viewBox="0 0 24 24" :class="['w-6 h-6 icon-base text-gray-700 dark:text-white', collapsed ? '' : 'flex-shrink-0']">
+          <path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" stroke="currentColor" fill="none" />
+        </svg>
+        <span v-if="!collapsed" class="ml-3 transition-opacity duration-200 text-lg text-gray-700 dark:text-white overflow-hidden whitespace-nowrap">{{ tSidebar.eventReviewer }}</span>
+      </RouterLink>
+      <RouterLink
+        to="/cv-event-detector"
+        :class="[
+          'flex items-center rounded-md py-3 relative overflow-hidden transform transition-all duration-200 group hover:shadow hover:bg-white dark:hover:bg-gray-800 active:scale-[0.97]',
+          collapsed ? 'justify-center' : 'px-4',
+          isActive('/cv-event-detector')
+        ]">
+        <svg viewBox="0 0 24 24" :class="['w-6 h-6 icon-base text-gray-700 dark:text-white', collapsed ? '' : 'flex-shrink-0']">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" stroke="currentColor" fill="none" />
+          <circle cx="8.5" cy="8.5" r="1.5" stroke="currentColor" fill="none" />
+          <polyline points="21 15 16 10 5 21" stroke="currentColor" fill="none" />
+        </svg>
+        <span v-if="!collapsed" class="ml-3 transition-opacity duration-200 text-lg text-gray-700 dark:text-white overflow-hidden whitespace-nowrap">{{ tSidebar.cvEventDetector }}</span>
+      </RouterLink>
+      <RouterLink
+        v-if="isAdmin"
+        to="/admin-approvals"
+        :class="[
+          'flex items-center rounded-md py-3 relative overflow-hidden transform transition-all duration-200 group hover:shadow hover:bg-white dark:hover:bg-gray-800 active:scale-[0.97]',
+          collapsed ? 'justify-center' : 'px-4',
+          isActive('/admin-approvals')
+        ]">
+        <svg viewBox="0 0 24 24" :class="['w-6 h-6 icon-base text-gray-700 dark:text-white', collapsed ? '' : 'flex-shrink-0']">
+          <path d="M12 3l7 4v5c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V7l7-4z" stroke="currentColor" fill="none" />
+          <path d="M9 12l2 2 4-4" stroke="currentColor" fill="none" />
+        </svg>
+        <span v-if="!collapsed" class="ml-3 transition-opacity duration-200 text-lg text-gray-700 dark:text-white overflow-hidden whitespace-nowrap">{{ tSidebar.adminApproval }}</span>
+      </RouterLink>
 
       <div :class="['absolute left-6 right-6 bottom-[1vh] flex flex-col space-y-3', collapsed ? 'items-center' : 'items-start']">
         <!-- Collapse button positioned with the bottom group -->
@@ -193,7 +233,8 @@
             <div 
               v-if="showProfileModal" 
               class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-              @click.self="closeProfileSettings"
+              @mousedown="(e) => handleModalBackgroundClick(e, closeProfileSettings)"
+              @mouseup="(e) => handleModalBackgroundClick(e, closeProfileSettings)"
             >
                 <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-[800px] h-full max-h-[800px] mx-4">
                   <div class="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
@@ -293,7 +334,8 @@
             <div 
               v-if="showSettingModal" 
               class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-              @click.self="closeSettingModal"
+              @mousedown="(e) => handleModalBackgroundClick(e, closeSettingModal)"
+              @mouseup="(e) => handleModalBackgroundClick(e, closeSettingModal)"
             >
                 <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
                   <div class="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
@@ -490,12 +532,14 @@
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from "vue-router";
 import { useSettingStore } from '@/stores/settingStore';
+import { getApiBaseUrl } from '@/utils/apiConfig';
 import logoUrl from '@/assets/icons/Intellivix_logo.png';
 
 const route = useRoute();
 const router = useRouter();
 const settingStore = useSettingStore();
 const userId = ref("");
+const userRole = ref("");
 const collapsed = ref(true);
 const showContextMenuFlag = ref(false);
 const showProfileModal = ref(false);
@@ -514,8 +558,11 @@ const isUploadingImage = ref(false);
 const sidebarTranslations = {
   ko: {
     search: "검색",
-    summarize: "요약",
-    report: "리포트",
+    summarize: "동영상 요약",
+    report: "요약 보고서",
+    eventReviewer: "이벤트 검토",
+    cvEventDetector: "CV 이벤트 감지",
+    adminApproval: "관리자 승인",
     user: "사용자",
     profileSettings: "프로필 설정",
     setting: "설정",
@@ -559,6 +606,9 @@ const sidebarTranslations = {
     search: "Search",
     summarize: "Summarize",
     report: "Report",
+    eventReviewer: "Event Reviewer",
+    cvEventDetector: "CV Event Detector",
+    adminApproval: "Admin Approval",
     user: "User",
     profileSettings: "Profile Settings",
     setting: "Setting",
@@ -601,6 +651,7 @@ const sidebarTranslations = {
 };
 
 const tSidebar = computed(() => sidebarTranslations[settingStore.language] || sidebarTranslations.ko);
+const isAdmin = computed(() => userRole.value === "ADMIN");
 
 // 언어 변경 시 settingCategory 자동 업데이트
 watch(() => settingStore.language, (newLang) => {
@@ -624,11 +675,17 @@ function toggleCollapse() {
 
 function checkLogin() {
   userId.value = localStorage.getItem("vss_user_id") || "";
+  userRole.value = localStorage.getItem("vss_user_role") || "";
+  if (!userId.value) {
+    userRole.value = "";
+  }
 }
 
 function logout() {
   localStorage.removeItem("vss_user_id");
+  localStorage.removeItem("vss_user_role");
   userId.value = "";
+  userRole.value = "";
   window.dispatchEvent(new Event("vss-login"));
   router.push("/login");
 }
@@ -690,6 +747,29 @@ function toggleProfileMenu(event) {
   }, 0);
 }
 
+// 팝업 배경 클릭 핸들러 (드래그 방지)
+let modalMouseDownPos = null;
+function handleModalBackgroundClick(event, closeFunction) {
+  // mousedown 위치 저장
+  if (event.type === 'mousedown') {
+    modalMouseDownPos = { x: event.clientX, y: event.clientY };
+    return;
+  }
+  
+  // mouseup에서 위치 비교
+  if (event.type === 'mouseup' && modalMouseDownPos) {
+    const distance = Math.sqrt(
+      Math.pow(event.clientX - modalMouseDownPos.x, 2) + 
+      Math.pow(event.clientY - modalMouseDownPos.y, 2)
+    );
+    // 5픽셀 이내에서만 클릭으로 간주 (드래그가 아닌 경우)
+    if (distance < 5) {
+      closeFunction();
+    }
+    modalMouseDownPos = null;
+  }
+}
+
 function closeContextMenu() {
   showContextMenuFlag.value = false;
 }
@@ -706,7 +786,7 @@ function closeProfileSettings() {
 }
 
 // API 설정
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001';
+const API_BASE_URL = getApiBaseUrl();
 
 async function loadUserInfo() {
   if (!userId.value) return;
@@ -785,6 +865,13 @@ function handleSetting() {
   settingCategory.value = settingStore.language === 'ko' ? '일반' : 'General'; // 현재 언어에 맞는 기본값으로 설정
   showSettingModal.value = true;
 }
+
+// 외부에서 설정 모달을 열기 위한 이벤트 리스너
+function handleOpenSettingsModal() {
+  handleSetting();
+}
+
+window.addEventListener('open-settings-modal', handleOpenSettingsModal);
 
 function closeSettingModal() {
   showSettingModal.value = false;
@@ -897,6 +984,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('video-context-menu-opened', closeContextMenu);
+  window.removeEventListener('open-settings-modal', handleOpenSettingsModal);
 });
 
 onUnmounted(() => {

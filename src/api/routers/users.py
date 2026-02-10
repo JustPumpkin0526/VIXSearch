@@ -16,6 +16,11 @@ router = APIRouter()
 class UpdateUserEmailRequest(BaseModel):
     email: str
 
+class ApproveUserRequest(BaseModel):
+    admin_id: str
+    user_id: str
+    approved: bool = True
+
 @router.get("/user/{user_id}")
 def get_user_info(user_id: str):
     """사용자 정보 조회"""
@@ -23,7 +28,7 @@ def get_user_info(user_id: str):
         verify_user_exists(user_id)
         ensure_db_connection()
         cursor.execute(
-            "SELECT ID, EMAIL, CREATED_AT, UPDATED_AT FROM vss_user WHERE ID = ?",
+            "SELECT ID, EMAIL, CREATED_AT, UPDATED_AT, ROLE, APPROVED FROM vss_user WHERE ID = ?",
             (user_id,)
         )
         row = cursor.fetchone()
@@ -55,7 +60,9 @@ def get_user_info(user_id: str):
                 "email": row[1],
                 "created_at": row[2].isoformat() if row[2] else None,
                 "updated_at": row[3].isoformat() if row[3] else None,
-                "profile_image_url": profile_image_url
+                "profile_image_url": profile_image_url,
+                "role": row[4] if len(row) > 4 else "USER",
+                "approved": bool(row[5]) if len(row) > 5 else True
             }
         }
     except HTTPException:
@@ -140,3 +147,71 @@ async def upload_profile_image(user_id: str, file: UploadFile = File(...)):
         logger.error(f"프로필 이미지 업로드 실패: {e}")
         raise HTTPException(status_code=500, detail=f"프로필 이미지 업로드 중 오류가 발생했습니다: {str(e)}")
 
+@router.post("/admin/approve-user")
+def approve_user(request: ApproveUserRequest):
+    """관리자 승인/반려 처리"""
+    try:
+        ensure_db_connection()
+        cursor.execute(
+            "SELECT ROLE, APPROVED FROM vss_user WHERE ID = ?",
+            (request.admin_id,)
+        )
+        admin_row = cursor.fetchone()
+        if not admin_row:
+            raise HTTPException(status_code=404, detail="관리자 계정을 찾을 수 없습니다.")
+        admin_role = admin_row[0] if admin_row else None
+        if (admin_role or "").strip().upper() != "ADMIN":
+            raise HTTPException(status_code=403, detail="관리자 권한이 없습니다.")
+
+        verify_user_exists(request.user_id)
+        cursor.execute(
+            "UPDATE vss_user SET APPROVED = ?, UPDATED_AT = CURRENT_TIMESTAMP WHERE ID = ?",
+            (1 if request.approved else 0, request.user_id)
+        )
+        conn.commit()
+
+        return {
+            "success": True,
+            "user_id": request.user_id,
+            "approved": bool(request.approved)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"사용자 승인 처리 실패: {e}")
+        raise HTTPException(status_code=500, detail="사용자 승인 처리 중 오류가 발생했습니다.")
+
+@router.get("/admin/pending-users")
+def list_pending_users(admin_id: str):
+    """승인 대기 사용자 목록 조회"""
+    try:
+        ensure_db_connection()
+        cursor.execute(
+            "SELECT ROLE, APPROVED FROM vss_user WHERE ID = ?",
+            (admin_id,)
+        )
+        admin_row = cursor.fetchone()
+        if not admin_row:
+            raise HTTPException(status_code=404, detail="관리자 계정을 찾을 수 없습니다.")
+        admin_role = admin_row[0] if admin_row else None
+        if (admin_role or "").strip().upper() != "ADMIN":
+            raise HTTPException(status_code=403, detail="관리자 권한이 없습니다.")
+
+        cursor.execute(
+            "SELECT ID, EMAIL, CREATED_AT FROM vss_user WHERE APPROVED = 0 AND UPPER(ROLE) != 'ADMIN' ORDER BY CREATED_AT DESC"
+        )
+        rows = cursor.fetchall() or []
+        users = []
+        for row in rows:
+            users.append({
+                "id": row[0],
+                "email": row[1],
+                "created_at": row[2].isoformat() if row[2] else None
+            })
+
+        return {"success": True, "users": users}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"승인 대기 사용자 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail="승인 대기 사용자 조회 중 오류가 발생했습니다.")

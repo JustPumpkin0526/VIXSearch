@@ -8,28 +8,21 @@ from utils.helpers import ensure_vss_client
 logger = logging.getLogger(__name__)
 
 async def upload_to_via_server_background(file_path: str, video_id: int, user_id: str):
-    """VIA 서버에 동영상을 업로드하고 DB에 VIDEO_ID 업데이트 (백그라운드 작업)"""
+    """VIA 서버에 동영상 또는 이미지를 업로드하고 VIDEO_ID 반환 (동기적으로 처리)"""
     try:
         # 파일이 존재하는지 확인
         if not Path(file_path).exists():
             logger.error(f"파일이 존재하지 않습니다: {file_path}")
-            return
+            return None
         
         vss_client = await ensure_vss_client()
         via_video_id = await vss_client.upload_video(str(file_path))
         logger.info(f"VIA 서버 업로드 성공: video_id={via_video_id}, db_video_id={video_id}")
-        
-        # DB에 VIDEO_ID 업데이트
-        ensure_db_connection()
-        cursor.execute(
-            "UPDATE vss_videos SET VIDEO_ID = ? WHERE ID = ? AND USER_ID = ?",
-            (via_video_id, video_id, user_id)
-        )
-        conn.commit()
-        logger.info(f"VIDEO_ID 업데이트 완료: video_id={video_id}, via_video_id={via_video_id}")
+        return via_video_id
     except Exception as e:
         logger.warning(f"VIA 서버 업로드 실패 (video_id={video_id}): {e}")
         # VIA 업로드 실패해도 계속 진행 (나중에 재시도 가능)
+        return None
 
 def _save_summary_to_db(video_id: str, user_id: str, summary_text: str, prompt: str):
     """

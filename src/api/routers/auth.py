@@ -57,13 +57,15 @@ def login(data: LoginRequest = Body(...)):
     """로그인"""
     ensure_db_connection()
     cursor.execute(
-        "SELECT PW FROM vss_user WHERE ID = ?",
+        "SELECT PW, ROLE, APPROVED FROM vss_user WHERE ID = ?",
         (data.username,)
     )
     row = cursor.fetchone()
     if row is None:
         return {"success": False, "message": "계정이 없습니다."}
     db_pw = row[0]
+    role = row[1] if len(row) > 1 else "USER"
+    approved = bool(row[2]) if len(row) > 2 else True
     
     # 해시화된 비밀번호와 입력된 비밀번호 비교
     password_correct = False
@@ -88,7 +90,9 @@ def login(data: LoginRequest = Body(...)):
                 logger.warning(f"비밀번호 해시화 업데이트 실패: {e}")
     
     if password_correct:
-        return {"success": True}
+        if role != "ADMIN" and not approved:
+            return {"success": False, "message": "관리자 승인 대기 중입니다. 승인 후 로그인할 수 있습니다."}
+        return {"success": True, "role": role, "approved": True}
     else:
         return {"success": False, "message": "비밀번호가 틀렸습니다."}
 
@@ -223,8 +227,8 @@ def register(user: User):
         
         ensure_db_connection()
         cursor.execute(
-            "INSERT INTO vss_user (ID, PW, EMAIL) VALUES (?, ?, ?)",
-            (user.username, hashed_password_str, email)
+            "INSERT INTO vss_user (ID, PW, EMAIL, ROLE, APPROVED) VALUES (?, ?, ?, ?, ?)",
+            (user.username, hashed_password_str, email, "USER", 0)
         )
         conn.commit()
         

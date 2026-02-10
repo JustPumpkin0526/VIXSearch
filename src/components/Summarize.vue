@@ -57,8 +57,17 @@
             <template v-else-if="videoFiles.length === 1">
               <div class="relative w-full h-full" @mouseenter="singleVideo && (hoveredVideoId = singleVideo.id)"
                 @mouseleave="hoveredVideoId = null">
+                <!-- 이미지 파일인 경우 -->
+                <img 
+                  v-if="singleVideo && isImageFile(singleVideo) && singleVideo.displayUrl"
+                  :src="singleVideo.displayUrl"
+                  class="w-full h-full rounded-xl object-contain transition-opacity duration-300"
+                  @error="(e) => handleImageError(singleVideo.id, e)"
+                  draggable="false"
+                  alt=""
+                />
                 <!-- 지원하지 않는 형식이고 변환 중이거나 변환되지 않은 경우 -->
-                <div v-if="singleVideo && isUnsupportedFormat(singleVideo.name || singleVideo.title || '') && (singleVideo._isConverting || !singleVideo.displayUrl?.includes('converted-videos'))" 
+                <div v-else-if="singleVideo && !isImageFile(singleVideo) && isUnsupportedFormat(singleVideo.name || singleVideo.title || '') && (singleVideo._isConverting || !singleVideo.displayUrl?.includes('converted-videos'))" 
                   class="w-full h-full flex flex-col items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-xl">
                   <div v-if="singleVideo._isConverting" class="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-600 dark:border-gray-400 mb-2"></div>
                   <svg v-else class="w-12 h-12 text-gray-400 dark:text-gray-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -72,24 +81,26 @@
                   </span>
                 </div>
                 <!-- 비디오 엘리먼트 표시 (변환된 MP4 또는 지원하는 형식) -->
-                <video v-else-if="singleVideo && singleVideo.displayUrl && (!isUnsupportedFormat(singleVideo.name || singleVideo.title || '') || singleVideo.displayUrl?.includes('converted-videos'))"
+                <video v-else-if="singleVideo && !isImageFile(singleVideo) && singleVideo.displayUrl && (!isUnsupportedFormat(singleVideo.name || singleVideo.title || '') || singleVideo.displayUrl?.includes('converted-videos'))"
                   :src="singleVideo.displayUrl"
                   class="w-full h-full rounded-xl object-cover transition-opacity duration-300" preload="metadata"
                   :ref="el => { if (el && singleVideo) videoRefs[singleVideo.id] = el }"
                   @timeupdate="updateProgress(singleVideo.id, $event)"
                   @loadedmetadata="onVideoMetadataLoaded(singleVideo.id, $event)"
                   @ended="singleVideo && onVideoEnded(singleVideo.id)"
-                  :class="{ 'brightness-75': !playingVideoIds.includes(singleVideo.id) }"></video>
-                <!-- 정지 시 어두운 오버레이 -->
-                <div v-if="singleVideo" class="absolute inset-0 pointer-events-none transition-colors duration-300"
+                  @error="(e) => handleVideoError(singleVideo.id, e)"
+                  :class="{ 'brightness-75': !playingVideoIds.includes(singleVideo.id) }"
+                  draggable="false"></video>
+                <!-- 정지 시 어두운 오버레이 (동영상만) -->
+                <div v-if="singleVideo && !isImageFile(singleVideo)" class="absolute inset-0 pointer-events-none transition-colors duration-300"
                   :class="playingVideoIds.includes(singleVideo.id) ? 'bg-transparent' : 'bg-black/20'"></div>
-                <!-- 재생하지 않은 동영상의 영상 길이 표시 (우측 하단) -->
-                <div v-if="singleVideo && !playingVideoIds.includes(singleVideo.id) && durationMap[singleVideo.id]"
+                <!-- 재생하지 않은 동영상의 영상 길이 표시 (우측 하단, 동영상만) -->
+                <div v-if="singleVideo && !isImageFile(singleVideo) && !playingVideoIds.includes(singleVideo.id) && durationMap[singleVideo.id]"
                   class="absolute bottom-2 right-2 px-2 py-1 bg-black/70 backdrop-blur-sm text-white text-xs font-medium rounded pointer-events-none">
                   {{ formatTime(durationMap[singleVideo.id]) }}
                 </div>
-                <!-- 하단 오버레이 진행바 & 시간 (재생 중일 때만 표시) -->
-                <div v-if="singleVideo && playingVideoIds.includes(singleVideo.id)"
+                <!-- 하단 오버레이 진행바 & 시간 (일시정지/정지 후에도 표시, 동영상만) -->
+                <div v-if="singleVideo && !isImageFile(singleVideo) && singleVideo.displayUrl"
                   class="absolute bottom-0 left-0 right-0 p-2 bg-black/30 backdrop-blur-sm rounded-b-xl transition-all duration-300 pointer-events-none"
                   :class="{
                     'opacity-100 translate-y-0': hoveredVideoId === singleVideo.id,
@@ -118,7 +129,7 @@
                     </div>
                   </div>
                 </div>
-                <button v-if="singleVideo" @click.stop="togglePlay(singleVideo.id)" :class="{
+                <button v-if="singleVideo && !isImageFile(singleVideo)" @click.stop="togglePlay(singleVideo.id)" :class="{
                   'opacity-100 scale-100': hoveredVideoId === singleVideo.id || !playingVideoIds.includes(singleVideo.id),
                   'opacity-0 scale-90': hoveredVideoId !== singleVideo.id && playingVideoIds.includes(singleVideo.id)
                 }" class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-black/60 to-black/40 backdrop-blur-sm text-white rounded-full w-14 h-14 m-auto transition-all duration-300 hover:scale-110 active:scale-95">
@@ -136,8 +147,8 @@
               </div>
             </template>
             <template v-else>
-              <!-- 여러 개일 때 리스트 & 확대 분기 -->
-              <div v-if="!isZoomed" id="list" class="relative w-full h-full">
+              <!-- 여러 개일 때 리스트 -->
+              <div id="list" class="relative w-full h-full">
                 <div
                   class="w-full h-[100%] border border-slate-200/80 dark:border-gray-800 bg-gray-50 dark:bg-gray-950 rounded-2xl overflow-y-auto shadow-inner">
                   <div class="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-6 p-6">
@@ -146,12 +157,21 @@
                       :class="{ 'ring-2 ring-blue-400 dark:ring-blue-500 bg-blue-100 dark:bg-blue-900/30': selectedIndexes.includes(video.id) }"
                       @click="selectVideo(video.id)" @contextmenu.prevent.stop="onVideoContextMenu(video, idx, $event)">
                       <div
-                        class="flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-xl overflow-hidden relative group"
+                        class="flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-xl overflow-hidden relative group aspect-video w-full"
                         @mouseenter="hoveredVideoId = video.id" @mouseleave="hoveredVideoId = null">
                         <input type="checkbox" class="absolute top-1 left-1 z-10" v-model="selectedIndexes"
                           :value="video.id" />
+                        <!-- 이미지 파일인 경우 -->
+                        <img 
+                          v-if="isImageFile(video) && video.displayUrl"
+                          :src="video.displayUrl"
+                          class="object-contain w-full h-full rounded-xl transition-opacity duration-300"
+                          @error="(e) => handleImageError(video.id, e)"
+                          draggable="false"
+                          alt=""
+                        />
                         <!-- 지원하지 않는 형식이고 변환 중이거나 변환되지 않은 경우 -->
-                        <div v-if="isUnsupportedFormat(video.name || video.title || '') && (video._isConverting || !video.displayUrl?.includes('converted-videos'))" 
+                        <div v-else-if="!isImageFile(video) && isUnsupportedFormat(video.name || video.title || '') && (video._isConverting || !video.displayUrl?.includes('converted-videos'))" 
                           class="w-full h-full flex flex-col items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-xl">
                           <div v-if="video._isConverting" class="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-600 dark:border-gray-400 mb-2"></div>
                           <svg v-else class="w-12 h-12 text-gray-400 dark:text-gray-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -165,25 +185,27 @@
                           </span>
                         </div>
                         <!-- 비디오 엘리먼트 표시 (변환된 MP4 또는 지원하는 형식) -->
-                        <video v-else-if="video.displayUrl && (!isUnsupportedFormat(video.name || video.title || '') || video.displayUrl?.includes('converted-videos'))"
+                        <video v-else-if="!isImageFile(video) && video.displayUrl && (!isUnsupportedFormat(video.name || video.title || '') || video.displayUrl?.includes('converted-videos'))"
                           :src="video.displayUrl"
-                          class="object-cover rounded-xl transition-opacity duration-300" preload="metadata"
+                          class="object-cover w-full h-full rounded-xl transition-opacity duration-300" preload="metadata"
                           :ref="el => (videoRefs[video.id] = el)" @ended="onVideoEnded(video.id)"
                           @timeupdate="updateProgress(video.id, $event)"
                           @loadedmetadata="onVideoMetadataLoaded(video.id, $event)"
-                          :class="{ 'brightness-75': !playingVideoIds.includes(video.id) }"></video>
-                        <div v-if="video.displayUrl && (!isUnsupportedFormat(video.name || video.title || '') || video.displayUrl?.includes('converted-videos'))"
+                          @error="(e) => handleVideoError(video.id, e)"
+                          :class="{ 'brightness-75': !playingVideoIds.includes(video.id) }"
+                          draggable="false"></video>
+                        <div v-if="!isImageFile(video) && video.displayUrl && (!isUnsupportedFormat(video.name || video.title || '') || video.displayUrl?.includes('converted-videos'))"
                           class="absolute inset-0 pointer-events-none transition-colors duration-300"
                           :class="playingVideoIds.includes(video.id) ? 'bg-transparent' : 'bg-black/20'">
                         </div>
-                        <span v-else-if="!isUnsupportedFormat(video.name || video.title || '')" class="text-gray-400 dark:text-gray-500">{{ tSummarize.noThumbnail }}</span>
-                        <!-- 재생하지 않은 동영상의 영상 길이 표시 (우측 하단) -->
-                        <div v-if="video.displayUrl && !playingVideoIds.includes(video.id) && durationMap[video.id]"
+                        <span v-else-if="!isImageFile(video) && !isUnsupportedFormat(video.name || video.title || '')" class="text-gray-400 dark:text-gray-500">{{ tSummarize.noThumbnail }}</span>
+                        <!-- 재생하지 않은 동영상의 영상 길이 표시 (우측 하단, 동영상만) -->
+                        <div v-if="!isImageFile(video) && video.displayUrl && !playingVideoIds.includes(video.id) && durationMap[video.id]"
                           class="absolute bottom-2 right-2 px-2 py-1 bg-black/70 backdrop-blur-sm text-white text-xs font-medium rounded pointer-events-none">
                           {{ formatTime(durationMap[video.id]) }}
                         </div>
-                        <!-- 오버레이 진행바 & 시간 (재생 중일 때만 표시) -->
-                        <div v-if="video.displayUrl && playingVideoIds.includes(video.id)"
+                        <!-- 오버레이 진행바 & 시간 (일시정지/정지 후에도 표시, 동영상만) -->
+                        <div v-if="!isImageFile(video) && video.displayUrl"
                           class="absolute bottom-0 left-0 right-0 p-2 bg-black/30 backdrop-blur-sm rounded-b-xl transition-all duration-300 pointer-events-none"
                           :class="{
                             'opacity-100 translate-y-0': hoveredVideoId === video.id,
@@ -212,8 +234,8 @@
                             </div>
                           </div>
                         </div>
-                        <!-- 재생/일시정지 토글 버튼 -->
-                        <button @click.stop="togglePlay(video.id)" :class="{
+                        <!-- 재생/일시정지 토글 버튼 (동영상만) -->
+                        <button v-if="!isImageFile(video)" @click.stop="togglePlay(video.id)" :class="{
                           'opacity-100 scale-100': hoveredVideoId === video.id || !playingVideoIds.includes(video.id),
                           'opacity-0 scale-90': hoveredVideoId !== video.id && playingVideoIds.includes(video.id)
                         }" class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-black/60 to-black/40 backdrop-blur-sm text-white rounded-full w-12 h-12 m-auto transition-all duration-300 hover:scale-110 active:scale-95">
@@ -233,12 +255,13 @@
                         <div v-if="video.title || video.name" class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
                           {{ video.title || video.name }}
                         </div>
-                        <!-- 영상 정보: 길이, 해상도, 용량 (가로 나열) -->
+                        <!-- 영상 정보: 길이(동영상만), 해상도, 용량 (가로 나열) -->
                         <div class="mt-1 text-xs text-gray-500 dark:text-gray-400 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                          <span v-if="durationMap[video.id]">
+                          <span v-if="!isImageFile(video) && durationMap[video.id]">
                             {{ formatTime(durationMap[video.id]) }}
                           </span>
-                          <span v-if="durationMap[video.id] && (video.width && video.height || video.fileSize)" class="text-gray-400">•</span>
+                          <span v-if="!isImageFile(video) && durationMap[video.id] && (video.width && video.height || video.fileSize)" class="text-gray-400">•</span>
+                          <span v-if="isImageFile(video) && (video.width && video.height || video.fileSize)" class="text-gray-400">•</span>
                           <span v-if="video.width && video.height">
                             {{ video.width }} × {{ video.height }}
                           </span>
@@ -252,106 +275,12 @@
                   </div>
                 </div>
               </div>
-              <!-- 확대 뷰 -->
-              <div v-else class="flex flex-col items-center w-full">
-                <div class="relative w-full h-[100%] mb-2"
-                  @mouseenter="videoFiles[zoomedIndex] && (hoveredVideoId = videoFiles[zoomedIndex].id)"
-                  @mouseleave="hoveredVideoId = null">
-                  <!-- 닫기(X) 버튼 -->
-                  <button v-if="videoFiles[zoomedIndex]" @click.stop="unzoomVideo" aria-label="확대 종료" title="닫기"
-                    class="absolute top-2 right-2 z-20 w-8 h-8 flex items-center justify-center bg-black/50 hover:bg-black/70 rounded-full text-white shadow transition-all duration-200 hover:scale-110 active:scale-95">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                      class="w-5 h-5">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                  <!-- 지원하지 않는 형식이고 변환 중이거나 변환되지 않은 경우 -->
-                  <div v-if="videoFiles[zoomedIndex] && isUnsupportedFormat(videoFiles[zoomedIndex].name || videoFiles[zoomedIndex].title || '') && (videoFiles[zoomedIndex]._isConverting || !videoFiles[zoomedIndex].displayUrl?.includes('converted-videos'))" 
-                    class="w-full h-[100%] flex flex-col items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-xl">
-                    <div v-if="videoFiles[zoomedIndex]._isConverting" class="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-600 dark:border-gray-400 mb-2"></div>
-                    <svg v-else class="w-12 h-12 text-gray-400 dark:text-gray-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                    <span class="text-xs text-gray-500 dark:text-gray-400 text-center px-2">
-                      {{ videoFiles[zoomedIndex]._isConverting 
-                        ? (settingStore.language === 'ko' ? '변환 중...' : 'Converting...')
-                        : (settingStore.language === 'ko' ? '변환 대기 중...' : 'Waiting for conversion...')
-                      }}
-                    </span>
-                  </div>
-                  <!-- 비디오 엘리먼트 표시 (변환된 MP4 또는 지원하는 형식) -->
-                  <video v-else-if="videoFiles[zoomedIndex] && videoFiles[zoomedIndex].displayUrl && (!isUnsupportedFormat(videoFiles[zoomedIndex].name || videoFiles[zoomedIndex].title || '') || videoFiles[zoomedIndex].displayUrl?.includes('converted-videos'))"
-                    :src="videoFiles[zoomedIndex].displayUrl"
-                    class="w-full h-[100%] rounded-xl object-cover transition-all duration-300" preload="metadata"
-                    :ref="el => { if (el && videoFiles[zoomedIndex]) videoRefs[videoFiles[zoomedIndex].id] = el }"
-                    @timeupdate="updateProgress(videoFiles[zoomedIndex].id, $event)"
-                    @loadedmetadata="onVideoMetadataLoaded(videoFiles[zoomedIndex].id, $event)"
-                    @ended="onVideoEnded(videoFiles[zoomedIndex].id)"
-                    :class="{ 'brightness-75': !playingVideoIds.includes(videoFiles[zoomedIndex].id) }"></video>
-                  <div v-if="videoFiles[zoomedIndex]"
-                    class="absolute inset-0 pointer-events-none transition-colors duration-300"
-                    :class="playingVideoIds.includes(videoFiles[zoomedIndex].id) ? 'bg-transparent' : 'bg-black/20'">
-                  </div>
-                  <!-- 재생하지 않은 동영상의 영상 길이 표시 (우측 하단) -->
-                  <div v-if="videoFiles[zoomedIndex] && !playingVideoIds.includes(videoFiles[zoomedIndex].id) && durationMap[videoFiles[zoomedIndex].id]"
-                    class="absolute bottom-2 right-2 px-2 py-1 bg-black/70 backdrop-blur-sm text-white text-xs font-medium rounded pointer-events-none">
-                    {{ formatTime(durationMap[videoFiles[zoomedIndex].id]) }}
-                  </div>
-                  <!-- 확대 뷰 재생 진행바 & 시간 (재생 중일 때만 표시) -->
-                  <div v-if="videoFiles[zoomedIndex] && playingVideoIds.includes(videoFiles[zoomedIndex].id)"
-                    class="absolute bottom-0 left-0 right-0 p-2 bg-black/30 backdrop-blur-sm rounded-b-xl transition-all duration-300 pointer-events-none"
-                    :class="{
-                      'opacity-100 translate-y-0': hoveredVideoId === videoFiles[zoomedIndex].id,
-                      'opacity-0 translate-y-full': hoveredVideoId !== videoFiles[zoomedIndex].id
-                    }">
-                    <div class="flex flex-col gap-1">
-                      <div
-                        class="w-full h-2 bg-gray-300/70 rounded-full relative cursor-pointer pointer-events-auto overflow-visible"
-                        @click.stop="seekVideo(videoFiles[zoomedIndex].id, $event)"
-                        :ref="el => { if (el && videoFiles[zoomedIndex]) progressBarRefs[videoFiles[zoomedIndex].id] = el }">
-                        <div :class="[
-                          'h-full bg-gradient-to-r from-emerald-500 to-emerald-600',
-                          (isScrubbing && draggingVideoId === videoFiles[zoomedIndex].id)
-                            ? 'transition-none'
-                            : 'transition-[width] duration-150 ease-linear'
-                        ]" :style="{ width: `${progress[videoFiles[zoomedIndex].id] || 0}%` }"></div>
-                        <div
-                          class="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full border border-emerald-500 cursor-pointer shadow hover:shadow-md hover:scale-110 transition-all pointer-events-auto"
-                          :style="{ left: `calc(${progress[videoFiles[zoomedIndex].id] || 0}% - 8px)` }"
-                          @mousedown="startDragging(videoFiles[zoomedIndex].id, $event)" @click.stop></div>
-                      </div>
-                      <div
-                        class="flex justify-between text-[10px] font-medium text-gray-200 tracking-wide px-1 pointer-events-auto">
-                        <span>{{ formatTime(currentTimeMap[videoFiles[zoomedIndex].id] || 0) }}</span>
-                        <span>{{ formatTime(durationMap[videoFiles[zoomedIndex].id] || 0) }}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <!-- 재생/일시정지 토글 버튼 -->
-                  <button v-if="videoFiles[zoomedIndex]" @click.stop="togglePlay(videoFiles[zoomedIndex].id)" :class="{
-                    'opacity-100 scale-100': hoveredVideoId === videoFiles[zoomedIndex].id || !playingVideoIds.includes(videoFiles[zoomedIndex].id),
-                    'opacity-0 scale-90': hoveredVideoId !== videoFiles[zoomedIndex].id && playingVideoIds.includes(videoFiles[zoomedIndex].id)
-                  }" class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-black/60 to-black/40 backdrop-blur-sm text-white rounded-full w-14 h-14 m-auto transition-all duration-300 hover:scale-110 active:scale-95">
-                    <svg v-if="!playingVideoIds.includes(videoFiles[zoomedIndex].id)" xmlns="http://www.w3.org/2000/svg"
-                      fill="currentColor" viewBox="0.4 -0.7 16 16" class="w-10 h-10">
-                      <path
-                        d="M6.271 4.055a.5.5 0 0 1 .759-.429l4.592 3.11a.5.5 0 0 1 0 .828l-4.592 3.11a.5.5 0 0 1-.759-.429V4.055z" />
-                    </svg>
-                    <svg v-else xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0.5 0 16 16"
-                      class="w-10 h-10">
-                      <path
-                        d="M5.5 3.5A.5.5 0 0 1 6 3h1a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5H6a.5.5 0 0 1-.5-.5v-9zM9.5 3.5A.5.5 0 0 1 10 3h1a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1-.5-.5v-9z" />
-                    </svg>
-                  </button>
-                </div>
-                <!-- 하단 되돌아가기 버튼 제거됨: 상단 X 버튼 사용 -->
-              </div>
             </template>
           </div>
         </div>
 
         <!-- 프롬프트 입력 블럭 -->
-        <div class="mb-3 flex items-center gap-2">
+        <div class="mb-3 flex flex-col gap-2">
           <div class="relative flex-1">
             <textarea v-model="prompt"
               class="w-full border border-slate-300 dark:border-gray-600 focus:border-emerald-400 dark:focus:border-emerald-500 focus:ring-2 focus:ring-emerald-300 dark:focus:ring-emerald-500 rounded-xl px-3 py-2 resize-none transition-all bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200"
@@ -365,9 +294,20 @@
               </svg>
             </button>
           </div>
+          <!-- 샘플 프롬프트 드롭다운 -->
+          <div class="flex items-center gap-2">
+            <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">{{ tSummarize.samplePrompt }}:</label>
+            <select 
+              v-model="selectedSamplePrompt" 
+              @change="applySamplePrompt"
+              class="flex-1 border border-slate-300 dark:border-gray-600 focus:border-emerald-400 dark:focus:border-emerald-500 focus:ring-2 focus:ring-emerald-300 dark:focus:ring-emerald-500 rounded-lg px-3 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm transition-all">
+              <option value="">{{ tSummarize.selectSamplePrompt }}</option>
+              <option v-for="sample in samplePrompts" :key="sample.id" :value="sample.id">{{ sample.name }}</option>
+            </select>
+          </div>
         </div>
 
-        <input type="file" accept="video/*" multiple @change="onUpload" ref="fileInputRef" class="hidden" />
+        <input type="file" accept="video/*,image/*" multiple @change="onUpload" ref="fileInputRef" class="hidden" />
 
         <!-- 우클릭 컨텍스트 메뉴 (Teleport로 body에 렌더링) -->
         <Teleport to="body">
@@ -466,6 +406,120 @@
             </div>
           </div>
         </Teleport>
+
+        <!-- 확대 모달 팝업 - Teleport로 body에 렌더링 -->
+        <Teleport to="body">
+          <Transition name="modal">
+            <div v-if="isZoomed && zoomedVideo" class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4"
+              @mousedown="(e) => handleModalBackgroundClick(e, unzoomVideo)"
+              @mouseup="(e) => handleModalBackgroundClick(e, unzoomVideo)">
+              <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-6xl relative"
+                   @mousedown.stop
+                   @mouseup.stop
+                   @click.stop>
+                <!-- 비디오 영역 -->
+                <div class="relative w-full p-4 bg-white dark:bg-gray-800 rounded-2xl shadow-inner flex flex-col">
+                  <!-- 닫기 버튼: 프레임 우측 상단 -->
+                  <button @click="unzoomVideo"
+                    class="ml-auto mb-3 z-10 w-6 h-6 flex items-center justify-center bg-black/50 hover:bg-black/70 rounded-full text-white transition-all duration-200">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+
+                  <div
+                    class="relative w-full aspect-video flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-600 rounded-xl overflow-hidden group"
+                    @mouseenter="hoveredVideoId = zoomedVideo?.id" @mouseleave="hoveredVideoId = null">
+                    <!-- 이미지인 경우 -->
+                    <img 
+                      v-if="zoomedVideo && isImageFile(zoomedVideo) && zoomedVideo.displayUrl"
+                      :src="zoomedVideo.displayUrl"
+                      class="object-contain w-full h-full rounded-xl"
+                      crossorigin="anonymous"
+                      @error="(e) => handleImageError(zoomedVideo.id, e)"
+                      draggable="false"
+                      alt=""
+                    />
+                    <!-- 동영상인 경우 -->
+                    <video v-else-if="zoomedVideo && !isImageFile(zoomedVideo) && zoomedVideo.displayUrl" 
+                      ref="zoomVideoRef" 
+                      :src="zoomedVideo.displayUrl"
+                      class="object-cover w-full h-full rounded-xl" 
+                      preload="metadata" 
+                      crossorigin="anonymous"
+                      @timeupdate="onZoomTimeUpdate($event)"
+                      @loadedmetadata="onZoomMetadataLoaded($event)"
+                      @error="(e) => handleZoomVideoError(zoomedVideo.id, e)"
+                      @ended="onZoomVideoEnded()"
+                      draggable="false"></video>
+                    <!-- 동영상 오버레이 (이미지가 아닌 경우만) -->
+                    <div v-if="zoomedVideo && !isImageFile(zoomedVideo)" class="absolute inset-0 pointer-events-none transition-colors duration-300"
+                      :class="zoomPlaying ? 'bg-transparent' : 'bg-black/30'"></div>
+                    <!-- 재생/일시정지 버튼 (동영상만) -->
+                    <button v-if="zoomedVideo && !isImageFile(zoomedVideo)" @click.stop="toggleZoomPlay()" :class="[
+                      !zoomPlaying
+                        ? 'opacity-100 scale-100 pointer-events-auto'
+                        : (hoveredVideoId === zoomedVideo.id
+                          ? 'opacity-100 scale-100 pointer-events-auto'
+                          : 'opacity-0 scale-90 pointer-events-none'),
+                      'absolute inset-0 flex items-center justify-center bg-gradient-to-br from-black/60 to-black/40 backdrop-blur-sm text-white rounded-full w-16 h-16 m-auto transition-all duration-300 hover:scale-110 active:scale-95 z-20'
+                    ]">
+                      <svg v-if="!zoomPlaying" xmlns="http://www.w3.org/2000/svg" fill="currentColor"
+                        viewBox="0.4 -0.7 16 16" class="w-10 h-10">
+                        <path
+                          d="M6.271 4.055a.5.5 0 0 1 .759-.429l4.592 3.11a.5.5 0 0 1 0 .828l-4.592 3.11a.5.5 0 0 1-.759-.429V4.055z" />
+                      </svg>
+                      <svg v-else xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0.4 -0.1 16 16"
+                        class="w-10 h-10">
+                        <path
+                          d="M5.5 3.5A.5.5 0 0 1 6 3h1a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5H6a.5.5 0 0 1-.5-.5v-9zM9.5 3.5A.5.5 0 0 1 10 3h1a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1-.5-.5v-9z" />
+                      </svg>
+                    </button>
+                  </div>
+                  <!-- 하단 진행 바 + 타이틀 영역 (동영상만) -->
+                  <div v-if="zoomedVideo && !isImageFile(zoomedVideo)" class="mt-4 w-full flex flex-col gap-2">
+                    <div ref="zoomProgressBarRef"
+                      class="relative w-full h-3 bg-gray-200 dark:bg-gray-600 rounded-full cursor-pointer overflow-visible"
+                      @click.stop="seekZoomVideo($event)"
+                      @mousedown.stop
+                      @mouseup.stop>
+                      <div
+                        class="h-full bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-full shadow-sm"
+                        :class="{ 'transition-all duration-300': !(isScrubbing && draggingVideoId === zoomedVideo.id) }"
+                        :style="{ width: `${zoomProgress}%` }"></div>
+                      <div
+                        class="absolute top-1/2 h-5 w-5 bg-white rounded-full shadow-lg transform -translate-x-1/2 -translate-y-1/2 transition-all duration-200 border-2 border-emerald-500 z-[20] cursor-grab active:cursor-grabbing"
+                        :class="{ 'transition-none': isScrubbing && draggingVideoId === zoomedVideo.id }"
+                        :style="{ left: `${zoomProgress}%` }" 
+                        @mousedown.stop="startDragging(zoomedVideo.id, $event)"
+                        @mouseup.stop></div>
+                    </div>
+                    <div class="flex items-center justify-between text-xs font-medium text-gray-600 dark:text-gray-300">
+                      <div class="flex items-center gap-2">
+                        <span v-if="zoomedVideo.title || zoomedVideo.name"
+                          class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate max-w-[50vw]">{{ zoomedVideo.title || zoomedVideo.name
+                          }}</span>
+                      </div>
+                      <div class="flex items-center gap-3 text-gray-500 dark:text-gray-400">
+                        <span>{{ formatTime(zoomCurrentTime) }}</span>
+                        <span>/</span>
+                        <span>{{ formatTime(zoomDuration) }}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- 이미지인 경우 타이틀만 표시 -->
+                  <div v-else-if="zoomedVideo && isImageFile(zoomedVideo)" class="mt-4 w-full">
+                    <div class="flex items-center gap-2">
+                      <span v-if="zoomedVideo.title || zoomedVideo.name"
+                        class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate max-w-[50vw]">{{ zoomedVideo.title || zoomedVideo.name
+                        }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Transition>
+        </Teleport>
       </section>
 
       <!-- 우측: 결과/프롬프트 -->
@@ -555,9 +609,10 @@ import { useSettingStore } from '@/stores/settingStore';
 import { marked } from 'marked';
 import Setting from '@/components/Setting.vue';
 import settingIcon from '@/assets/icons/setting.png';
+import { getApiBaseUrl } from '@/utils/apiConfig';
 
 // ==================== 상수 정의 ====================
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001';
+const API_BASE_URL = getApiBaseUrl();
 
 // VIA 파일 목록 조회 함수
 async function loadViaFiles() {
@@ -590,6 +645,21 @@ function getVideoFileExtension(filename) {
 // 지원하지 않는 형식인지 확인하는 함수
 function isUnsupportedFormat(filename) {
   return UNSUPPORTED_VIDEO_FORMATS.includes(getVideoFileExtension(filename));
+}
+
+// 이미지 파일인지 확인하는 함수
+function isImageFile(video) {
+  if (!video) return false;
+  // file 객체가 있으면 type으로 확인
+  if (video.file && video.file.type) {
+    return video.file.type.startsWith('image/');
+  }
+  // 파일명으로 확인
+  const filename = video.title || video.name || '';
+  if (!filename) return false;
+  const ext = getVideoFileExtension(filename);
+  const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'tif'];
+  return imageExtensions.includes(ext.toLowerCase());
 }
 
 // 동영상을 MP4로 변환하는 함수
@@ -655,6 +725,8 @@ const summarizeTranslations = {
     deleteSelected: "선택된 항목 삭제",
     deleteVideo: "동영상 삭제",
     promptPlaceholder: "프롬프트를 입력하세요.",
+    samplePrompt: "샘플 프롬프트",
+    selectSamplePrompt: "샘플 프롬프트 선택...",
     summaryResult: "Summary Result",
     resultDescription: "요약 결과를 확인하고 질문을 입력할 수 있습니다.",
     noMessages: "아직 메시지가 없습니다. 요약을 실행하거나 질문을 입력하세요.",
@@ -680,6 +752,8 @@ const summarizeTranslations = {
     deleteSelected: "Delete Selected",
     deleteVideo: "Delete Video",
     promptPlaceholder: "Enter a prompt...",
+    samplePrompt: "Sample Prompt",
+    selectSamplePrompt: "Select sample prompt...",
     summaryResult: "Summary Result",
     resultDescription: "View summary results and enter questions.",
     noMessages: "No messages yet. Run a summary or enter a question.",
@@ -697,6 +771,90 @@ const tSummarize = computed(() => summarizeTranslations[settingStore.language] |
 const selectedIndexes = ref([]); // 선택된 동영상 id 배열
 const prompt = ref("");
 const response = ref("");
+const selectedSamplePrompt = ref(""); // 선택된 샘플 프롬프트 ID
+
+// 현재 업로드된 파일이 이미지인지 확인
+const hasImageFiles = computed(() => {
+  return videoFiles.value.some(video => isImageFile(video));
+});
+
+// 샘플 프롬프트 목록 (이름만 언어 설정에 따라 변경, 내용은 항상 영어, 이미지/동영상에 따라 다름)
+const samplePrompts = computed(() => {
+  const isImage = hasImageFiles.value;
+  
+  const prompts = [
+    {
+      id: "general_summary",
+      name: settingStore.language === 'ko' ? "일반 요약" : "General Summary",
+      content: isImage
+        ? "Please summarize the main content of this image. Describe important elements, objects, and situations in detail."
+        : "Please summarize the main content of this video. Describe important events and situations in chronological order.",
+      imageOnly: false
+    },
+    {
+      id: "detailed_analysis",
+      name: settingStore.language === 'ko' ? "상세 분석" : "Detailed Analysis",
+      content: isImage
+        ? "Analyze this image in detail and identify all meaningful elements. For each element, provide detailed description including position, appearance, and context."
+        : "Analyze this video frame by frame in detail and identify all meaningful events. For each event, provide start time, end time, and detailed description.",
+      imageOnly: false
+    },
+    {
+      id: "traffic_report",
+      name: settingStore.language === 'ko' ? "교통 상황 보고서" : "Traffic Report",
+      content: isImage
+        ? "Analyze the traffic situation observed in this image and create a report. Include vehicle positions, traffic flow, road conditions, and any unusual situations."
+        : "Analyze the traffic situation observed in this video and create a report. Include vehicle movements, traffic flow, accidents, or unusual situations.",
+      imageOnly: false
+    },
+    {
+      id: "security_monitoring",
+      name: settingStore.language === 'ko' ? "보안 모니터링" : "Security Monitoring",
+      content: isImage
+        ? "Analyze this image from a security monitoring perspective. Describe people's behavior, positions, suspicious activities, and any security-related elements."
+        : "Analyze this video from a security monitoring perspective. Record people's behavior, entry/exit, suspicious activities, etc. in chronological order.",
+      imageOnly: false
+    },
+    {
+      id: "event_timeline",
+      name: settingStore.language === 'ko' ? "이벤트 타임라인" : "Event Timeline",
+      content: isImage
+        ? "Describe all elements and events visible in this image. Organize them in a structured format with detailed descriptions of what is happening."
+        : "Organize all events that occurred in this video in a timeline format. Include the start time, end time, and description of each event.",
+      imageOnly: false
+    },
+    {
+      id: "object_detection",
+      name: settingStore.language === 'ko' ? "객체 감지 및 추적" : "Object Detection & Tracking",
+      content: isImage
+        ? "Detect and describe major objects (people, vehicles, objects, etc.) that appear in this image. Describe their positions, appearances, and relationships."
+        : "Detect and track major objects (people, vehicles, objects, etc.) that appear in this video. Describe the position changes and behavior of each object in chronological order.",
+      imageOnly: false
+    },
+    {
+      id: "physique_comparison",
+      name: settingStore.language === 'ko' ? "체형 비교(이미지 전용)" : "Physique Comparison (Image Only)",
+      content: "You are a multi-image vision-language model. Compare the visible people in Image 1 and Image 2 by clearly observable, non-sensitive physique cues: overall build (slender/average/stocky/muscular), shoulder-to-waist proportion, limb thickness, posture silhouette, and relative scale if a shared reference exists. Output three labeled paragraphs in complete English sentences: \"Image 1 Observations\", \"Image 2 Observations\", and \"Direct Comparison\", and include multiple explicit contrast sentences in \"Direct Comparison\" (e.g., \"Compared to Image 1, Image 2…\"). Do not use timestamps or timeline wording, and do not infer sensitive attributes (age, ethnicity, identity, health).",
+      imageOnly: true
+    }
+  ];
+  
+  // 이미지가 없을 때는 이미지 전용 프롬프트 제외
+  return prompts.filter(prompt => !prompt.imageOnly || isImage);
+});
+
+// 샘플 프롬프트 적용 함수
+function applySamplePrompt() {
+  if (!selectedSamplePrompt.value) return;
+  const sample = samplePrompts.value.find(s => s.id === selectedSamplePrompt.value);
+  if (sample) {
+    prompt.value = sample.content;
+    // 선택 후 드롭다운 초기화
+    nextTick(() => {
+      selectedSamplePrompt.value = "";
+    });
+  }
+}
 // 마지막으로 요약된 비디오의 서버 video_id (다른 함수에서 재사용 가능)
 const summarizedVideoId = ref(null); // 마지막으로 요약된 서버 video_id
 const summarizedVideoMap = ref({}); // 로컬 video.id -> 서버 video_id 매핑 (다중 요약 지원)
@@ -709,9 +867,20 @@ const fileInputRef = ref(null);
 const ask_prompt = ref("");
 // 확대 기능 상태
 const isZoomed = ref(false); // 확대 여부 (멀티 비디오 전용)
-const zoomedIndex = ref(null); // 확대된 비디오 인덱스
+const zoomedIndex = ref(null); // 확대된 비디오 인덱스 (레거시, 호환성 유지)
+const zoomedVideo = ref(null); // 확대된 비디오 객체 (팝업용)
+const zoomVideoRef = ref(null); // 확대 모달의 비디오 엘리먼트 참조
+const zoomProgressBarRef = ref(null); // 확대 모달의 진행바 참조
+const zoomPlaying = ref(false); // 확대 모달 재생 상태
+const zoomProgress = ref(0); // 확대 모달 진행률
+const zoomCurrentTime = ref(0); // 확대 모달 현재 시간
+const zoomDuration = ref(0); // 확대 모달 전체 길이
+let modalMouseDownPos = { x: 0, y: 0 }; // 모달 배경 클릭 감지용
 const settingStore = useSettingStore();
 const videoFiles = ref([]); // Summarize 메뉴의 로컬 동영상 배열
+// 원래 프롬프트 값 저장 (이미지가 없을 때 복원용)
+const originalCaptionPrompt = ref(null);
+const originalAggregationPrompt = ref(null);
 // videoUrls 제거: 템플릿에서 사용되지 않아 메모리 관리 단순화
 const summaryVideoStore = useSummaryVideoStore();
 // 샘플 동영상 경로 (서버에서 제공하는 정적 파일 경로 사용)
@@ -860,8 +1029,8 @@ function createVideoObject(videoData, file = null) {
  */
 function filterVideoFiles(files) {
   return Array.from(files).filter((file) => {
-    if (!file.type.startsWith('video/')) {
-      alert('동영상 파일만 업로드할 수 있습니다.');
+    if (!file.type.startsWith('video/') && !file.type.startsWith('image/')) {
+      alert(settingStore.language === 'ko' ? '동영상 또는 이미지 파일만 업로드할 수 있습니다.' : 'Only video or image files can be uploaded.');
       return false;
     }
     return true;
@@ -1099,6 +1268,9 @@ async function loadVideosFromStore() {
             }
             return true;
           });
+          // 동영상이 바뀌었는데 이전 프롬프트가 남아있으면 혼동되므로 초기화
+          // (새로 로드되는 동영상의 저장된 요약이 있다면 loadSummariesFromDB()에서 다시 채워짐)
+          prompt.value = "";
         }
 
         // Summarize 전용 표시 URL을 분리하여 Video Storage 원본 URL(ObjectURL)과 독립
@@ -1491,6 +1663,12 @@ async function loadSummariesFromDB() {
   if (!userId || videoFiles.value.length === 0) {
     return;
   }
+
+  // 현재 화면에서 "대표"로 볼 동영상(단일/첫 선택/첫 항목) 기준으로 프롬프트를 동기화
+  const primaryVideoId =
+    (Array.isArray(selectedIndexes.value) && selectedIndexes.value.length > 0
+      ? selectedIndexes.value[0]
+      : (videoFiles.value[0]?.id ?? null));
   
   try {
     // 각 동영상의 요약 결과를 조회
@@ -1519,9 +1697,17 @@ async function loadSummariesFromDB() {
                     // 요약 결과를 동영상 객체에 저장
                     video.summary = data.summary.summary_text;
                     
-                    // 프롬프트가 있으면 prompt에 설정 (첫 번째 요약 결과의 프롬프트만 사용)
-                    if (data.summary.prompt && !prompt.value) {
-                      prompt.value = data.summary.prompt;
+                    // 프롬프트가 있으면 현재 로드된 동영상 컨텍스트에 맞게 prompt를 동기화
+                    // - 단일 동영상: 항상 해당 프롬프트로 세팅
+                    // - 다중 동영상: 첫 선택(없으면 첫 항목)만 프롬프트를 세팅 (다른 영상의 프롬프트로 덮어쓰지 않음)
+                    if (data.summary.prompt) {
+                      const shouldSetPrompt =
+                        (videoFiles.value.length === 1) ||
+                        (!prompt.value) ||
+                        (primaryVideoId && video.id === primaryVideoId);
+                      if (shouldSetPrompt) {
+                        prompt.value = data.summary.prompt;
+                      }
                     }
                     
                     // 요약된 비디오 ID 매핑 업데이트 (VIA 서버의 video_id 사용)
@@ -1779,6 +1965,75 @@ function autoSaveState() {
   }, AUTO_SAVE_DELAY);
 }
 
+// 이미지/동영상 업로드 감지 및 프롬프트 자동 변경
+watch(videoFiles, (newFiles, oldFiles) => {
+  // 이미지 파일이 있는지 확인
+  const hasImage = newFiles.some(video => isImageFile(video));
+  const hadImage = oldFiles && oldFiles.some(video => isImageFile(video));
+  const hasVideo = newFiles.some(video => !isImageFile(video));
+  
+  // 현재 프롬프트가 이미지 프롬프트인지 확인
+  const isCurrentlyImagePrompt = settingStore.captionPrompt === settingStore.imageCaptionPrompt &&
+                                  settingStore.aggregationPrompt === settingStore.imageAggregationPrompt;
+  
+  // 동영상용 기본 프롬프트 (settingStore의 기본값)
+  const defaultCaptionPrompt = "You will be given captions from sequential clips of a video. Aggregate captions in the format start_time:end_time:caption based on whether captions are related to one another or create a continuous scene.";
+  const defaultAggregationPrompt = "Based on the available information, generate a summary that captures the important events in the video. The summary should be organized chronologically and in logical sections. This should be a concise, yet descriptive summary of all the important events. The format should be intuitive and easy for a user to read and understand what happened. Format the output in Markdown so it can be displayed nicely. Timestamps are in seconds so please format them as SS.SSS";
+  
+  if (hasImage && !hadImage) {
+    // 이미지가 새로 추가되었을 때만 원래 값 저장 및 변경
+    if (originalCaptionPrompt.value === null && !isCurrentlyImagePrompt) {
+      originalCaptionPrompt.value = settingStore.captionPrompt;
+    }
+    if (originalAggregationPrompt.value === null && !isCurrentlyImagePrompt) {
+      originalAggregationPrompt.value = settingStore.aggregationPrompt;
+    }
+    
+    // 이미지 전용 프롬프트로 변경
+    settingStore.captionPrompt = settingStore.imageCaptionPrompt;
+    settingStore.aggregationPrompt = settingStore.imageAggregationPrompt;
+  } else if (!hasImage && hasVideo) {
+    // 이미지가 없고 동영상만 있을 때
+    if (isCurrentlyImagePrompt) {
+      // 현재 이미지 프롬프트 상태이면 동영상용 프롬프트로 변경
+      if (originalCaptionPrompt.value !== null) {
+        settingStore.captionPrompt = originalCaptionPrompt.value;
+        originalCaptionPrompt.value = null;
+      } else {
+        // 원래 값이 저장되지 않았으면 기본 동영상 프롬프트로 복원
+        settingStore.captionPrompt = defaultCaptionPrompt;
+      }
+      
+      if (originalAggregationPrompt.value !== null) {
+        settingStore.aggregationPrompt = originalAggregationPrompt.value;
+        originalAggregationPrompt.value = null;
+      } else {
+        settingStore.aggregationPrompt = defaultAggregationPrompt;
+      }
+    } else if (hadImage) {
+      // 이미지가 삭제되었을 때 원래 값으로 복원
+      if (originalCaptionPrompt.value !== null) {
+        settingStore.captionPrompt = originalCaptionPrompt.value;
+        originalCaptionPrompt.value = null;
+      }
+      if (originalAggregationPrompt.value !== null) {
+        settingStore.aggregationPrompt = originalAggregationPrompt.value;
+        originalAggregationPrompt.value = null;
+      }
+    }
+  } else if (!hasImage && !hasVideo && hadImage) {
+    // 파일이 모두 삭제되었을 때 원래 값으로 복원
+    if (originalCaptionPrompt.value !== null) {
+      settingStore.captionPrompt = originalCaptionPrompt.value;
+      originalCaptionPrompt.value = null;
+    }
+    if (originalAggregationPrompt.value !== null) {
+      settingStore.aggregationPrompt = originalAggregationPrompt.value;
+      originalAggregationPrompt.value = null;
+    }
+  }
+}, { deep: true });
+
 // 주요 상태 변경 감지
 watch([prompt, response, chatMessages, ask_prompt, selectedIndexes, videoFiles, activeTasks], () => {
   autoSaveState();
@@ -1885,11 +2140,15 @@ async function onDrop(e) {
         });
       }
       
-      // 프로그레스 바를 100%로 업데이트 (리스트에 추가된 후)
-      const uploadItem = uploadProgress.value.find(u => u.id === uploadId);
-      if (uploadItem) {
-        uploadItem.progress = 100;
-        uploadItem.status = '완료';
+      // 업로드 완료된 항목을 즉시 제거
+      const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+      if (uploadItemIndex !== -1) {
+        uploadProgress.value.splice(uploadItemIndex, 1);
+      }
+      
+      // 모든 업로드가 완료되면 모달 닫기
+      if (uploadProgress.value.length === 0) {
+        showUploadModal.value = false;
       }
       
       // Search.vue에 이벤트 전달하여 동영상 목록 새로고침
@@ -1923,12 +2182,26 @@ async function onDrop(e) {
     } catch (error) {
       // 업로드 취소는 정상적인 동작이므로 에러로 처리하지 않음
       if (error.message === '업로드 취소됨') {
+        // 취소된 항목도 제거
+        const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+        if (uploadItemIndex !== -1) {
+          uploadProgress.value.splice(uploadItemIndex, 1);
+        }
+        // 모든 업로드가 완료되면 모달 닫기
+        if (uploadProgress.value.length === 0) {
+          showUploadModal.value = false;
+        }
         return; // 조용히 종료
       }
       console.error('동영상 업로드 실패:', error);
-      const uploadItem = uploadProgress.value.find(u => u.id === uploadId);
-      if (uploadItem) {
-        uploadItem.status = `실패: ${error.message}`;
+      // 실패한 항목도 제거
+      const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+      if (uploadItemIndex !== -1) {
+        uploadProgress.value.splice(uploadItemIndex, 1);
+      }
+      // 모든 업로드가 완료되면 모달 닫기
+      if (uploadProgress.value.length === 0) {
+        showUploadModal.value = false;
       }
     }
   });
@@ -2027,13 +2300,151 @@ async function contextDelete() {
 
 function zoomVideo(idx) {
   if (idx == null || idx < 0 || idx >= videoFiles.value.length) return;
-  zoomedIndex.value = idx;
+  const video = videoFiles.value[idx];
+  if (!video) return;
+  
+  // 그리드 비디오 상태 캡처 후 그리드 재생 중이면 일시정지
+  const gridEl = videoRefs.value[video.id];
+  let currentT = 0;
+  const wasPlaying = playingVideoIds.value.includes(video.id) && gridEl;
+  if (gridEl) {
+    currentT = gridEl.currentTime;
+    if (wasPlaying) {
+      // 그리드 비디오 재생 중이었다면 일시정지 후 재생 목록에서 제거 (확대 모달은 독립 재생 상태 사용)
+      gridEl.pause();
+      const idx = playingVideoIds.value.indexOf(video.id);
+      if (idx !== -1) playingVideoIds.value.splice(idx, 1);
+    }
+  }
+  
+  zoomedVideo.value = video;
+  zoomedIndex.value = idx; // 레거시 호환성
   isZoomed.value = true;
+  zoomPlaying.value = wasPlaying; // 확대 모달 재생 상태 독립 관리
+  zoomProgress.value = progress.value[video.id] || 0; // 기존 진행률 초기화
+  zoomCurrentTime.value = currentT;
+  zoomDuration.value = durationMap.value[video.id] || 0;
+  
+  nextTick(() => {
+    if (zoomVideoRef.value && !isImageFile(video)) {
+      try {
+        if (currentT > 0) zoomVideoRef.value.currentTime = currentT;
+        if (zoomPlaying.value) zoomVideoRef.value.play();
+      } catch (e) {
+        console.warn('Zoom video sync 실패:', e);
+      }
+    }
+  });
 }
 
 function unzoomVideo() {
+  // 확대 모달 상태 -> 그리드 동기화 (최종 시점 반영)
+  const zVideo = zoomedVideo.value;
+  const zoomEl = zoomVideoRef.value;
+  const wasPlaying = zoomEl && !zoomEl.paused && zoomPlaying.value;
+  let currentT = 0;
+  if (zoomEl && !isImageFile(zVideo)) {
+    currentT = zoomEl.currentTime;
+    zoomEl.pause();
+  }
+
   isZoomed.value = false;
+  zoomedVideo.value = null;
   zoomedIndex.value = null;
+  
+  nextTick(() => {
+    if (zVideo) {
+      const gridEl = videoRefs.value[zVideo.id];
+      if (gridEl && !isImageFile(zVideo)) {
+        try {
+          if (currentT > 0) gridEl.currentTime = currentT;
+          if (wasPlaying) {
+            gridEl.play();
+            if (!playingVideoIds.value.includes(zVideo.id)) {
+              playingVideoIds.value.push(zVideo.id);
+            }
+          }
+        } catch (e) {
+          console.warn('Grid video sync 실패:', e);
+        }
+      }
+    }
+  });
+}
+
+// 팝업 배경 클릭 핸들러 (드래그 방지)
+function handleModalBackgroundClick(event, closeFunction) {
+  // 배경이 아닌 내부 컨텐츠를 클릭한 경우 무시
+  if (event.target !== event.currentTarget) {
+    return;
+  }
+  
+  // mousedown 위치 저장
+  if (event.type === 'mousedown') {
+    modalMouseDownPos = { x: event.clientX, y: event.clientY };
+    return;
+  }
+  
+  // mouseup에서 mousedown과 같은 위치인지 확인 (드래그가 아닌 클릭인지)
+  const dx = Math.abs(event.clientX - modalMouseDownPos.x);
+  const dy = Math.abs(event.clientY - modalMouseDownPos.y);
+  if (dx < 5 && dy < 5) {
+    // 클릭으로 판단하여 닫기
+    closeFunction();
+  }
+}
+
+// 확대 모달 비디오 시간 업데이트
+function onZoomTimeUpdate(event) {
+  if (!zoomVideoRef.value) return;
+  const video = zoomVideoRef.value;
+  if (typeof video.duration !== 'number' || !Number.isFinite(video.duration) || video.duration === 0) return;
+  zoomProgress.value = (video.currentTime / video.duration) * 100;
+  zoomCurrentTime.value = video.currentTime;
+  zoomDuration.value = video.duration;
+}
+
+// 확대 모달 비디오 메타데이터 로드
+function onZoomMetadataLoaded(event) {
+  if (event.target) {
+    const { duration } = event.target;
+    if (duration && isFinite(duration)) {
+      zoomDuration.value = duration;
+    }
+  }
+}
+
+// 확대 모달 비디오 종료
+function onZoomVideoEnded() {
+  zoomPlaying.value = false;
+  if (zoomVideoRef.value) {
+    zoomVideoRef.value.currentTime = 0;
+    zoomProgress.value = 0;
+    zoomCurrentTime.value = 0;
+  }
+}
+
+// 확대 모달 재생/일시정지 토글
+function toggleZoomPlay() {
+  if (!zoomVideoRef.value) return;
+  if (zoomPlaying.value) {
+    zoomVideoRef.value.pause();
+    zoomPlaying.value = false;
+  } else {
+    zoomVideoRef.value.play();
+    zoomPlaying.value = true;
+  }
+}
+
+// 확대 모달 비디오 시크
+function seekZoomVideo(event) {
+  if (!zoomVideoRef.value || !zoomedVideo.value) return;
+  const { left, width } = event.currentTarget.getBoundingClientRect();
+  const ratio = (event.clientX - left) / width;
+  const clamped = Math.max(0, Math.min(ratio, 1));
+  zoomVideoRef.value.currentTime = clamped * zoomVideoRef.value.duration;
+  zoomProgress.value = clamped * 100;
+  zoomCurrentTime.value = zoomVideoRef.value.currentTime;
 }
 
 async function onUpload(e) {
@@ -2095,11 +2506,15 @@ async function onUpload(e) {
         });
       }
       
-      // 프로그레스 바를 100%로 업데이트 (리스트에 추가된 후)
-      const uploadItem = uploadProgress.value.find(u => u.id === uploadId);
-      if (uploadItem) {
-        uploadItem.progress = 100;
-        uploadItem.status = '완료';
+      // 업로드 완료된 항목을 즉시 제거
+      const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+      if (uploadItemIndex !== -1) {
+        uploadProgress.value.splice(uploadItemIndex, 1);
+      }
+      
+      // 모든 업로드가 완료되면 모달 닫기
+      if (uploadProgress.value.length === 0) {
+        showUploadModal.value = false;
       }
       
       // Search.vue에 이벤트 전달하여 동영상 목록 새로고침
@@ -2133,12 +2548,26 @@ async function onUpload(e) {
     } catch (error) {
       // 업로드 취소는 정상적인 동작이므로 에러로 처리하지 않음
       if (error.message === '업로드 취소됨') {
+        // 취소된 항목도 제거
+        const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+        if (uploadItemIndex !== -1) {
+          uploadProgress.value.splice(uploadItemIndex, 1);
+        }
+        // 모든 업로드가 완료되면 모달 닫기
+        if (uploadProgress.value.length === 0) {
+          showUploadModal.value = false;
+        }
         return; // 조용히 종료
       }
       console.error('동영상 업로드 실패:', error);
-      const uploadItem = uploadProgress.value.find(u => u.id === uploadId);
-      if (uploadItem) {
-        uploadItem.status = `실패: ${error.message}`;
+      // 실패한 항목도 제거
+      const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+      if (uploadItemIndex !== -1) {
+        uploadProgress.value.splice(uploadItemIndex, 1);
+      }
+      // 모든 업로드가 완료되면 모달 닫기
+      if (uploadProgress.value.length === 0) {
+        showUploadModal.value = false;
       }
     }
   });
@@ -2218,6 +2647,224 @@ async function restoreAndContinueInference(savedTask) {
 /**
  * 특정 인덱스부터 요약 계속 진행 (백그라운드에서 계속 실행)
  */
+// 멀티 이미지 그룹 처리 함수
+async function processImageGroup(imageGroup, startIdx, totalCount, taskId, taskPrompt, currentTask, taskInfo, updateTaskState) {
+  const VSS_API_URL = `${API_BASE_URL}/vss-summarize-multi`;
+  const userId = localStorage.getItem("vss_user_id");
+  
+  // NaN 방지 헬퍼
+  const safeNum = (val, fallback) => {
+    const n = Number(val);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  
+  // 모든 이미지의 File 객체 복원 및 video_id 수집
+  const imageVideoIds = [];
+  const imageNames = [];
+  
+  for (const imageObj of imageGroup) {
+    // File 복원 시도
+    if (imageObj && !(imageObj.file instanceof File)) {
+      await restoreMissingFile(imageObj);
+    }
+    if (!imageObj || !(imageObj.file instanceof File)) {
+      addChatMessage({
+        id: Date.now() + Math.random(),
+        role: 'system',
+        content: `❌ '${imageObj?.name || 'Unnamed'}' 파일 객체를 확보하지 못했습니다. 건너뜁니다.`
+      });
+      continue;
+    }
+    
+    // DB에서 VIA 서버의 video_id 조회
+    let viaVideoId = null;
+    if (userId && imageObj.dbId) {
+      try {
+        const videosResponse = await fetch(`${API_BASE_URL}/videos?user_id=${userId}`);
+        if (videosResponse.ok) {
+          const videosData = await videosResponse.json();
+          if (videosData.success && videosData.videos) {
+            const video = videosData.videos.find(v => v.id === imageObj.dbId);
+            if (video && video.video_id) {
+              viaVideoId = video.video_id;
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('VIA video_id 조회 실패:', error);
+      }
+    }
+    
+    if (!viaVideoId) {
+      addChatMessage({
+        id: Date.now() + Math.random(),
+        role: 'system',
+        content: `❌ '${imageObj?.name || 'Unnamed'}'의 VIA 서버 video_id를 찾을 수 없습니다. 이미지를 먼저 업로드해주세요.`
+      });
+      continue;
+    }
+    
+    imageVideoIds.push(viaVideoId);
+    imageNames.push(imageObj.name || 'Unnamed');
+  }
+  
+  if (imageVideoIds.length === 0) {
+    return; // 처리할 이미지가 없음
+  }
+  
+  const loadingId = Date.now() + Math.random();
+  const startTime = Date.now();
+  
+  // 로딩 메시지 추가
+  if (document.visibilityState === 'visible') {
+    const imageNamesStr = imageNames.join(', ');
+    addChatMessage({
+      id: loadingId,
+      role: 'system',
+      content: `⏳ [${startIdx + 1}-${startIdx + imageGroup.length}/${totalCount}] 이미지 그룹 요약 중... (${imageGroup.length}개: ${imageNamesStr})`
+    });
+  }
+  
+  // 로딩 ID 저장
+  if (currentTask) {
+    currentTask.loadingIds.push(loadingId);
+  }
+  
+  // 작업 상태 업데이트
+  if (taskInfo) {
+    taskInfo.currentIndex = startIdx + imageGroup.length - 1;
+    updateTaskState();
+  }
+  
+  const formData = new FormData();
+  // 여러 video_id를 JSON 배열로 전달
+  formData.append('video_ids', JSON.stringify(imageVideoIds));
+  formData.append('prompt', taskPrompt ?? prompt.value ?? '');
+  formData.append('csprompt', settingStore.imageCaptionPrompt ?? '');
+  formData.append('saprompt', settingStore.imageAggregationPrompt ?? '');
+  formData.append('chunk_duration', safeNum(settingStore.chunk, 10));
+  formData.append('num_frames_per_chunk', safeNum(settingStore.nfmc, 1));
+  formData.append('frame_width', safeNum(settingStore.frameWidth, 224));
+  formData.append('frame_height', safeNum(settingStore.frameHeight, 224));
+  formData.append('top_k', safeNum(settingStore.topk, 1));
+  formData.append('top_p', safeNum(settingStore.topp, 1.0));
+  formData.append('temperature', safeNum(settingStore.temp, 1.0));
+  formData.append('max_tokens', safeNum(settingStore.maxTokens, 512));
+  formData.append('seed', safeNum(settingStore.seed, 1));
+  formData.append('batch_size', safeNum(settingStore.batch, 6));
+  formData.append('rag_batch_size', safeNum(settingStore.RAG_batch, 1));
+  formData.append('rag_top_k', safeNum(settingStore.RAG_topk, 1));
+  formData.append('summary_top_p', safeNum(settingStore.S_TopP, 1.0));
+  formData.append('summary_temperature', safeNum(settingStore.S_TEMPERATURE, 1.0));
+  formData.append('summary_max_tokens', safeNum(settingStore.SMAX_TOKENS, 512));
+  formData.append('chat_top_p', safeNum(settingStore.C_TopP, 1.0));
+  formData.append('chat_temperature', safeNum(settingStore.C_TEMPERATURE, 1.0));
+  formData.append('chat_max_tokens', safeNum(settingStore.C_MAX_TOKENS, 512));
+  formData.append('alert_top_p', safeNum(settingStore.A_TopP, 1.0));
+  formData.append('alert_temperature', safeNum(settingStore.A_TEMPERATURE, 1.0));
+  formData.append('alert_max_tokens', safeNum(settingStore.A_MAX_TOKENS, 512));
+  formData.append('enable_audio', 'false'); // 이미지는 오디오 없음
+  
+  try {
+    const res = await fetch(VSS_API_URL, { method: 'POST', body: formData });
+    const endTime = Date.now();
+    const elapsed = ((endTime - startTime) / 1000).toFixed(2);
+    
+    if (!res.ok) {
+      let errText = await res.text();
+      const errHtml = `❌ [${startIdx + 1}-${startIdx + imageGroup.length}/${totalCount}] 이미지 그룹 요약 실패 (HTTP ${res.status})<br><code>${errText}</code><br><div class='text-xs text-gray-500'>시간: ${elapsed}s</div>`;
+      
+      if (taskInfo) {
+        imageGroup.forEach(img => {
+          taskInfo.failedVideos.push({
+            videoId: img.id,
+            videoName: img.name,
+            error: errText
+          });
+        });
+        updateTaskState();
+      }
+      
+      if (document.visibilityState === 'visible') {
+        const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
+        if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
+        addChatMessage({ id: Date.now() + Math.random(), role: 'system', content: errHtml });
+      }
+      return;
+    }
+    
+    const data = await res.json();
+    const summaryText = data.summary || '';
+    
+    // 각 이미지에 요약 결과 저장 및 video_id 매핑 저장
+    imageGroup.forEach((img, i) => {
+      const videoInFiles = videoFiles.value.find(v => v.id === img.id);
+      if (videoInFiles) {
+        videoInFiles.summary = summaryText;
+      }
+      img.summary = summaryText;
+      
+      // 각 이미지의 video_id를 summarizedVideoMap에 저장 (쿼리 기능을 위해)
+      if (i < imageVideoIds.length) {
+        summarizedVideoMap.value[img.id] = imageVideoIds[i];
+      }
+    });
+    
+    // 첫 번째 이미지의 video_id를 summarizedVideoId에 저장 (쿼리 기능을 위해)
+    // 멀티 이미지의 경우 첫 번째 이미지의 video_id를 사용하여 쿼리 가능하도록 함
+    if (imageVideoIds.length > 0) {
+      summarizedVideoId.value = imageVideoIds[0];
+      console.log(`[CA-RAG DEBUG] 멀티 이미지 요약 완료: summarizedVideoId=${imageVideoIds[0]}, summarizedVideoMap에 ${imageGroup.length}개 이미지 저장됨`);
+    }
+    
+    const markedsummary = marked.parse(summaryText);
+    const imageNamesStr = imageNames.join(', ');
+    const summaryHtml = `<div class='font-semibold'>✅ [${startIdx + 1}-${startIdx + imageGroup.length}/${totalCount}] 이미지 그룹 요약 완료 (${imageGroup.length}개: ${imageNamesStr})</div><br>${markedsummary}<br><div class='text-xs text-gray-500'>시간: ${elapsed}s</div>`;
+    response.value = summaryHtml;
+    
+    // 작업 완료 결과 저장
+    if (taskInfo) {
+      imageGroup.forEach((img, i) => {
+        taskInfo.completedVideos.push({
+          videoId: img.id,
+          videoName: img.name,
+          serverVideoId: i < imageVideoIds.length ? imageVideoIds[i] : imageVideoIds[0], // 각 이미지의 video_id 사용
+          summaryText
+        });
+      });
+      updateTaskState();
+    }
+    
+    // UI 업데이트
+    if (document.visibilityState === 'visible') {
+      const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
+      if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
+      addChatMessage({ id: Date.now() + Math.random(), role: 'assistant', content: summaryHtml });
+    }
+  } catch (e) {
+    const endTime = Date.now();
+    const elapsed = ((endTime - startTime) / 1000).toFixed(2);
+    const errHtml = `❌ [${startIdx + 1}-${startIdx + imageGroup.length}/${totalCount}] 이미지 그룹 요약 네트워크 오류: ${(e && e.message) || 'unknown'}<br><div class='text-xs text-gray-500'>시간: ${elapsed}s</div>`;
+    
+    if (taskInfo) {
+      imageGroup.forEach(img => {
+        taskInfo.failedVideos.push({
+          videoId: img.id,
+          videoName: img.name,
+          error: (e && e.message) || 'unknown'
+        });
+      });
+      updateTaskState();
+    }
+    
+    if (document.visibilityState === 'visible') {
+      const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
+      if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
+      addChatMessage({ id: Date.now() + Math.random(), role: 'system', content: errHtml });
+    }
+  }
+}
+
 async function continueInferenceFromIndex(taskId, targetVideos, startIndex, totalCount, taskPrompt) {
   const VSS_API_URL = `${API_BASE_URL}/vss-summarize`;
   
@@ -2264,8 +2911,36 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
     return Number.isFinite(n) ? n : fallback;
   };
   
-  for (let idx = startIndex; idx < targetVideos.length; idx++) {
-    const videoObj = targetVideos[idx];
+  // 이미지 파일들을 그룹화 (멀티 이미지 VLM 지원)
+  let idx = startIndex;
+  while (idx < targetVideos.length) {
+    const currentVideo = targetVideos[idx];
+    
+    // 현재 파일이 이미지인지 확인
+    const isCurrentImage = isImageFile(currentVideo);
+    
+    // 이미지인 경우: 연속된 이미지들을 그룹화
+    if (isCurrentImage) {
+      const imageGroup = [];
+      let groupIdx = idx;
+      
+      // 연속된 이미지들을 수집
+      while (groupIdx < targetVideos.length && isImageFile(targetVideos[groupIdx])) {
+        imageGroup.push(targetVideos[groupIdx]);
+        groupIdx++;
+      }
+      
+      // 이미지 그룹을 한 번에 처리
+      if (imageGroup.length > 0) {
+        const currentTask = activeTasks.value.find(t => t.taskId === taskId);
+        await processImageGroup(imageGroup, idx, totalCount, taskId, taskPrompt, currentTask, taskInfo, updateTaskState);
+        idx = groupIdx; // 다음 비이미지 파일로 이동
+        continue;
+      }
+    }
+    
+    // 비이미지 파일 또는 단일 이미지 처리 (기존 로직)
+    const videoObj = currentVideo;
     
     // 작업 상태 업데이트 (로컬 및 전역)
     const currentTask = activeTasks.value.find(t => t.taskId === taskId);
@@ -2341,8 +3016,18 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
     const formData = new FormData();
     formData.append('file', videoObj.file);
     formData.append('prompt', taskPrompt ?? prompt.value ?? '');
-    formData.append('csprompt', settingStore.captionPrompt ?? '');
-    formData.append('saprompt', settingStore.aggregationPrompt ?? '');
+    
+    // 이미지인 경우 이미지용 프롬프트 사용, 동영상인 경우 기본 프롬프트 사용
+    const isImage = isImageFile(videoObj);
+    const captionPromptToUse = isImage 
+      ? (settingStore.imageCaptionPrompt ?? '') 
+      : (settingStore.captionPrompt ?? '');
+    const aggregationPromptToUse = isImage 
+      ? (settingStore.imageAggregationPrompt ?? '') 
+      : (settingStore.aggregationPrompt ?? '');
+    
+    formData.append('csprompt', captionPromptToUse);
+    formData.append('saprompt', aggregationPromptToUse);
     formData.append('chunk_duration', safeNum(settingStore.chunk, 10));
     formData.append('num_frames_per_chunk', safeNum(settingStore.nfmc, 1));
     formData.append('frame_width', safeNum(settingStore.frameWidth, 224));
@@ -2603,6 +3288,8 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
       const lidx = currentTask.loadingIds.indexOf(loadingId);
       if (lidx !== -1) currentTask.loadingIds.splice(lidx, 1);
     }
+    
+    idx++; // 다음 파일로 이동
   }
   
   // 작업 완료 처리
@@ -2829,12 +3516,22 @@ async function onAskConfirmed(q) {
   if (selectedIndexes.value.length > 0) {
     const localId = selectedIndexes.value[0];
     serverVideoIdForQuery = summarizedVideoMap.value[localId];
+    console.log(`[CA-RAG DEBUG] 선택된 이미지의 video_id 조회: localId=${localId}, video_id=${serverVideoIdForQuery}`);
   }
-  if (!serverVideoIdForQuery) serverVideoIdForQuery = summarizedVideoId.value;
+  if (!serverVideoIdForQuery) {
+    serverVideoIdForQuery = summarizedVideoId.value;
+    console.log(`[CA-RAG DEBUG] summarizedVideoId 사용: ${serverVideoIdForQuery}`);
+  }
+
+  console.log(`[CA-RAG DEBUG] 쿼리용 video_id 최종 결정: ${serverVideoIdForQuery}`);
+  console.log(`[CA-RAG DEBUG] summarizedVideoMap 상태:`, Object.keys(summarizedVideoMap.value).length, '개 항목');
+  console.log(`[CA-RAG DEBUG] summarizedVideoId 상태:`, summarizedVideoId.value);
 
   if (serverVideoIdForQuery) {
     formData.append('video_id', serverVideoIdForQuery);
+    console.log(`[CA-RAG DEBUG] ✅ video_id 전달됨: ${serverVideoIdForQuery}`);
   } else {
+    console.warn(`[CA-RAG DEBUG] ⚠️ video_id가 없어 새 파일 업로드 필요`);
     // File 복원 시도
     if (videoObj && !(videoObj.file instanceof File)) {
       await restoreMissingFile(videoObj);
@@ -2939,6 +3636,61 @@ function onVideoEnded(videoId) {
   if (idx !== -1) playingVideoIds.value.splice(idx, 1);
 }
 
+function handleImageError(videoId, event) {
+  const video = videoFiles.value.find(v => v.id === videoId);
+  if (!video) return;
+  console.warn('이미지 로드 실패:', video.title || video.name, video.displayUrl, event);
+  // 이미지 로드 실패 시 displayUrl을 null로 설정하여 대체 UI 표시
+  video.displayUrl = null;
+}
+
+function handleVideoError(videoId, event) {
+  const video = videoFiles.value.find(v => v.id === videoId);
+  if (!video) return;
+  console.warn('비디오 로드 실패:', video.title || video.name, video.displayUrl, event);
+  // 더 이상 재요청하지 않도록 URL 제거
+  video.displayUrl = null;
+  video.originUrl = video.originUrl || null;
+
+  // 목록 및 선택에서 제거 (삭제된 파일을 계속 요청하지 않도록)
+  const nextVideos = videoFiles.value.filter(v => v.id !== videoId);
+  if (nextVideos.length !== videoFiles.value.length) {
+    videoFiles.value = nextVideos;
+  }
+  selectedIndexes.value = selectedIndexes.value.filter(id => id !== videoId);
+
+  // 확대 모달 상태 정리
+  if (zoomedVideo.value && zoomedVideo.value.id === videoId) {
+    isZoomed.value = false;
+    zoomedVideo.value = null;
+    zoomedIndex.value = null;
+    zoomPlaying.value = false;
+  }
+
+  // 스토어와 로컬 상태 갱신
+  if (summaryVideoStore && typeof summaryVideoStore.setVideos === 'function') {
+    const storeVideos = videoFiles.value.map(v => ({
+      id: v.id,
+      title: v.name,
+      name: v.name,
+      url: v.originUrl || v.displayUrl,
+      originUrl: v.originUrl,
+      displayUrl: v.displayUrl,
+      objectUrl: v.summaryObjectUrl,
+      date: v.date,
+      file: v.file,
+      summary: v.summary || '',
+      dbId: v.dbId
+    }));
+    summaryVideoStore.setVideos(storeVideos);
+  }
+  saveStateToLocalStorage();
+}
+
+function handleZoomVideoError(videoId, event) {
+  handleVideoError(videoId, event);
+}
+
 // 시간 포맷터 (mm:ss)
 function formatTime(sec) {
   if (!Number.isFinite(sec)) return '00:00';
@@ -2995,6 +3747,9 @@ function uploadVideoWithProgress(file, userId, uploadId) {
 
     // 활성 업로드 목록에 추가 (취소 가능하도록)
     activeUploads.value[uploadId] = xhr;
+
+    // 모든 파일은 /upload-video 엔드포인트 사용
+    const uploadEndpoint = `${API_BASE_URL}/upload-video`;
 
     // 진행률 업데이트 (99%까지만 표시)
     xhr.upload.addEventListener('progress', (e) => {
@@ -3066,7 +3821,7 @@ function uploadVideoWithProgress(file, userId, uploadId) {
       reject(new Error('업로드 취소됨'));
     });
 
-    xhr.open('POST', `${API_BASE_URL}/upload-video`);
+    xhr.open('POST', uploadEndpoint);
     xhr.send(formData);
   });
 }
@@ -3451,5 +4206,27 @@ function generateReportContent(videos) {
 
 .transition-all {
   transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* 모달 트랜지션 */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .bg-white,
+.modal-leave-active .bg-white {
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.modal-enter-from .bg-white,
+.modal-leave-to .bg-white {
+  transform: scale(0.9);
+  opacity: 0;
 }
 </style>

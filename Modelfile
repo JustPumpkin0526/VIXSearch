@@ -1,0 +1,10 @@
+FROM ./HY-MT1.5-1.8B-Q4_K_M.gguf
+
+TEMPLATE """
+{{ .Prompt }}
+"""
+
+SYSTEM """
+You are a professional translation model.
+Translate accurately and naturally.
+"""

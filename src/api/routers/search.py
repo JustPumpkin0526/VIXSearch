@@ -8,7 +8,7 @@ import logging
 import aiohttp
 from typing import Optional, List
 from pathlib import Path
-from fastapi import APIRouter, Request, File, Form, UploadFile, HTTPException, Query
+from fastapi import APIRouter, Request, File, Form, UploadFile, HTTPException, Query, Body
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from moviepy.video.io.VideoFileClip import VideoFileClip
@@ -17,12 +17,21 @@ from services.video_service import _save_summary_to_db
 from utils.helpers import (
     ensure_vss_client, get_via_model, get_recommended_chunk_size,
     create_summarize_prompt, build_query_prompt, build_summarize_params,
-    build_query_video_params, get_session
+    build_query_video_params, get_session, translate_to_korean, check_video_type
 )
 from utils.video_utils import parse_timestamps
 from config.settings import (
-    CLIPS_DIR, TMP_DIR, CLIP_CLEANUP_AGE, DEFAULT_QUERY_TIMESTAMP_SUFFIX,
-    OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, VIA_SERVER_URL
+    CLIPS_DIR, TMP_DIR, CLIP_CLEANUP_AGE, DEFAULT_SUMMARIZE_PROMPT,
+    OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, VIA_SERVER_URL, CV_EVENT_DETECTOR_API_URL,
+    DEFAULT_QUERY_TEMPERATURE, DEFAULT_QUERY_SEED, DEFAULT_QUERY_MAX_TOKENS,
+    DEFAULT_QUERY_TOP_P, DEFAULT_QUERY_TOP_K,
+    DEFAULT_TOP_K, DEFAULT_TOP_P, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_SEED,
+    DEFAULT_NUM_FRAMES_PER_CHUNK, DEFAULT_FRAME_WIDTH, DEFAULT_FRAME_HEIGHT,
+    DEFAULT_BATCH_SIZE, DEFAULT_RAG_BATCH_SIZE, DEFAULT_RAG_TOP_K,
+    DEFAULT_SUMMARIZE_TOP_P, DEFAULT_SUMMARIZE_TEMPERATURE, DEFAULT_SUMMARIZE_MAX_TOKENS,
+    DEFAULT_CHAT_TOP_P, DEFAULT_CHAT_TEMPERATURE, DEFAULT_CHAT_MAX_TOKENS,
+    DEFAULT_NOTIFICATION_TOP_P, DEFAULT_NOTIFICATION_TEMPERATURE, DEFAULT_NOTIFICATION_MAX_TOKENS,
+    DEFAULT_ENABLE_AUDIO
 )
 
 logger = logging.getLogger(__name__)
@@ -53,13 +62,58 @@ async def remove_all_media(session: aiohttp.ClientSession, media_ids):
             logger.error(f"Error deleting media {media_id}: {e}")
 
 # ==================== 엔드포인트 ====================
+@router.post("/check-search-mode")
+async def check_search_mode(
+    request: Request
+):
+    # 요청 본문에서 query 추출
+    body = await request.json()
+    query = body.get("query", "")
+    
+    if not query:
+        raise HTTPException(status_code=400, detail="query parameter is required")
+    
+    if "찾아" in query or "장면" in query:
+        return {"search_mode": "gen_clip"}
+    else:
+        return {"search_mode": "query"}
+
 @router.post("/generate-clips")
 async def generate_clips(
     request: Request,
     files: List[UploadFile] = File(None),
     prompt: str = Form(...),
     user_id: Optional[str] = Form(None),
-    video_ids: Optional[str] = Form(None)  # JSON 문자열로 전달: {"filename1": video_id1, "filename2": video_id2}
+    video_ids: Optional[str] = Form(None),  # JSON 문자열로 전달: {"filename1": video_id1, "filename2": video_id2}
+    chunk_size: Optional[int] = Form(None),
+    top_k: Optional[int] = Form(None),
+    top_p: Optional[float] = Form(None),
+    temperature: Optional[float] = Form(None),
+    max_new_tokens: Optional[int] = Form(None),
+    seed: Optional[int] = Form(None),
+    # Summarize 파라미터
+    summarize_chunk_duration: Optional[int] = Form(None),
+    summarize_top_k: Optional[int] = Form(None),
+    summarize_top_p: Optional[float] = Form(None),
+    summarize_temperature: Optional[float] = Form(None),
+    summarize_max_new_tokens: Optional[int] = Form(None),
+    summarize_seed: Optional[int] = Form(None),
+    summarize_num_frames_per_chunk: Optional[int] = Form(None),
+    summarize_frame_width: Optional[int] = Form(None),
+    summarize_frame_height: Optional[int] = Form(None),
+    summarize_batch_size: Optional[int] = Form(None),
+    summarize_rag_batch_size: Optional[int] = Form(None),
+    summarize_rag_top_k: Optional[int] = Form(None),
+    summarize_summarize_top_p: Optional[float] = Form(None),
+    summarize_summarize_temperature: Optional[float] = Form(None),
+    summarize_summarize_max_tokens: Optional[int] = Form(None),
+    summarize_chat_top_p: Optional[float] = Form(None),
+    summarize_chat_temperature: Optional[float] = Form(None),
+    summarize_chat_max_tokens: Optional[int] = Form(None),
+    summarize_notification_top_p: Optional[float] = Form(None),
+    summarize_notification_temperature: Optional[float] = Form(None),
+    summarize_notification_max_tokens: Optional[int] = Form(None),
+    summarize_enable_audio: Optional[str] = Form(None)
 ):
     """장면 검색 결과 클립 생성"""
     CLIPS_DIR.mkdir(exist_ok=True)
@@ -143,6 +197,7 @@ async def generate_clips(
             
             # video_id가 없으면 VIA 서버에 업로드하여 video_id 얻기
             if not video_id:
+                logger.info("업로드 시작")
                 video_id = await vss_client.upload_video(tmp_path)
                 logger.info(f"VIA 서버에 업로드하여 video_id 획득: {video_id}")
 
@@ -154,6 +209,19 @@ async def generate_clips(
             
             # chunk_duration 계산
             chunk_duration = await get_recommended_chunk_size(duration)
+
+            # image_mode 설정 (장면 검색은 비디오만 대상이므로 False, 하지만 파일 타입 확인)
+            image_mode = False  # 기본값: 비디오
+            if upfile and upfile.content_type:
+                # content_type으로 확인 (video/로 시작하면 False, 그 외는 True)
+                image_mode = not upfile.content_type.startswith('video/')
+            else:
+                # 파일 확장자로 확인 (안전장치)
+                file_ext = os.path.splitext(file_path)[1].lower()
+                image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+                image_mode = file_ext in image_extensions
+            
+            logger.info(f"image_mode 설정: {image_mode} (파일: {file_path})")
 
             # DB에서 요약 결과 확인 (user_id와 video_id가 있는 경우)
             has_stored_summary = False
@@ -191,7 +259,7 @@ async def generate_clips(
                             has_stored_summary = True
                             logger.info(f"프롬프트가 동일하여 저장된 요약을 사용합니다. (VIDEO_ID: {video_id})")
                         else:
-                            has_stored_summary = False
+                            has_stored_summary = True
                             logger.info(f"프롬프트가 변경되어 요약을 다시 수행합니다. (VIDEO_ID: {video_id})")
                     else:
                         has_stored_summary = False
@@ -201,16 +269,88 @@ async def generate_clips(
                     has_stored_summary = False
 
             if not has_stored_summary:
-                logger.info(f"AI_prompt: {AI_prompt}")
+                # Summarize 파라미터 설정 (제공되지 않으면 기본값 사용)
+                summarize_chunk = summarize_chunk_duration if summarize_chunk_duration is not None else chunk_duration
+                summarize_top_k_val = summarize_top_k if summarize_top_k is not None else DEFAULT_TOP_K
+                summarize_top_p_val = summarize_top_p if summarize_top_p is not None else DEFAULT_TOP_P
+                summarize_temp_val = summarize_temperature if summarize_temperature is not None else DEFAULT_TEMPERATURE
+                summarize_max_tokens_val = summarize_max_new_tokens if summarize_max_new_tokens is not None else DEFAULT_MAX_TOKENS
+                summarize_seed_val = summarize_seed if summarize_seed is not None else DEFAULT_SEED
+                summarize_nfmc = summarize_num_frames_per_chunk if summarize_num_frames_per_chunk is not None else DEFAULT_NUM_FRAMES_PER_CHUNK
+                summarize_fw = summarize_frame_width if summarize_frame_width is not None else DEFAULT_FRAME_WIDTH
+                summarize_fh = summarize_frame_height if summarize_frame_height is not None else DEFAULT_FRAME_HEIGHT
+                summarize_batch = summarize_batch_size if summarize_batch_size is not None else DEFAULT_BATCH_SIZE
+                summarize_rag_batch = summarize_rag_batch_size if summarize_rag_batch_size is not None else DEFAULT_RAG_BATCH_SIZE
+                summarize_rag_topk = summarize_rag_top_k if summarize_rag_top_k is not None else DEFAULT_RAG_TOP_K
+                summarize_s_top_p = summarize_summarize_top_p if summarize_summarize_top_p is not None else DEFAULT_SUMMARIZE_TOP_P
+                summarize_s_temp = summarize_summarize_temperature if summarize_summarize_temperature is not None else DEFAULT_SUMMARIZE_TEMPERATURE
+                summarize_s_max_tokens = summarize_summarize_max_tokens if summarize_summarize_max_tokens is not None else DEFAULT_SUMMARIZE_MAX_TOKENS
+                summarize_c_top_p = summarize_chat_top_p if summarize_chat_top_p is not None else DEFAULT_CHAT_TOP_P
+                summarize_c_temp = summarize_chat_temperature if summarize_chat_temperature is not None else DEFAULT_CHAT_TEMPERATURE
+                summarize_c_max_tokens = summarize_chat_max_tokens if summarize_chat_max_tokens is not None else DEFAULT_CHAT_MAX_TOKENS
+                summarize_n_top_p = summarize_notification_top_p if summarize_notification_top_p is not None else DEFAULT_NOTIFICATION_TOP_P
+                summarize_n_temp = summarize_notification_temperature if summarize_notification_temperature is not None else DEFAULT_NOTIFICATION_TEMPERATURE
+                summarize_n_max_tokens = summarize_notification_max_tokens if summarize_notification_max_tokens is not None else DEFAULT_NOTIFICATION_MAX_TOKENS
+                summarize_enable_audio_val = (summarize_enable_audio and summarize_enable_audio.lower() == 'true') if summarize_enable_audio is not None else DEFAULT_ENABLE_AUDIO
+                
+                # Summarize 파라미터 로그 출력
+                logger.info("=" * 80)
+                logger.info("[generate_clips] Summarize 파라미터 설정:")
+                logger.info(f"  - image_mode: {image_mode}")
+                logger.info(f"  - video_id: {video_id}")
+                logger.info(f"  - chunk_duration: {summarize_chunk}")
+                logger.info(f"  - model: {model}")
+                logger.info(f"  - prompt: {AI_prompt[:200]}..." if len(AI_prompt) > 200 else f"  - prompt: {AI_prompt}")
+                logger.info(f"  - num_frames_per_chunk: {summarize_nfmc}")
+                logger.info(f"  - frame_width: {summarize_fw}")
+                logger.info(f"  - frame_height: {summarize_fh}")
+                logger.info(f"  - top_k: {summarize_top_k_val}")
+                logger.info(f"  - top_p: {summarize_top_p_val}")
+                logger.info(f"  - temperature: {summarize_temp_val}")
+                logger.info(f"  - max_new_tokens: {summarize_max_tokens_val}")
+                logger.info(f"  - seed: {summarize_seed_val}")
+                logger.info(f"  - batch_size: {summarize_batch}")
+                logger.info(f"  - rag_batch_size: {summarize_rag_batch}")
+                logger.info(f"  - rag_top_k: {summarize_rag_topk}")
+                logger.info(f"  - summarize_top_p: {summarize_s_top_p}")
+                logger.info(f"  - summarize_temperature: {summarize_s_temp}")
+                logger.info(f"  - summarize_max_tokens: {summarize_s_max_tokens}")
+                logger.info(f"  - chat_top_p: {summarize_c_top_p}")
+                logger.info(f"  - chat_temperature: {summarize_c_temp}")
+                logger.info(f"  - chat_max_tokens: {summarize_c_max_tokens}")
+                logger.info(f"  - notification_top_p: {summarize_n_top_p}")
+                logger.info(f"  - notification_temperature: {summarize_n_temp}")
+                logger.info(f"  - notification_max_tokens: {summarize_n_max_tokens}")
+                logger.info(f"  - enable_audio: {summarize_enable_audio_val}")
+                logger.info("=" * 80)
+                
                 summarize_params = build_summarize_params(
+                    image_mode=image_mode,
                     video_id=video_id,
-                    chunk_duration=chunk_duration,
+                    chunk_duration=summarize_chunk,
                     model=model,
                     prompt=AI_prompt,
-                    temperature=0,
-                    summarize_temperature=0,
-                    chat_temperature=0,
-                    notification_temperature=0
+                    num_frames_per_chunk=summarize_nfmc,
+                    frame_width=summarize_fw,
+                    frame_height=summarize_fh,
+                    top_k=summarize_top_k_val,
+                    top_p=summarize_top_p_val,
+                    temperature=summarize_temp_val,
+                    max_new_tokens=summarize_max_tokens_val,
+                    seed=summarize_seed_val,
+                    batch_size=summarize_batch,
+                    rag_batch_size=summarize_rag_batch,
+                    rag_top_k=summarize_rag_topk,
+                    summarize_top_p=summarize_s_top_p,
+                    summarize_temperature=summarize_s_temp,
+                    summarize_max_tokens=summarize_s_max_tokens,
+                    chat_top_p=summarize_c_top_p,
+                    chat_temperature=summarize_c_temp,
+                    chat_max_tokens=summarize_c_max_tokens,
+                    notification_top_p=summarize_n_top_p,
+                    notification_temperature=summarize_n_temp,
+                    notification_max_tokens=summarize_n_max_tokens,
+                    enable_audio=summarize_enable_audio_val
                 )
                 result = await vss_client.summarize_video(*summarize_params)
                 
@@ -231,86 +371,68 @@ async def generate_clips(
             
             # prompt를 질문으로 처리: VIA 서버의 query_video 사용
             try:
-                enhanced_prompt = await build_query_prompt(prompt + DEFAULT_QUERY_TIMESTAMP_SUFFIX)
-
+                enhanced_prompt = await build_query_prompt(prompt)
+                
+                enhanced_prompt = f"""{enhanced_prompt}. Output each match on a new line as SS.SSS-SS.SSS=Scene Description, in chronological order, with no extra text. Only output scenes that are directly related to the requested content. Do not include scenes that are unrelated to the request. If none match, output nothing."""
+                
                 logger.info(f"enhanced_prompt: {enhanced_prompt}")
+                
+                # 설정값이 제공되지 않으면 기본값 사용
+                query_chunk_size = chunk_size if chunk_size is not None else chunk_duration
+                query_temperature = temperature if temperature is not None else DEFAULT_QUERY_TEMPERATURE
+                query_seed = seed if seed is not None else DEFAULT_QUERY_SEED
+                query_max_tokens = max_new_tokens if max_new_tokens is not None else DEFAULT_QUERY_MAX_TOKENS
+                query_top_p = top_p if top_p is not None else DEFAULT_QUERY_TOP_P
+                query_top_k = top_k if top_k is not None else DEFAULT_QUERY_TOP_K
                 
                 query_params = build_query_video_params(
                     video_id=video_id,
                     model=model,
                     query=enhanced_prompt,
-                    chunk_size=chunk_duration,
-                    temperature=0
+                    chunk_size=query_chunk_size,
+                    temperature=query_temperature,
+                    seed=query_seed,
+                    max_new_tokens=query_max_tokens,
+                    top_p=query_top_p,
+                    top_k=query_top_k
                 )
                 
                 query_result = await vss_client.query_video(*query_params)
                 
-                # query_result를 Ollama LLM에 보내서 타임스탬프만 추출
-                extracted_timestamps_text = None
-                try:
-                    timestamp_extraction_prompt = f"""다음은 동영상 질의 응답 결과입니다:
-{query_result}
-
-위 응답에서 타임스탬프만 추출하여 반드시 '시작시간-끝시간' 형태로만 출력해주세요. 타임스탬프 형식은 초 단위(예: 10.5-120.3) 또는 분:초 형식(예: 1:30-2:45)일 수 있습니다. 타임스탬프만 출력하고 다른 설명은 포함하지 마세요."""
-                    
-                    session = await get_session()
-                    ollama_url = f"{OLLAMA_BASE_URL}/api/chat"
-                    payload = {
-                        "model": OLLAMA_MODEL,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": "You are an expert at extracting timestamps from video query responses. Extract only timestamps and output them in a clear format."
-                            },
-                            {
-                                "role": "user",
-                                "content": timestamp_extraction_prompt
-                            }
-                        ],
-                        "stream": False,
-                        "options": {
-                            "temperature": 0,
-                            "num_predict": 500
-                        }
-                    }
-                    
-                    async with session.post(
-                        ollama_url,
-                        json=payload,
-                        timeout=aiohttp.ClientTimeout(total=OLLAMA_TIMEOUT)
-                    ) as ollama_response:
-                        if ollama_response.status == 200:
-                            ollama_data = await ollama_response.json()
-                            extracted_timestamps_text = ollama_data.get("message", {}).get("content", "")
-                            if extracted_timestamps_text:
-                                extracted_timestamps_text = extracted_timestamps_text.strip()
-                except aiohttp.ClientConnectorError as e:
-                    logger.error(f"Ollama 서버에 연결할 수 없습니다: {e}")
-                    logger.warning("Ollama 연결 실패로 타임스탬프 추출을 건너뜁니다.")
-                except asyncio.TimeoutError as e:
-                    logger.error(f"Ollama 서버 응답 시간 초과: {e}")
-                    logger.warning("Ollama 연결 타임아웃으로 타임스탬프 추출을 건너뜁니다.")
-                except Exception as e:
-                    logger.error(f"Ollama를 사용한 타임스탬프 추출 중 오류 발생: {e}")
-                    logger.warning("Ollama 오류로 타임스탬프 추출을 건너뜁니다.")
-                
-                logger.info(f"VIA 서버 답변: {query_result}")
+                # "Audio transcript not available." 메시지 처리
+                if query_result and "Audio transcript not available" in str(query_result):
+                    logger.warning("VIA 서버에서 오디오 트랜스크립트를 사용할 수 없다는 응답을 받았습니다.")
+                    # 메시지에서 "Audio transcript not available." 부분 제거
+                    query_result = str(query_result).replace("Audio transcript not available.", "").strip()
+                    query_result = str(query_result).replace("Audio transcript not available", "").strip()
+                    if not query_result:
+                        query_result = None
                 
                 # 추출된 타임스탬프를 파싱하여 클립 생성에 사용
-                timestamp_ranges = []
-                if extracted_timestamps_text:
-                    timestamp_ranges = parse_timestamps(extracted_timestamps_text, duration)
-                
+                # query_result는 이미 00:00-00:00=장면 설명 형태로 출력됨
+                timestamp_data = []
+                if query_result:
+                    timestamp_data = await parse_timestamps(query_result, duration)
+                    
                 # 타임스탬프 기반 클립 생성
                 base_name, _ = os.path.splitext(file_path)
                 timestamp_suffix = int(time.time() * 1000)
                 
-                if timestamp_ranges:
+                if timestamp_data:
                     clip_index = 0
-                    for start_time, end_time in timestamp_ranges:
+                    for start_time, end_time, sentence in timestamp_data:
                         if end_time - start_time <= 0:
                             logger.warning(f"타임스탬프 간격이 0초 이하인 클립을 건너뜁니다: {start_time} - {end_time}")
                             continue
+                        
+                        # sentence를 한국어로 변환
+                        translated_sentence = sentence
+                        if sentence and sentence.strip():
+                            try:
+                                translated_sentence = await translate_to_korean(sentence)
+                            except Exception as e:
+                                logger.warning(f"sentence 한국어 번역 실패, 원본 사용: {e}")
+                                translated_sentence = sentence
                         
                         clip_filename = f"clip_{base_name}_{timestamp_suffix}_{clip_index+1}.mp4"
                         clip_path = str(CLIPS_DIR / clip_filename)
@@ -329,7 +451,8 @@ async def generate_clips(
                                 "url": clip_url,
                                 "start_time": start_time,
                                 "end_time": end_time,
-                                "search_query": prompt
+                                "search_query": prompt,
+                                "sentence": translated_sentence  # 한국어로 번역된 장면 설명 사용
                             })
                             clip_index += 1
                         except Exception as e:
@@ -393,6 +516,17 @@ async def vss_query(
     query: str = Form(...)
 ):
     """동영상 검색 VSS API"""
+    # ========== CA-RAG 컨텍스트 디버깅 로그 시작 ==========
+    logger.info(
+        "[CA-RAG DEBUG] ====== /vss-query 엔드포인트 호출 ======"
+    )
+    logger.info(
+        "[CA-RAG DEBUG] video_id=%s, query=%s",
+        video_id,
+        query[:100] + "..." if len(query) > 100 else query
+    )
+    # ========== CA-RAG 컨텍스트 디버깅 로그 끝 ==========
+    
     await ensure_vss_client()
     model = await get_via_model()
     from utils.helpers import vss_client
@@ -403,8 +537,21 @@ async def vss_query(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         video_id = await vss_client.upload_video(file_path)
+        
+        logger.info(
+            "[CA-RAG DEBUG] 파일 업로드 완료: video_id=%s",
+            video_id
+        )
     elif not video_id:
         raise HTTPException(status_code=400, detail="video_id 또는 file 중 하나는 필요합니다.")
+    
+    logger.info(
+        "[CA-RAG DEBUG] query_video 호출 전: video_id=%s",
+        video_id
+    )
+    logger.info(
+        "[CA-RAG DEBUG] ⚠️ 이 video_id에 대한 이전 summarize_video 호출 여부 확인 필요"
+    )
     
     query_params = build_query_video_params(
         video_id=video_id,
@@ -418,6 +565,43 @@ async def vss_query(
         top_k=top_k
     )
     result = await vss_client.query_video(*query_params)
+    
+    logger.info(
+        "[CA-RAG DEBUG] query_video 호출 완료: 결과 길이=%d",
+        len(result) if result else 0
+    )
+    
+    # "Audio transcript not available." 메시지 처리
+    if result and "Audio transcript not available" in str(result):
+        logger.warning("VIA 서버에서 오디오 트랜스크립트를 사용할 수 없다는 응답을 받았습니다.")
+        # 메시지에서 "Audio transcript not available." 부분 제거
+        result = str(result).replace("Audio transcript not available.", "").strip()
+        result = str(result).replace("Audio transcript not available", "").strip()
+        if not result:
+            result = "오디오 트랜스크립트를 사용할 수 없어 비디오 내용을 분석할 수 없습니다."
+    
+    # 응답에서 질문 부분 제거
+    if result and query:
+        # 질문이 응답의 시작 부분에 포함되어 있는지 확인
+        result_str = str(result).strip()
+        query_str = str(query).strip()
+        
+        # 질문이 응답의 시작 부분에 정확히 포함되어 있으면 제거
+        if result_str.startswith(query_str):
+            # 질문 뒤의 내용만 추출
+            remaining = result_str[len(query_str):].strip()
+            # 질문 뒤에 줄바꿈이나 구분자가 있으면 제거
+            if remaining.startswith('\n') or remaining.startswith('?'):
+                remaining = remaining.lstrip('\n?').strip()
+            elif remaining.startswith(' '):
+                remaining = remaining.lstrip().strip()
+            result = remaining if remaining else result_str
+        # 질문이 응답에 포함되어 있지만 시작 부분이 아닌 경우
+        elif query_str in result_str:
+            # 질문 부분을 찾아서 제거 (첫 번째 발생만)
+            result = result_str.replace(query_str, '', 1).strip()
+            # 질문 제거 후 남은 공백이나 구분자 정리
+            result = result.lstrip('\n?').strip()
 
     return {"summary": result, "video_id": video_id}
 
@@ -437,6 +621,40 @@ async def list_via_files(
     except Exception as e:
         logger.error(f"VIA 파일 목록 조회 실패: {e}")
         raise HTTPException(status_code=500, detail=f"VIA 파일 목록 조회 중 오류가 발생했습니다: {str(e)}")
+
+@router.post("/via-upload-file")
+async def upload_file_to_via(
+    file: UploadFile = File(...),
+    purpose: str = Form(default="vision"),
+    media_type: str = Form(...)
+):
+    """VIA 서버에 파일 업로드 (프록시 엔드포인트, CORS 문제 해결)"""
+    try:
+        await ensure_vss_client()
+        from utils.helpers import vss_client
+        
+        # 임시 파일로 저장
+        import tempfile
+        TMP_DIR.mkdir(exist_ok=True)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix, dir=TMP_DIR) as tmp_file:
+            content = await file.read()
+            tmp_file.write(content)
+            tmp_file_path = tmp_file.name
+        
+        try:
+            # VIA 서버에 업로드 (purpose와 media_type 전달)
+            via_file_id = await vss_client.upload_video(tmp_file_path, purpose=purpose, media_type=media_type)
+            logger.info(f"VIA 서버 파일 업로드 완료: file_id={via_file_id}, filename={file.filename}, purpose={purpose}, media_type={media_type}")
+            return {"id": via_file_id, "object": "file"}
+        finally:
+            # 임시 파일 삭제
+            if os.path.exists(tmp_file_path):
+                os.unlink(tmp_file_path)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"VIA 서버 파일 업로드 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"VIA 서버 파일 업로드 중 오류가 발생했습니다: {str(e)}")
 
 @router.post("/get-recommended-chunk-size")
 async def get_recommended_chunk_size_endpoint(request: RecommendedChunkSizeRequest):
@@ -505,3 +723,94 @@ async def delete_clips(request: DeleteClipsRequest):
         logger.error(f"클립 삭제 실패: {e}")
         raise HTTPException(status_code=500, detail=f"클립 삭제 중 오류가 발생했습니다: {str(e)}")
 
+# ==================== CV Event Detector API 프록시 엔드포인트 ====================
+
+@router.post("/cv-event-detector/api/pipeline")
+async def cv_create_pipeline(request: Request):
+    """CV Event Detector API의 파이프라인 생성 엔드포인트 프록시"""
+    try:
+        session = await get_session()
+        body = await request.json()
+        
+        async with session.post(
+            f"{CV_EVENT_DETECTOR_API_URL}/api/pipeline",
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=30)
+        ) as response:
+            result = await response.json()
+            if response.status >= 400:
+                raise HTTPException(status_code=response.status, detail=result)
+            return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"CV Event Detector 파이프라인 생성 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"파이프라인 생성 중 오류가 발생했습니다: {str(e)}")
+
+@router.post("/cv-event-detector/api/addstream")
+async def cv_add_stream(request: Request):
+    """CV Event Detector API의 스트림 추가 엔드포인트 프록시"""
+    try:
+        session = await get_session()
+        body = await request.json()
+        
+        async with session.post(
+            f"{CV_EVENT_DETECTOR_API_URL}/api/addstream",
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=60)
+        ) as response:
+            result = await response.json()
+            if response.status >= 400:
+                raise HTTPException(status_code=response.status, detail=result)
+            return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"CV Event Detector 스트림 추가 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"스트림 추가 중 오류가 발생했습니다: {str(e)}")
+
+@router.get("/cv-event-detector/api/streams/{stream_id}/status")
+async def cv_get_stream_status(stream_id: str, timeout_ms: Optional[int] = Query(None)):
+    """CV Event Detector API의 스트림 상태 확인 엔드포인트 프록시"""
+    try:
+        session = await get_session()
+        params = {}
+        if timeout_ms is not None:
+            params["timeout_ms"] = timeout_ms
+        
+        async with session.get(
+            f"{CV_EVENT_DETECTOR_API_URL}/api/streams/{stream_id}/status",
+            params=params,
+            timeout=aiohttp.ClientTimeout(total=30)
+        ) as response:
+            result = await response.json()
+            if response.status >= 400:
+                raise HTTPException(status_code=response.status, detail=result)
+            return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"CV Event Detector 스트림 상태 확인 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"스트림 상태 확인 중 오류가 발생했습니다: {str(e)}")
+
+@router.delete("/cv-event-detector/api/stream")
+async def cv_delete_stream(request: Request):
+    """CV Event Detector API의 스트림 삭제 엔드포인트 프록시"""
+    try:
+        session = await get_session()
+        body = await request.json()
+        
+        async with session.delete(
+            f"{CV_EVENT_DETECTOR_API_URL}/api/stream",
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=30)
+        ) as response:
+            result = await response.json()
+            if response.status >= 400:
+                raise HTTPException(status_code=response.status, detail=result)
+            return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"CV Event Detector 스트림 삭제 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"스트림 삭제 중 오류가 발생했습니다: {str(e)}")

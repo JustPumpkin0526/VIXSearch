@@ -116,6 +116,7 @@
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import axios from "axios";
+import { getApiBaseUrl } from '@/utils/apiConfig';
 
 const router = useRouter();
 const id = ref("");
@@ -140,7 +141,7 @@ async function login() {
   successMessage.value = "";
 
   try {
-    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001';
+    const API_BASE_URL = getApiBaseUrl();
     const res = await axios.post(`${API_BASE_URL}/login`, {
       username: id.value.trim(),
       password: pw.value
@@ -149,6 +150,11 @@ async function login() {
     if (res.data && res.data.success) {
       successMessage.value = "로그인 성공!";
       localStorage.setItem("vss_user_id", id.value.trim());
+      if (res.data.role) {
+        localStorage.setItem("vss_user_role", res.data.role);
+      } else {
+        localStorage.removeItem("vss_user_role");
+      }
       window.dispatchEvent(new Event("vss-login"));
       
       // 성공 메시지 표시 후 페이지 이동

@@ -52,7 +52,7 @@
                   d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M12 12v7m0-7l-3 3m3-3l3 3"></path>
               </svg>
               <span class="font-medium text-sm">{{ t.uploadVideo }}</span>
-              <input type="file" accept="video/*" multiple class="hidden" @change="handleUpload" />
+              <input type="file" accept="video/*,image/*" multiple class="hidden" @change="handleUpload" />
             </label>
           </div>
         </div>
@@ -91,10 +91,20 @@
               :class="{ 'ring-2 ring-blue-400 dark:ring-blue-500 bg-blue-100 dark:bg-blue-900/30': selectedIds.includes(video.id) }"
               @click="onCardClick(video.id, $event)" @contextmenu.prevent.stop="onVideoContextMenu(video, $event)">
               <div
-                class="w-[100%] h-[100%] flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-600 rounded-xl mb-2 overflow-hidden relative group-hover:from-gray-200 group-hover:to-gray-300 dark:group-hover:from-gray-600 dark:group-hover:to-gray-500 transition-all duration-300"
+                class="w-[100%] h-[100%] flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-600 rounded-xl mb-2 overflow-hidden relative group-hover:from-gray-200 group-hover:to-gray-300 dark:group-hover:from-gray-600 dark:group-hover:to-gray-500 transition-all duration-300 aspect-video"
                 @mouseenter="hoveredVideoId = video.id" @mouseleave="hoveredVideoId = null">
+                <!-- 이미지 파일인 경우 -->
+                <img 
+                  v-if="isImageFile(video) && video.displayUrl"
+                  :src="video.displayUrl"
+                  class="object-contain w-full h-full rounded-xl transition-transform duration-300 group-hover:scale-105"
+                  :crossorigin="video.displayUrl && !video.displayUrl.startsWith('blob:') ? 'anonymous' : null"
+                  @error="(e) => handleImageError(video.id, e)"
+                  draggable="false"
+                  alt=""
+                />
                 <!-- 지원하지 않는 형식이고 변환 중이거나 변환되지 않은 경우 -->
-                <div v-if="isUnsupportedFormat(video.title || video.name || '') && (video._isConverting || !video.displayUrl?.includes('converted-videos'))" 
+                <div v-else-if="!isImageFile(video) && isUnsupportedFormat(video.title || video.name || '') && (video._isConverting || !video.displayUrl?.includes('converted-videos'))" 
                   class="w-full h-full flex flex-col items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-xl">
                   <div v-if="video._isConverting" class="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-600 dark:border-gray-400 mb-2"></div>
                   <svg v-else class="w-12 h-12 text-gray-400 dark:text-gray-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -109,7 +119,7 @@
                 </div>
                 <!-- 비디오 엘리먼트 표시 (변환된 MP4 또는 지원하는 형식) -->
                 <video 
-                  v-else-if="video.displayUrl && (!isUnsupportedFormat(video.title || video.name || '') || video.displayUrl?.includes('converted-videos'))"
+                  v-else-if="!isImageFile(video) && video.displayUrl && (!isUnsupportedFormat(video.title || video.name || '') || video.displayUrl?.includes('converted-videos'))"
                   :ref="el => (videoRefs[video.id] = el)" 
                   :src="video.displayUrl"
                   class="object-cover rounded-xl transition-transform duration-300 group-hover:scale-105"
@@ -119,18 +129,19 @@
                   @timeupdate="updateProgress(video.id, $event)"
                   @loadedmetadata="onVideoMetadataLoaded(video.id, $event)"
                   @error="(e) => handleVideoError(video.id, e, false)"
+                  draggable="false"
                 ></video>
                 <span v-else class="text-gray-400 dark:text-gray-500 text-sm">{{ t.noThumbnail }}</span>
-                <!-- 그리드: 재생 중이 아닐 때 어두워지는 오버레이 -->
-                <div v-if="video.displayUrl" class="absolute inset-0 pointer-events-none transition-colors duration-300"
+                <!-- 그리드: 재생 중이 아닐 때 어두워지는 오버레이 (동영상만) -->
+                <div v-if="!isImageFile(video) && video.displayUrl" class="absolute inset-0 pointer-events-none transition-colors duration-300"
                   :class="playingVideoIds.includes(video.id) ? 'bg-transparent' : 'bg-black/20'"></div>
-                <!-- 재생하지 않은 동영상의 영상 길이 표시 (우측 하단) -->
-                <div v-if="video.displayUrl && !playingVideoIds.includes(video.id) && durationMap[video.id]"
+                <!-- 재생하지 않은 동영상의 영상 길이 표시 (우측 하단, 동영상만) -->
+                <div v-if="!isImageFile(video) && video.displayUrl && !playingVideoIds.includes(video.id) && durationMap[video.id]"
                   class="absolute bottom-2 right-2 px-2 py-1 bg-black/70 backdrop-blur-sm text-white text-xs font-medium rounded pointer-events-none">
                   {{ formatTime(durationMap[video.id]) }}
                 </div>
-                <!-- 재생 버튼 -->
-                <button @click.stop="togglePlay(video.id)" :class="{
+                <!-- 재생 버튼 (동영상만) -->
+                <button v-if="!isImageFile(video)" @click.stop="togglePlay(video.id)" :class="{
                   'opacity-100 scale-100': hoveredVideoId === video.id || !playingVideoIds.includes(video.id),
                   'opacity-0 scale-90': hoveredVideoId !== video.id && playingVideoIds.includes(video.id),
                 }"
@@ -150,9 +161,9 @@
                   </svg>
                 </button>
 
-                <!-- 재생 프로그레스 바 (재생 중일 때만 표시, 마우스 hover 시 표시) -->
+                <!-- 재생 프로그레스 바 (재생 중일 때만 표시, 마우스 hover 시 표시, 동영상만) -->
                 <div
-                  v-if="playingVideoIds.includes(video.id)"
+                  v-if="!isImageFile(video) && playingVideoIds.includes(video.id)"
                   class="absolute bottom-0 left-0 right-0 p-2 bg-black/30 backdrop-blur-sm rounded-b-xl transition-all duration-300 pointer-events-none"
                   :class="{
                     'opacity-100 translate-y-0': hoveredVideoId === video.id || !playingVideoIds.includes(video.id),
@@ -192,12 +203,13 @@
                 <div v-if="video.title" class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
                   {{ video.title }}
                 </div>
-                <!-- 영상 정보: 길이, 해상도, 용량 (가로 나열) -->
+                <!-- 영상 정보: 길이(동영상만), 해상도, 용량 (가로 나열) -->
                 <div class="mt-1 text-xs text-gray-500 dark:text-gray-400 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <span v-if="durationMap[video.id]">
+                  <span v-if="!isImageFile(video) && durationMap[video.id]">
                     {{ formatTime(durationMap[video.id]) }}
                   </span>
-                  <span v-if="durationMap[video.id] && (video.width && video.height || video.fileSize)" class="text-gray-400">•</span>
+                  <span v-if="!isImageFile(video) && durationMap[video.id] && (video.width && video.height || video.fileSize)" class="text-gray-400">•</span>
+                  <span v-if="isImageFile(video) && (video.width && video.height || video.fileSize)" class="text-gray-400">•</span>
                   <span v-if="video.width && video.height">
                     {{ video.width }} × {{ video.height }}
                   </span>
@@ -209,22 +221,18 @@
               </div>
             </div>
           </div>
-          
-          <!-- 우측 하단 원형 버튼 -->
-          <button
-            class="absolute bottom-6 right-6 w-14 h-14 rounded-full bg-emerald-500 dark:bg-emerald-600 hover:bg-emerald-600 dark:hover:bg-emerald-500 text-white shadow-lg hover:shadow-xl flex items-center justify-center transition-all duration-300 transform hover:scale-110 active:scale-95 z-50"
-            @click="handleAddButtonClick">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" viewBox="0 0 24 24" class="w-6 h-6 text-white">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-            </svg>
-          </button>
         </div>
         <!-- 확대 모달 팝업 - Teleport로 body에 렌더링 -->
         <Teleport to="body">
           <Transition name="modal">
             <div v-if="isZoomed" class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4"
-              @click.self="unzoomVideo">
-              <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-4xl relative" @click.stop>
+              @mousedown="(e) => { handleModalBackgroundClick(e, unzoomVideo); hideZoomedClipReportSubmenu(); hideZoomedClipReportListSubmenu(); }"
+              @mouseup="(e) => { handleModalBackgroundClick(e, unzoomVideo); hideZoomedClipReportSubmenu(); hideZoomedClipReportListSubmenu(); }">
+              <div class="flex items-stretch gap-4 w-full max-w-6xl"
+                   @mousedown.stop
+                   @mouseup.stop>
+                <!-- 비디오 모달 -->
+                <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl flex-1 relative" @click.stop>
                 <!-- 비디오 영역 (확대 전용 - 하얀 프레임 + 하단 진행 바/타이틀) -->
                 <div class="relative w-full p-4 bg-white dark:bg-gray-800 rounded-2xl shadow-inner flex flex-col">
                   <!-- 닫기 버튼: 프레임 우측 상단 -->
@@ -241,13 +249,25 @@
                   <div
                     class="relative w-full aspect-video flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-600 rounded-xl overflow-hidden group zoom-group"
                     @mouseenter="hoveredVideoId = zoomedVideo?.id" @mouseleave="hoveredVideoId = null">
-                    <video v-if="zoomedVideo" ref="zoomVideoRef" :src="zoomedVideo.displayUrl"
+                    <!-- 이미지인 경우 -->
+                    <img 
+                      v-if="zoomedVideo && isImageFile(zoomedVideo)"
+                      :src="zoomedVideo.displayUrl"
+                      class="object-contain w-full h-full rounded-xl"
+                      crossorigin="anonymous"
+                      @error="(e) => handleImageError(zoomedVideo.id, e)"
+                      draggable="false"
+                      alt=""
+                    />
+                    <!-- 동영상인 경우 -->
+                    <video v-else-if="zoomedVideo" ref="zoomVideoRef" :src="zoomedVideo.displayUrl"
                       class="object-cover w-full h-full" preload="metadata" crossorigin="anonymous"
                       @timeupdate="onZoomTimeUpdate($event)"
-                  @error="(e) => handleZoomVideoError(zoomedVideo.id, e)"></video>
-                    <div v-if="zoomedVideo" class="absolute inset-0 pointer-events-none transition-colors duration-300"
+                      @error="(e) => handleZoomVideoError(zoomedVideo.id, e)"
+                      draggable="false"></video>
+                    <div v-if="zoomedVideo && !isImageFile(zoomedVideo)" class="absolute inset-0 pointer-events-none transition-colors duration-300"
                       :class="zoomPlaying ? 'bg-transparent' : 'bg-black/30'"></div>
-                    <button v-if="zoomedVideo" @click.stop="togglePlay(zoomedVideo.id)" :class="[
+                    <button v-if="zoomedVideo && !isImageFile(zoomedVideo)" @click.stop="togglePlay(zoomedVideo.id)" :class="[
                       !zoomPlaying
                         ? 'opacity-100 scale-100 pointer-events-auto'
                         : (hoveredVideoId === zoomedVideo.id
@@ -267,12 +287,14 @@
                       </svg>
                     </button>
                   </div>
-                  <!-- 하단 진행 바 + 타이틀 영역 -->
-                  <div v-if="zoomedVideo" class="mt-4 w-full flex flex-col gap-2">
+                  <!-- 하단 진행 바 + 타이틀 영역 (동영상만) -->
+                  <div v-if="zoomedVideo && !isImageFile(zoomedVideo)" class="mt-4 w-full flex flex-col gap-2">
                     <div ref="zoomProgressBarRef"
                       class="relative w-full h-3 bg-gray-200 rounded-full cursor-pointer zoom-progress-bar overflow-visible"
                       :class="{ 'dragging': isDragging && draggedVideoId === zoomedVideo.id }"
-                      @click.stop="seekVideo(zoomedVideo.id, $event)">
+                      @click.stop="seekVideo(zoomedVideo.id, $event)"
+                      @mousedown.stop
+                      @mouseup.stop="stopDragging">
                       <div
                         class="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full shadow-sm overflow-hidden"
                         :class="{ 'transition-all duration-300': !(isDragging && draggedVideoId === zoomedVideo.id) }"
@@ -280,13 +302,25 @@
                       <div
                         class="absolute top-1/2 h-5 w-5 bg-white rounded-full shadow-lg transform -translate-x-1/2 -translate-y-1/2 transition-all duration-200 border-2 border-blue-500 z-[20] cursor-grab active:cursor-grabbing"
                         :class="{ 'transition-none': isDragging && draggedVideoId === zoomedVideo.id }"
-                        :style="{ left: `${zoomProgress}%` }" @mousedown="startDragging(zoomedVideo.id, $event)"></div>
+                        :style="{ left: `${zoomProgress}%` }" 
+                        @mousedown.stop="startDragging(zoomedVideo.id, $event)"
+                        @mouseup.stop="stopDragging"></div>
                     </div>
                     <div class="flex items-center justify-between text-xs font-medium text-gray-600 dark:text-gray-300">
                       <div class="flex items-center gap-2">
                         <span v-if="zoomedVideo.title"
                           class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate max-w-[50vw]">{{ zoomedVideo.title
                           }}</span>
+                        <!-- 장면 설명 다시 열기 버튼 (클립 재생 중이고 sentence가 있지만 팝업이 닫혀있을 때) -->
+                        <button 
+                          v-if="zoomedClip && zoomedClip.sentence && !showSentencePopup"
+                          @click.stop="showSentencePopup = true"
+                          class="ml-2 p-1.5 rounded-lg bg-blue-500/10 dark:bg-blue-500/20 hover:bg-blue-500/20 dark:hover:bg-blue-500/30 text-blue-600 dark:text-blue-400 transition-colors"
+                          :title="settingStore.language === 'ko' ? '장면 설명 보기' : 'Show Scene Description'">
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </button>
                       </div>
                       <div class="flex items-center gap-3 text-gray-500 dark:text-gray-400">
                         <span>{{ formatTime(zoomCurrentTime) }}</span>
@@ -295,7 +329,52 @@
                       </div>
                     </div>
                   </div>
+                  <!-- 이미지인 경우 타이틀만 표시 -->
+                  <div v-else-if="zoomedVideo && isImageFile(zoomedVideo)" class="mt-4 w-full">
+                    <div class="flex items-center gap-2">
+                      <span v-if="zoomedVideo.title"
+                        class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate max-w-[50vw]">{{ zoomedVideo.title
+                        }}</span>
+                    </div>
+                  </div>
                 </div>
+                </div>
+                <!-- 우측 장면 설명 결과 팝업 -->
+                <Transition name="slide-left">
+                  <div v-if="zoomedClip && zoomedClip.sentence && showSentencePopup" 
+                    class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-80 flex-shrink-0 flex flex-col" 
+                    @click.stop
+                    @mousedown.stop
+                    @mouseup.stop>
+                    <div class="flex items-center justify-between p-6 pb-4 flex-shrink-0">
+                      <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200">
+                        {{ settingStore.language === 'ko' ? '장면 설명' : 'Scene Description' }}
+                      </h3>
+                      <button @click="showSentencePopup = false" 
+                        class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div class="flex-1 overflow-y-auto px-6 pb-4">
+                      <div class="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
+                        {{ zoomedClip.sentence }}
+                      </div>
+                    </div>
+                    <!-- 보고서 생성 버튼 -->
+                    <div class="p-6 pt-4 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
+                      <button 
+                        @click.stop="showZoomedClipReportSubmenu"
+                        class="w-full px-4 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700 text-white font-medium transition-colors flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <span>{{ settingStore.language === 'ko' ? '보고서 생성' : 'Create Report' }}</span>
+                      </button>
+                    </div>
+                  </div>
+                </Transition>
               </div>
             </div>
           </Transition>
@@ -313,6 +392,159 @@
               <div class="h-px bg-gray-100 dark:bg-gray-700"></div>
               <button class="w-full text-left px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700" @click.stop="contextDelete">{{
                 selectedIds.length > 1 ? `${t.deleteSelected} (${selectedIds.length})` : t.delete }}</button>
+            </div>
+          </div>
+        </Teleport>
+
+        <!-- 채팅 메시지 컨텍스트 메뉴 (Teleport로 body에 렌더링) -->
+        <Teleport to="body">
+          <!-- 배경 오버레이 (외부 클릭 시 메뉴 닫기) -->
+          <Transition name="overlay">
+            <div v-if="chatMessageContextMenu.visible" 
+              class="fixed inset-0 z-[199]"
+              @click="closeChatMessageContextMenu">
+            </div>
+          </Transition>
+          <!-- 컨텍스트 메뉴 -->
+          <div v-if="chatMessageContextMenu.visible" class="fixed z-[200]"
+            :style="{ left: `${chatMessageContextMenu.x}px`, top: `${chatMessageContextMenu.y}px` }" @click.stop>
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden w-[160px]">
+              <button class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm"
+                @click.stop="copyChatMessage(chatMessageContextMenu.messageIndex)">
+                {{ settingStore.language === 'ko' ? '복사' : 'Copy' }}
+              </button>
+              <!-- 초기 메시지가 아닐 때만 보고서 생성 버튼 표시 -->
+              <div v-if="chatMessageContextMenu.messageIndex !== null && currentChatMessages[chatMessageContextMenu.messageIndex] && !currentChatMessages[chatMessageContextMenu.messageIndex].isInitial" 
+                class="relative"
+                @mouseenter.stop="showReportSubmenu(chatMessageContextMenu.messageIndex, chatMessageContextMenu.x, chatMessageContextMenu.y)"
+                @mouseleave.stop="hideReportSubmenu">
+                <button class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm flex items-center justify-between"
+                  @click.stop>
+                  <span>{{ settingStore.language === 'ko' ? '보고서 생성' : 'Create Report' }}</span>
+                  <span class="ml-2">›</span>
+                </button>
+              </div>
+              <button class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm"
+                @click.stop="openSettingsFromContextMenu">
+                {{ settingStore.language === 'ko' ? '설정' : 'Settings' }}
+              </button>
+              <button class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm"
+                @click.stop="deleteChatMessage(chatMessageContextMenu.messageIndex)">
+                {{ settingStore.language === 'ko' ? '삭제' : 'Delete' }}
+              </button>
+            </div>
+          </div>
+          
+          <!-- 보고서 생성 서브메뉴 (Teleport로 body에 렌더링) -->
+          <div v-if="reportSubmenu.visible" class="fixed z-[201]"
+            :style="{ left: `${reportSubmenu.x}px`, top: `${reportSubmenu.y}px` }" 
+            @click.stop
+            @mouseenter.stop="keepReportSubmenuVisible"
+            @mouseleave.stop="hideReportSubmenu">
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden w-[180px]">
+              <button class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm flex items-center justify-between"
+                @click.stop="showReportListSubmenu(reportSubmenu.messageIndex, reportSubmenu.x, reportSubmenu.y)">
+                <span>{{ settingStore.language === 'ko' ? '기존 보고서에 추가' : 'Add to Existing Report' }}</span>
+                <span class="ml-2">›</span>
+              </button>
+              <button class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm"
+                @click.stop="createNewReport(reportSubmenu.messageIndex)">
+                {{ settingStore.language === 'ko' ? '새 보고서 생성' : 'Create New Report' }}
+              </button>
+            </div>
+          </div>
+          
+          <!-- 보고서 목록 서브메뉴 (Teleport로 body에 렌더링) -->
+          <div v-if="reportListSubmenu.visible" class="fixed z-[202]"
+            :style="{ left: `${reportListSubmenu.x}px`, top: `${reportListSubmenu.y}px` }" 
+            @click.stop
+            @mouseenter.stop="keepReportListSubmenuVisible"
+            @mouseleave.stop="hideReportListSubmenu">
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden w-[250px] max-h-[400px] overflow-y-auto">
+              <div v-if="reportListSubmenu.reports.length === 0" class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 text-center">
+                {{ settingStore.language === 'ko' ? '보고서가 없습니다' : 'No reports available' }}
+              </div>
+              <button 
+                v-for="report in reportListSubmenu.reports" 
+                :key="report.id"
+                class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm border-b border-gray-100 dark:border-gray-700 last:border-b-0"
+                @click.stop="addClipsToSelectedReport(report.id, reportListSubmenu.messageIndex)">
+                <div class="font-medium truncate">{{ report.title }}</div>
+                <div v-if="report.description" class="text-xs text-gray-500 dark:text-gray-400 truncate mt-1">
+                  {{ report.description }}
+                </div>
+              </button>
+            </div>
+          </div>
+          
+          <!-- 확대된 클립용 보고서 생성 서브메뉴 (Teleport로 body에 렌더링, 팝업보다 높은 z-index) -->
+          <div v-if="zoomedClipReportSubmenu.visible" class="fixed z-[10000]"
+            :style="{ left: `${zoomedClipReportSubmenu.x}px`, top: `${zoomedClipReportSubmenu.y}px` }" 
+            @click.stop
+            @mouseenter.stop="keepZoomedClipReportSubmenuVisible"
+            @mouseleave.stop="hideZoomedClipReportSubmenu">
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden w-[180px]">
+              <button class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm flex items-center justify-between"
+                @click.stop="showZoomedClipReportListSubmenu(zoomedClipReportSubmenu.x, zoomedClipReportSubmenu.y)">
+                <span>{{ settingStore.language === 'ko' ? '기존 보고서에 추가' : 'Add to Existing Report' }}</span>
+                <span class="ml-2">›</span>
+              </button>
+              <button class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm"
+                @click.stop="createNewReportFromZoomedClip">
+                {{ settingStore.language === 'ko' ? '새 보고서 생성' : 'Create New Report' }}
+              </button>
+            </div>
+          </div>
+          
+          <!-- 확대된 클립용 보고서 목록 서브메뉴 (Teleport로 body에 렌더링, 팝업보다 높은 z-index) -->
+          <div v-if="zoomedClipReportListSubmenu.visible" class="fixed z-[10001]"
+            :style="{ left: `${zoomedClipReportListSubmenu.x}px`, top: `${zoomedClipReportListSubmenu.y}px` }" 
+            @click.stop
+            @mouseenter.stop="keepZoomedClipReportListSubmenuVisible"
+            @mouseleave.stop="hideZoomedClipReportListSubmenu">
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden w-[250px] max-h-[400px] overflow-y-auto">
+              <div v-if="zoomedClipReportListSubmenu.reports.length === 0" class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 text-center">
+                {{ settingStore.language === 'ko' ? '보고서가 없습니다' : 'No reports available' }}
+              </div>
+              <button 
+                v-for="report in zoomedClipReportListSubmenu.reports" 
+                :key="report.id"
+                class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm border-b border-gray-100 dark:border-gray-700 last:border-b-0"
+                @click.stop="addZoomedClipToSelectedReport(report.id)">
+                <div class="font-medium truncate">{{ report.title }}</div>
+                <div v-if="report.description" class="text-xs text-gray-500 dark:text-gray-400 truncate mt-1">
+                  {{ report.description }}
+                </div>
+              </button>
+            </div>
+          </div>
+        </Teleport>
+
+        <!-- 채팅창 탭 컨텍스트 메뉴 (Teleport로 body에 렌더링) -->
+        <Teleport to="body">
+          <!-- 배경 오버레이 (외부 클릭 시 메뉴 닫기) -->
+          <Transition name="overlay">
+            <div v-if="chatTabContextMenu.visible" 
+              class="fixed inset-0 z-[199]"
+              @click="closeChatTabContextMenu">
+            </div>
+          </Transition>
+          <!-- 컨텍스트 메뉴 -->
+          <div v-if="chatTabContextMenu.visible" class="fixed z-[200]"
+            :style="{ left: `${chatTabContextMenu.x}px`, top: `${chatTabContextMenu.y}px` }" @click.stop>
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden w-[160px]">
+              <button class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm"
+                @click.stop="closeChatTab(chatTabContextMenu.chatIndex)">
+                {{ settingStore.language === 'ko' ? '닫기' : 'Close' }}
+              </button>
+              <button class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm"
+                @click.stop="closeOtherChatTabs(chatTabContextMenu.chatIndex)">
+                {{ settingStore.language === 'ko' ? '다른 탭 닫기' : 'Close Others' }}
+              </button>
+              <button class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm"
+                @click.stop="closeAllChatTabs">
+                {{ settingStore.language === 'ko' ? '전체 닫기' : 'Close All' }}
+              </button>
             </div>
           </div>
         </Teleport>
@@ -398,7 +630,8 @@
                 <!-- 채팅창 탭 -->
                 <div v-if="chatSessions.length > 0" class="flex gap-2 px-4 pb-2 overflow-x-auto">
                   <div v-for="(chat, index) in chatSessions" :key="chat.id"
-                    @click="editingChatIndex !== index && switchChat(index)" :class="{
+                    @click="editingChatIndex !== index && switchChat(index)"
+                    @contextmenu.prevent.stop="openChatTabContextMenu(index, $event)" :class="{
                       'bg-gradient-to-r from-green-500 to-green-600 text-white shadow-md': currentChatIndex === index,
                       'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600': currentChatIndex !== index
                     }"
@@ -430,23 +663,11 @@
                   :class="{ 'flex-row-reverse': message.role === 'user' }">
                   <!-- AI 메시지 -->
                   <div v-if="message.role === 'assistant'"
-                    class="w-8 h-8 bg-gradient-to-br from-green-400 to-green-600 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden relative">
-                    <!-- 클립 썸네일 있을 경우 첫 번째 클립을 아바타로 표시 -->
-                    <template v-if="message.clips && message.clips.length > 0">
-                      <video :src="message.clips[0].url" class="w-full h-full object-cover" muted playsinline
-                        @error="(e) => console.warn('avatar video error', e, message.clips[0].url)"
-                        crossorigin="anonymous"></video>
-                      <div v-if="message.clips.length > 1"
-                        class="absolute bottom-0 right-0 bg-black/60 text-[10px] text-white px-1 rounded">
-                        +{{ message.clips.length - 1 }}
-                      </div>
-                    </template>
-                    <template v-else>
-                      <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7"></path>
-                      </svg>
-                    </template>
+                    class="w-8 h-8 bg-gradient-to-br from-green-400 to-green-600 rounded-full flex items-center justify-center flex-shrink-0">
+                    <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7"></path>
+                    </svg>
                   </div>
                   <!-- 사용자 메시지 -->
                   <div v-else class="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center flex-shrink-0">
@@ -459,7 +680,7 @@
 
                   <div class="flex-1" :class="{ 'flex flex-col items-end': message.role === 'user' }">
                     <div :class="{
-                      'bg-white dark:bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-md border border-gray-200 dark:border-gray-700': message.role === 'assistant',
+                      'bg-white dark:bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-md border border-gray-200 dark:border-gray-700 max-w-[80%] relative': message.role === 'assistant',
                       'bg-gradient-to-r from-green-500 to-green-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 shadow-md': message.role === 'user'
                     }">
                       <p :class="{
@@ -472,13 +693,25 @@
                         <p class="text-xs text-gray-500 dark:text-gray-400 font-medium mb-2">{{ t.selectedVideos }}</p>
                         <div v-for="video in message.selectedVideos" :key="video.id"
                           class="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded-xl">
+                          <!-- 이미지인 경우 -->
+                          <img 
+                            v-if="video.displayUrl && isImageFile(video)"
+                            :src="video.displayUrl" 
+                            class="w-32 h-20 object-cover rounded flex-shrink-0"
+                            @error="(e) => handleChatVideoError(video, e)"
+                            crossorigin="anonymous"
+                            draggable="false"
+                            alt=""
+                          />
+                          <!-- 동영상인 경우 -->
                           <video 
-                            v-if="video.displayUrl" 
+                            v-else-if="video.displayUrl && !isImageFile(video)" 
                             :src="video.displayUrl" 
                             class="w-32 h-20 object-cover rounded flex-shrink-0"
                             @error="(e) => handleChatVideoError(video, e)"
                             crossorigin="anonymous"
                             preload="metadata"
+                            draggable="false"
                           ></video>
                           <div v-else class="w-32 h-20 bg-gray-200 dark:bg-gray-600 rounded flex-shrink-0 flex items-center justify-center">
                             <svg class="w-8 h-8 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -516,9 +749,23 @@
                                 {{ clip.sourceVideo || clip.date }}
                               </span>
                             </p>
+                            <p v-if="clip.sentence"
+                              :class="message.role === 'assistant' ? 'text-xs text-gray-600 dark:text-gray-300 mt-2 line-clamp-2' : 'text-xs text-green-50 mt-2 line-clamp-2'">
+                              {{ clip.sentence }}
+                            </p>
                           </div>
                         </div>
                       </div>
+                      <!-- 설정 버튼 (assistant 메시지에만 표시, 메시지 블록 내부 우측 상단) -->
+                      <button
+                        v-if="message.role === 'assistant'"
+                        @click.stop="openChatMessageContextMenu(index, $event)"
+                        class="absolute top-1.5 right-1 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        title="설정">
+                        <svg class="w-4 h-4 text-gray-500 dark:text-gray-400" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"></path>
+                        </svg>
+                      </button>
                     </div>
                     <p
                       :class="message.role === 'assistant' ? 'text-xs text-gray-400 dark:text-gray-500 mt-1 ml-2' : 'text-xs text-gray-400 dark:text-gray-500 mt-1 mr-2'">
@@ -573,6 +820,651 @@
           </Transition>
         </Teleport>
 
+        <!-- 보고서 제목 입력 모달 -->
+        <Teleport to="body">
+          <Transition name="fade">
+            <div v-if="showReportTitleModal" 
+                 class="fixed inset-0 z-[10002] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+                 @mousedown="(e) => handleModalBackgroundClick(e, closeReportTitleModal)"
+                 @mouseup="(e) => handleModalBackgroundClick(e, closeReportTitleModal)">
+              <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4"
+                   @click.stop
+                   @mousedown.stop
+                   @mouseup.stop>
+                <div class="flex flex-col">
+                  <h3 class="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
+                    {{ settingStore.language === 'ko' ? '보고서 제목 입력' : 'Enter Report Title' }}
+                  </h3>
+                  <input
+                    v-model="reportTitleInput"
+                    type="text"
+                    :placeholder="settingStore.language === 'ko' ? '보고서 제목을 입력하세요' : 'Enter report title'"
+                    :class="[
+                      'w-full px-4 py-3 border rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 mb-1',
+                      reportTitleError 
+                        ? 'border-red-500 dark:border-red-500 focus:ring-red-500 dark:focus:ring-red-500' 
+                        : 'border-gray-300 dark:border-gray-600 focus:ring-green-500 dark:focus:ring-green-400'
+                    ]"
+                    @input="checkReportTitle"
+                    @keyup.enter="confirmReportTitle"
+                    autofocus
+                  />
+                  <p v-if="reportTitleError" class="text-red-500 dark:text-red-400 text-sm mb-4">
+                    {{ reportTitleError }}
+                  </p>
+                  <div class="flex gap-3 justify-end">
+                    <button
+                      @click="closeReportTitleModal"
+                      class="px-6 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                    >
+                      {{ settingStore.language === 'ko' ? '취소' : 'Cancel' }}
+                    </button>
+                    <button
+                      @click="confirmReportTitle"
+                      :disabled="!reportTitleInput.trim() || !!reportTitleError || isCheckingTitle"
+                      class="px-6 py-2 bg-green-500 dark:bg-green-600 text-white rounded-lg hover:bg-green-600 dark:hover:bg-green-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {{ settingStore.language === 'ko' ? '확인' : 'Confirm' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Transition>
+        </Teleport>
+
+        <!-- 보고서 생성 로딩 모달 -->
+        <Teleport to="body">
+          <Transition name="fade">
+            <div v-if="isCreatingReport" 
+                 class="fixed inset-0 z-[10003] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+                 @mousedown="(e) => handleModalBackgroundClick(e, closeReportModal)"
+                 @mouseup="(e) => handleModalBackgroundClick(e, closeReportModal)">
+              <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4"
+                   @click.stop
+                   @mousedown.stop
+                   @mouseup.stop>
+                <div class="flex flex-col items-center justify-center">
+                  <!-- 로딩 중: 스피너 -->
+                  <div v-if="!reportSuccess" class="animate-spin rounded-full h-16 w-16 border-b-4 border-green-500 dark:border-green-400 mb-4"></div>
+                  <!-- 완료: 체크 표시 -->
+                  <div v-else class="mb-4">
+                    <div class="w-16 h-16 rounded-full bg-green-500 dark:bg-green-400 flex items-center justify-center animate-scale-in">
+                      <svg class="w-10 h-10 text-white animate-check-draw" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" class="check-path"></path>
+                      </svg>
+                    </div>
+                  </div>
+                  <h3 class="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-2">
+                    <span v-if="!reportSuccess">
+                      {{ settingStore.language === 'ko' ? '보고서 생성 중...' : 'Creating Report...' }}
+                    </span>
+                    <span v-else class="text-green-600 dark:text-green-400">
+                      {{ settingStore.language === 'ko' ? '완료!' : 'Success!' }}
+                    </span>
+                  </h3>
+                  <p class="text-sm text-gray-600 dark:text-gray-400 text-center">
+                    <span v-if="!reportSuccess">
+                      {{ reportLoadingMessage || (settingStore.language === 'ko' ? '잠시만 기다려주세요.' : 'Please wait...') }}
+                    </span>
+                    <span v-else class="text-gray-800 dark:text-gray-200">
+                      {{ reportSuccessMessage }}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Transition>
+        </Teleport>
+
+        <!-- 검색 설정 모달 -->
+        <Teleport to="body">
+          <Transition name="fade">
+            <div v-if="showSearchSettingModal" 
+                 class="fixed inset-0 z-[250] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+                 @mousedown="(e) => handleModalBackgroundClick(e, closeSearchSettingModal)"
+                 @mouseup="(e) => handleModalBackgroundClick(e, closeSearchSettingModal)">
+              <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-[60vw] mx-4 max-h-[90vh] overflow-hidden flex flex-col"
+                   @mousedown.stop
+                   @mouseup.stop>
+                <div class="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
+                  <h2 class="text-xl font-bold text-gray-800 dark:text-gray-200 overflow-hidden whitespace-nowrap">
+                    {{ settingStore.language === 'ko' ? '설정' : 'Settings' }}
+                  </h2>
+                  <button 
+                    @click="closeSearchSettingModal"
+                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
+                    <svg viewBox="0 0 24 24" class="w-6 h-6">
+                      <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    </svg>
+                  </button>
+                </div>
+                
+                <!-- 설정 내용 -->
+                <div class="flex-1 overflow-y-auto p-6 space-y-6">
+                    <!-- Summarize Parameters -->
+                    <div class="rounded-xl border-2 border-emerald-200 dark:border-emerald-800 bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 shadow-lg overflow-hidden">
+                      <button class="w-full text-left flex items-center gap-3 px-5 py-4 bg-emerald-100/80 dark:bg-emerald-900/30 hover:bg-emerald-200/80 dark:hover:bg-emerald-900/40 transition-colors" @click="showSummarizeVlmParams = !showSummarizeVlmParams">
+                        <div class="flex items-center gap-3 flex-1">
+                          <div class="w-8 h-8 rounded-lg bg-emerald-500 dark:bg-emerald-600 flex items-center justify-center">
+                            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                          </div>
+                          <h2 class="text-lg font-bold text-emerald-900 dark:text-emerald-100">{{ settingStore.language === 'ko' ? 'Summarize 파라미터' : 'Summarize Parameters' }}</h2>
+                        </div>
+                        <span class="text-emerald-600 dark:text-emerald-300 text-xl font-bold">{{ showSummarizeVlmParams ? '▲' : '▼' }}</span>
+                      </button>
+                      <Transition name="fade-slide">
+                        <div v-show="showSummarizeVlmParams" class="p-5 space-y-5">
+                          <!-- Chunk 설정 -->
+                          <div class="bg-white/80 dark:bg-gray-800/80 rounded-lg p-4 border border-emerald-200 dark:border-emerald-700">
+                            <h3 class="text-sm font-semibold text-emerald-700 dark:text-emerald-300 mb-4 uppercase tracking-wide">{{ settingStore.language === 'ko' ? 'Chunk 설정' : 'Chunk Settings' }}</h3>
+                            <div class="grid lg:grid-cols-1 gap-4">
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Chunk Size' : 'Chunk Size' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '동영상 추론에서 분할 단위를 설정합니다.' : 'Set the chunking unit for video inference.' }}</p>
+                                <select v-model.number="settingStore.summarizeChunk" class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all">
+                                  <option value=0>{{ settingStore.language === 'ko' ? 'Chunk 없음' : 'No chunking' }}</option>
+                                  <option value=5>5 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
+                                  <option value=10>10 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
+                                  <option value=20>20 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
+                                  <option value=30>30 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
+                                  <option value=60>1 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+                                  <option value=120>2 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+                                  <option value=300>5 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+                                  <option value=600>10 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+                                  <option value=1200>20 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+                                  <option value=1800>30 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+                                </select>
+                              </section>
+                            </div>
+                          </div>
+
+                          <!-- LLM 기본 파라미터 -->
+                          <div class="bg-white/80 dark:bg-gray-800/80 rounded-lg p-4 border border-emerald-200 dark:border-emerald-700">
+                            <h3 class="text-sm font-semibold text-emerald-700 dark:text-emerald-300 mb-4 uppercase tracking-wide">{{ settingStore.language === 'ko' ? 'LLM 기본 파라미터' : 'Basic LLM Parameters' }}</h3>
+                            <div class="grid lg:grid-cols-3 gap-4">
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Top-k</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '최고 확률 어휘 토큰을 유지할 개수' : 'The number of highest probability vocabulary tokens to keep for top-k-filtering' }}</p>
+                                <input v-model.number="settingStore.summarizeTopk" type="number" min="1" max="1000" step="1"
+                                  @input="clampSummarizeValue('summarizeTopk', 1000, 1)"
+                                  class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Top-p</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '텍스트 생성에 사용되는 top-p 샘플링 질량' : 'The top-p sampling mass used for text generation' }}</p>
+                                <div class="flex items-center gap-2 mb-2">
+                                  <input v-model.number="settingStore.summarizeTopp" type="number" min="0" max="1" step="0.1"
+                                    @input="clampSummarizeValue('summarizeTopp', 1, 0)"
+                                    class="border-2 border-emerald-300 dark:border-emerald-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                                  <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeTopP">↺</button>
+                                </div>
+                                <div class="flex items-center gap-2 h-8">
+                                  <span class="text-xs text-gray-400 w-8 text-center">0</span>
+                                  <input v-model.number="settingStore.summarizeTopp" type="range" min="0" max="1" step="0.05"
+                                    class="flex-1 border-emerald-300 dark:border-emerald-600" />
+                                  <span class="text-xs text-gray-400 w-8 text-center">1</span>
+                                </div>
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Temperature</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '텍스트 생성에 사용되는 샘플링 온도' : 'The sampling temperature to use for text generation' }}</p>
+                                <div class="flex items-center gap-2 mb-2">
+                                  <input v-model.number="settingStore.summarizeTemp" type="number" min="0" max="2" step="0.1"
+                                    @input="clampSummarizeValue('summarizeTemp', 2, 0)"
+                                    class="border-2 border-emerald-300 dark:border-emerald-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                                  <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeTemperature">↺</button>
+                                </div>
+                                <div class="flex items-center gap-2 h-8">
+                                  <span class="text-xs text-gray-400 w-8 text-center">0</span>
+                                  <input v-model.number="settingStore.summarizeTemp" type="range" min="0" max="2" step="0.1"
+                                    class="flex-1 border-emerald-300 dark:border-emerald-600" />
+                                  <span class="text-xs text-gray-400 w-8 text-center">2</span>
+                                </div>
+                              </section>
+                            </div>
+                          </div>
+
+                          <!-- 기타 파라미터 -->
+                          <div class="bg-white/80 dark:bg-gray-800/80 rounded-lg p-4 border border-emerald-200 dark:border-emerald-700">
+                            <h3 class="text-sm font-semibold text-emerald-700 dark:text-emerald-300 mb-4 uppercase tracking-wide">{{ settingStore.language === 'ko' ? '기타 파라미터' : 'Other Parameters' }}</h3>
+                            <div class="grid lg:grid-cols-2 gap-4">
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <div class="flex items-center justify-between mb-2">
+                                  <div>
+                                    <h2 class="font-semibold text-gray-800 dark:text-gray-200 text-base">Max Tokens</h2>
+                                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ settingStore.language === 'ko' ? '생성할 최대 토큰 수' : 'The maximum number of tokens to generate' }}</p>
+                                  </div>
+                                  <div class="flex items-center gap-2">
+                                    <input v-model.number="settingStore.summarizeMaxTokens" type="number" min="1" max="2048" step="1"
+                                      @input="clampSummarizeValue('summarizeMaxTokens', 2048, 1)"
+                                      class="border-2 border-emerald-300 dark:border-emerald-600 w-20 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                                    <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeMaxTokens">↺</button>
+                                  </div>
+                                </div>
+                                <div class="flex items-center gap-2 h-8 mt-3">
+                                  <span class="text-xs text-gray-400 w-8 text-center">1</span>
+                                  <input v-model.number="settingStore.summarizeMaxTokens" type="range" min="1" max="2048" step="1"
+                                    class="flex-1 border-emerald-300 dark:border-emerald-600" />
+                                  <span class="text-xs text-gray-400 w-12 text-center">2048</span>
+                                </div>
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Seed</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '샘플링에 사용할 시드 값' : 'Seed value to use for sampling' }}</p>
+                                <input v-model.number="settingStore.summarizeSeed" type="number" min="1" max="4294967295" step="1"
+                                  @input="clampSummarizeValue('summarizeSeed', 4294967295, 1)"
+                                  class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                              </section>
+                            </div>
+                          </div>
+                          
+                          <!-- 프레임 및 배치 설정 -->
+                          <div class="bg-white/80 dark:bg-gray-800/80 rounded-lg p-4 border border-emerald-200 dark:border-emerald-700">
+                            <h3 class="text-sm font-semibold text-emerald-700 dark:text-emerald-300 mb-4 uppercase tracking-wide">{{ settingStore.language === 'ko' ? '프레임 및 배치 설정' : 'Frame & Batch Settings' }}</h3>
+                            <div class="grid lg:grid-cols-3 gap-4 mb-4">
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Num Frames Per Chunk' : 'Num Frames Per Chunk' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '청크당 프레임 수' : 'Number of frames per chunk' }}</p>
+                                <input v-model.number="settingStore.summarizeNumFramesPerChunk" type="number" min="0" max="100" step="1"
+                                  @input="clampSummarizeValue('summarizeNumFramesPerChunk', 100, 0)"
+                                  class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Frame Width' : 'Frame Width' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '프레임 너비 (0이면 자동)' : 'Frame width (0 for auto)' }}</p>
+                                <input v-model.number="settingStore.summarizeFrameWidth" type="number" min="0" max="4096" step="1"
+                                  @input="clampSummarizeValue('summarizeFrameWidth', 4096, 0)"
+                                  class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Frame Height' : 'Frame Height' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '프레임 높이 (0이면 자동)' : 'Frame height (0 for auto)' }}</p>
+                                <input v-model.number="settingStore.summarizeFrameHeight" type="number" min="0" max="4096" step="1"
+                                  @input="clampSummarizeValue('summarizeFrameHeight', 4096, 0)"
+                                  class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                              </section>
+                            </div>
+                            
+                            <div class="grid lg:grid-cols-3 gap-4">
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Batch Size' : 'Batch Size' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '배치 크기' : 'Batch size' }}</p>
+                                <input v-model.number="settingStore.summarizeBatchSize" type="number" min="1" max="100" step="1"
+                                  @input="clampSummarizeValue('summarizeBatchSize', 100, 1)"
+                                  class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'RAG Batch Size' : 'RAG Batch Size' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? 'RAG 배치 크기' : 'RAG batch size' }}</p>
+                                <input v-model.number="settingStore.summarizeRagBatchSize" type="number" min="1" max="100" step="1"
+                                  @input="clampSummarizeValue('summarizeRagBatchSize', 100, 1)"
+                                  class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'RAG Top-k' : 'RAG Top-k' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? 'RAG Top-k 값' : 'RAG Top-k value' }}</p>
+                                <input v-model.number="settingStore.summarizeRagTopK" type="number" min="1" max="100" step="1"
+                                  @input="clampSummarizeValue('summarizeRagTopK', 100, 1)"
+                                  class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                              </section>
+                            </div>
+                          </div>
+
+                          <!-- Summarize 전용 파라미터 -->
+                          <div class="bg-white/80 dark:bg-gray-800/80 rounded-lg p-4 border border-emerald-200 dark:border-emerald-700">
+                            <h3 class="text-sm font-semibold text-emerald-700 dark:text-emerald-300 mb-4 uppercase tracking-wide">{{ settingStore.language === 'ko' ? 'Summarize 전용 파라미터' : 'Summarize-Specific Parameters' }}</h3>
+                            <div class="grid lg:grid-cols-3 gap-4">
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Summarize Top-p' : 'Summarize Top-p' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '요약용 Top-p' : 'Top-p for summarization' }}</p>
+                                <div class="flex items-center gap-2 mb-2">
+                                  <input v-model.number="settingStore.summarizeSummarizeTopP" type="number" min="0" max="1" step="0.1"
+                                    @input="clampSummarizeValue('summarizeSummarizeTopP', 1, 0)"
+                                    class="border-2 border-emerald-300 dark:border-emerald-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                                  <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeSummarizeTopP">↺</button>
+                                </div>
+                                <div class="flex items-center gap-2 h-8">
+                                  <span class="text-xs text-gray-400 w-8 text-center">0</span>
+                                  <input v-model.number="settingStore.summarizeSummarizeTopP" type="range" min="0" max="1" step="0.05"
+                                    class="flex-1 border-emerald-300 dark:border-emerald-600" />
+                                  <span class="text-xs text-gray-400 w-8 text-center">1</span>
+                                </div>
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Summarize Temperature' : 'Summarize Temperature' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '요약용 Temperature' : 'Temperature for summarization' }}</p>
+                                <div class="flex items-center gap-2 mb-2">
+                                  <input v-model.number="settingStore.summarizeSummarizeTemperature" type="number" min="0" max="2" step="0.1"
+                                    @input="clampSummarizeValue('summarizeSummarizeTemperature', 2, 0)"
+                                    class="border-2 border-emerald-300 dark:border-emerald-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                                  <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeSummarizeTemperature">↺</button>
+                                </div>
+                                <div class="flex items-center gap-2 h-8">
+                                  <span class="text-xs text-gray-400 w-8 text-center">0</span>
+                                  <input v-model.number="settingStore.summarizeSummarizeTemperature" type="range" min="0" max="2" step="0.1"
+                                    class="flex-1 border-emerald-300 dark:border-emerald-600" />
+                                  <span class="text-xs text-gray-400 w-8 text-center">2</span>
+                                </div>
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <div class="flex items-center justify-between mb-2">
+                                  <div>
+                                    <h2 class="font-semibold text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Summarize Max Tokens' : 'Summarize Max Tokens' }}</h2>
+                                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ settingStore.language === 'ko' ? '요약용 최대 토큰 수' : 'Max tokens for summarization' }}</p>
+                                  </div>
+                                  <div class="flex items-center gap-2">
+                                    <input v-model.number="settingStore.summarizeSummarizeMaxTokens" type="number" min="1" max="4096" step="1"
+                                      @input="clampSummarizeValue('summarizeSummarizeMaxTokens', 4096, 1)"
+                                      class="border-2 border-emerald-300 dark:border-emerald-600 w-20 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                                    <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeSummarizeMaxTokens">↺</button>
+                                  </div>
+                                </div>
+                                <div class="flex items-center gap-2 h-8 mt-3">
+                                  <span class="text-xs text-gray-400 w-8 text-center">1</span>
+                                  <input v-model.number="settingStore.summarizeSummarizeMaxTokens" type="range" min="1" max="4096" step="1"
+                                    class="flex-1 border-emerald-300 dark:border-emerald-600" />
+                                  <span class="text-xs text-gray-400 w-12 text-center">4096</span>
+                                </div>
+                              </section>
+                            </div>
+                          </div>
+
+                          <!-- Chat 파라미터 -->
+                          <div class="bg-white/80 dark:bg-gray-800/80 rounded-lg p-4 border border-emerald-200 dark:border-emerald-700">
+                            <h3 class="text-sm font-semibold text-emerald-700 dark:text-emerald-300 mb-4 uppercase tracking-wide">{{ settingStore.language === 'ko' ? 'Chat 파라미터' : 'Chat Parameters' }}</h3>
+                            <div class="grid lg:grid-cols-3 gap-4">
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Chat Top-p' : 'Chat Top-p' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '채팅용 Top-p' : 'Top-p for chat' }}</p>
+                                <div class="flex items-center gap-2 mb-2">
+                                  <input v-model.number="settingStore.summarizeChatTopP" type="number" min="0" max="1" step="0.1"
+                                    @input="clampSummarizeValue('summarizeChatTopP', 1, 0)"
+                                    class="border-2 border-emerald-300 dark:border-emerald-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                                  <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeChatTopP">↺</button>
+                                </div>
+                                <div class="flex items-center gap-2 h-8">
+                                  <span class="text-xs text-gray-400 w-8 text-center">0</span>
+                                  <input v-model.number="settingStore.summarizeChatTopP" type="range" min="0" max="1" step="0.05"
+                                    class="flex-1 border-emerald-300 dark:border-emerald-600" />
+                                  <span class="text-xs text-gray-400 w-8 text-center">1</span>
+                                </div>
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Chat Temperature' : 'Chat Temperature' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '채팅용 Temperature' : 'Temperature for chat' }}</p>
+                                <div class="flex items-center gap-2 mb-2">
+                                  <input v-model.number="settingStore.summarizeChatTemperature" type="number" min="0" max="2" step="0.1"
+                                    @input="clampSummarizeValue('summarizeChatTemperature', 2, 0)"
+                                    class="border-2 border-emerald-300 dark:border-emerald-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                                  <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeChatTemperature">↺</button>
+                                </div>
+                                <div class="flex items-center gap-2 h-8">
+                                  <span class="text-xs text-gray-400 w-8 text-center">0</span>
+                                  <input v-model.number="settingStore.summarizeChatTemperature" type="range" min="0" max="2" step="0.1"
+                                    class="flex-1 border-emerald-300 dark:border-emerald-600" />
+                                  <span class="text-xs text-gray-400 w-8 text-center">2</span>
+                                </div>
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <div class="flex items-center justify-between mb-2">
+                                  <div>
+                                    <h2 class="font-semibold text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Chat Max Tokens' : 'Chat Max Tokens' }}</h2>
+                                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ settingStore.language === 'ko' ? '채팅용 최대 토큰 수' : 'Max tokens for chat' }}</p>
+                                  </div>
+                                  <div class="flex items-center gap-2">
+                                    <input v-model.number="settingStore.summarizeChatMaxTokens" type="number" min="1" max="4096" step="1"
+                                      @input="clampSummarizeValue('summarizeChatMaxTokens', 4096, 1)"
+                                      class="border-2 border-emerald-300 dark:border-emerald-600 w-20 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                                    <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeChatMaxTokens">↺</button>
+                                  </div>
+                                </div>
+                                <div class="flex items-center gap-2 h-8 mt-3">
+                                  <span class="text-xs text-gray-400 w-8 text-center">1</span>
+                                  <input v-model.number="settingStore.summarizeChatMaxTokens" type="range" min="1" max="4096" step="1"
+                                    class="flex-1 border-emerald-300 dark:border-emerald-600" />
+                                  <span class="text-xs text-gray-400 w-12 text-center">4096</span>
+                                </div>
+                              </section>
+                            </div>
+                          </div>
+
+                          <!-- Notification 파라미터 -->
+                          <div class="bg-white/80 dark:bg-gray-800/80 rounded-lg p-4 border border-emerald-200 dark:border-emerald-700">
+                            <h3 class="text-sm font-semibold text-emerald-700 dark:text-emerald-300 mb-4 uppercase tracking-wide">{{ settingStore.language === 'ko' ? 'Notification 파라미터' : 'Notification Parameters' }}</h3>
+                            <div class="grid lg:grid-cols-3 gap-4">
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Notification Top-p' : 'Notification Top-p' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '알림용 Top-p' : 'Top-p for notification' }}</p>
+                                <div class="flex items-center gap-2 mb-2">
+                                  <input v-model.number="settingStore.summarizeNotificationTopP" type="number" min="0" max="1" step="0.1"
+                                    @input="clampSummarizeValue('summarizeNotificationTopP', 1, 0)"
+                                    class="border-2 border-emerald-300 dark:border-emerald-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                                  <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeNotificationTopP">↺</button>
+                                </div>
+                                <div class="flex items-center gap-2 h-8">
+                                  <span class="text-xs text-gray-400 w-8 text-center">0</span>
+                                  <input v-model.number="settingStore.summarizeNotificationTopP" type="range" min="0" max="1" step="0.05"
+                                    class="flex-1 border-emerald-300 dark:border-emerald-600" />
+                                  <span class="text-xs text-gray-400 w-8 text-center">1</span>
+                                </div>
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Notification Temperature' : 'Notification Temperature' }}</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '알림용 Temperature' : 'Temperature for notification' }}</p>
+                                <div class="flex items-center gap-2 mb-2">
+                                  <input v-model.number="settingStore.summarizeNotificationTemperature" type="number" min="0" max="2" step="0.1"
+                                    @input="clampSummarizeValue('summarizeNotificationTemperature', 2, 0)"
+                                    class="border-2 border-emerald-300 dark:border-emerald-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                                  <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeNotificationTemperature">↺</button>
+                                </div>
+                                <div class="flex items-center gap-2 h-8">
+                                  <span class="text-xs text-gray-400 w-8 text-center">0</span>
+                                  <input v-model.number="settingStore.summarizeNotificationTemperature" type="range" min="0" max="2" step="0.1"
+                                    class="flex-1 border-emerald-300 dark:border-emerald-600" />
+                                  <span class="text-xs text-gray-400 w-8 text-center">2</span>
+                                </div>
+                              </section>
+
+                              <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <div class="flex items-center justify-between mb-2">
+                                  <div>
+                                    <h2 class="font-semibold text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Notification Max Tokens' : 'Notification Max Tokens' }}</h2>
+                                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ settingStore.language === 'ko' ? '알림용 최대 토큰 수' : 'Max tokens for notification' }}</p>
+                                  </div>
+                                  <div class="flex items-center gap-2">
+                                    <input v-model.number="settingStore.summarizeNotificationMaxTokens" type="number" min="1" max="4096" step="1"
+                                      @input="clampSummarizeValue('summarizeNotificationMaxTokens', 4096, 1)"
+                                      class="border-2 border-emerald-300 dark:border-emerald-600 w-20 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
+                                    <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeNotificationMaxTokens">↺</button>
+                                  </div>
+                                </div>
+                                <div class="flex items-center gap-2 h-8 mt-3">
+                                  <span class="text-xs text-gray-400 w-8 text-center">1</span>
+                                  <input v-model.number="settingStore.summarizeNotificationMaxTokens" type="range" min="1" max="4096" step="1"
+                                    class="flex-1 border-emerald-300 dark:border-emerald-600" />
+                                  <span class="text-xs text-gray-400 w-12 text-center">4096</span>
+                                </div>
+                              </section>
+                            </div>
+                          </div>
+
+                          <!-- Enable Audio -->
+                          <div class="bg-white/80 dark:bg-gray-800/80 rounded-lg p-4 border border-emerald-200 dark:border-emerald-700">
+                            <h3 class="text-sm font-semibold text-emerald-700 dark:text-emerald-300 mb-4 uppercase tracking-wide">{{ settingStore.language === 'ko' ? '오디오 설정' : 'Audio Settings' }}</h3>
+                            <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                              <div class="flex items-center justify-between">
+                                <label class="text-base font-semibold text-gray-800 dark:text-gray-200 cursor-pointer" @click="settingStore.summarizeEnableAudio = !settingStore.summarizeEnableAudio">
+                                  {{ settingStore.language === 'ko' ? 'Enable Audio' : 'Enable Audio' }}
+                                </label>
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  :aria-checked="settingStore.summarizeEnableAudio"
+                                  @click="settingStore.summarizeEnableAudio = !settingStore.summarizeEnableAudio"
+                                  class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
+                                  :class="settingStore.summarizeEnableAudio ? 'bg-blue-600 dark:bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'"
+                                >
+                                  <span
+                                    class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform"
+                                    :class="settingStore.summarizeEnableAudio ? 'translate-x-6' : 'translate-x-1'"
+                                  ></span>
+                                </button>
+                              </div>
+                              <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">{{ settingStore.language === 'ko' ? '오디오 기능 활성화' : 'Enable audio functionality' }}</p>
+                            </section>
+                          </div>
+                        </div>
+                      </Transition>
+                    </div>
+                    
+                    <!-- Query Parameters -->
+                    <div class="rounded-xl border-2 border-blue-200 dark:border-blue-800 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-800/10 shadow-lg overflow-hidden">
+                      <button class="w-full text-left flex items-center gap-3 px-5 py-4 bg-blue-100/80 dark:bg-blue-900/30 hover:bg-blue-200/80 dark:hover:bg-blue-900/40 transition-colors" @click="showQueryVlmParams = !showQueryVlmParams">
+                        <div class="flex items-center gap-3 flex-1">
+                          <div class="w-8 h-8 rounded-lg bg-blue-500 dark:bg-blue-600 flex items-center justify-center">
+                            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                          </div>
+                          <h2 class="text-lg font-bold text-blue-900 dark:text-blue-100">{{ settingStore.language === 'ko' ? 'Query 파라미터' : 'Query Parameters' }}</h2>
+                        </div>
+                        <span class="text-blue-600 dark:text-blue-300 text-xl font-bold">{{ showQueryVlmParams ? '▲' : '▼' }}</span>
+                      </button>
+                      <Transition name="fade-slide">
+                        <div v-show="showQueryVlmParams" class="p-5 space-y-5">
+                          <!-- Chunk 설정 -->
+                          <div class="bg-white/80 dark:bg-gray-800/80 rounded-lg p-4 border border-blue-200 dark:border-blue-700">
+                            <h3 class="text-sm font-semibold text-blue-700 dark:text-blue-300 mb-4 uppercase tracking-wide">{{ settingStore.language === 'ko' ? 'Chunk 설정' : 'Chunk Settings' }}</h3>
+                            <div class="grid lg:grid-cols-1 gap-4">
+                              <section class="rounded-lg border border-blue-200 dark:border-blue-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Chunk Size' : 'Chunk Size' }}</h2>
+                              <label class="block text-sm mb-1 text-gray-700 dark:text-gray-300">{{ settingStore.language === 'ko' ? 'Chunk Size' : 'Chunk Size' }}</label>
+                              <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">{{ settingStore.language === 'ko' ? '동영상 추론에서 분할 단위를 설정합니다.' : 'Set the chunking unit for video inference.' }}</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '동영상 추론에서 분할 단위를 설정합니다.' : 'Set the chunking unit for video inference.' }}</p>
+                                <select v-model.number="settingStore.queryChunk" class="border-2 border-blue-300 dark:border-blue-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all">
+                                  <option value=0>{{ settingStore.language === 'ko' ? 'Chunk 없음' : 'No chunking' }}</option>
+                                  <option value=5>5 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
+                                  <option value=10>10 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
+                                  <option value=20>20 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
+                                  <option value=30>30 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
+                                  <option value=60>1 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+                                  <option value=120>2 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+                                  <option value=300>5 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+                                  <option value=600>10 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+                                  <option value=1200>20 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+                                  <option value=1800>30 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+                                </select>
+                              </section>
+                            </div>
+                          </div>
+
+                          <!-- LLM 기본 파라미터 -->
+                          <div class="bg-white/80 dark:bg-gray-800/80 rounded-lg p-4 border border-blue-200 dark:border-blue-700">
+                            <h3 class="text-sm font-semibold text-blue-700 dark:text-blue-300 mb-4 uppercase tracking-wide">{{ settingStore.language === 'ko' ? 'LLM 기본 파라미터' : 'Basic LLM Parameters' }}</h3>
+                            <div class="grid lg:grid-cols-3 gap-4">
+                              <section class="rounded-lg border border-blue-200 dark:border-blue-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Top-k</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '최고 확률 어휘 토큰을 유지할 개수' : 'The number of highest probability vocabulary tokens to keep for top-k-filtering' }}</p>
+                                <input v-model.number="settingStore.queryTopk" type="number" min="1" max="1000" step="1"
+                                  @input="clampQueryValue('queryTopk', 1000, 1)"
+                                  class="border-2 border-blue-300 dark:border-blue-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" />
+                              </section>
+
+                              <section class="rounded-lg border border-blue-200 dark:border-blue-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Top-p</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '텍스트 생성에 사용되는 top-p 샘플링 질량' : 'The top-p sampling mass used for text generation' }}</p>
+                                <div class="flex items-center gap-2 mb-2">
+                                  <input v-model.number="settingStore.queryTopp" type="number" min="0" max="1" step="0.1"
+                                    @input="clampQueryValue('queryTopp', 1, 0)"
+                                    class="border-2 border-blue-300 dark:border-blue-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" />
+                                  <button class="border-2 border-blue-300 dark:border-blue-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center" @click="resetQueryTopP">↺</button>
+                                </div>
+                                <div class="flex items-center gap-2 h-8">
+                                  <span class="text-xs text-gray-400 w-8 text-center">0</span>
+                                  <input v-model.number="settingStore.queryTopp" type="range" min="0" max="1" step="0.05"
+                                    class="flex-1 border-blue-300 dark:border-blue-600" />
+                                  <span class="text-xs text-gray-400 w-8 text-center">1</span>
+                                </div>
+                              </section>
+
+                              <section class="rounded-lg border border-blue-200 dark:border-blue-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Temperature</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '텍스트 생성에 사용되는 샘플링 온도' : 'The sampling temperature to use for text generation' }}</p>
+                                <div class="flex items-center gap-2 mb-2">
+                                  <input v-model.number="settingStore.queryTemp" type="number" min="0" max="2" step="0.1"
+                                    @input="clampQueryValue('queryTemp', 2, 0)"
+                                    class="border-2 border-blue-300 dark:border-blue-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" />
+                                  <button class="border-2 border-blue-300 dark:border-blue-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center" @click="resetQueryTemperature">↺</button>
+                                </div>
+                                <div class="flex items-center gap-2 h-8">
+                                  <span class="text-xs text-gray-400 w-8 text-center">0</span>
+                                  <input v-model.number="settingStore.queryTemp" type="range" min="0" max="2" step="0.1"
+                                    class="flex-1 border-blue-300 dark:border-blue-600" />
+                                  <span class="text-xs text-gray-400 w-8 text-center">2</span>
+                                </div>
+                              </section>
+                            </div>
+                          </div>
+
+                          <!-- 기타 파라미터 -->
+                          <div class="bg-white/80 dark:bg-gray-800/80 rounded-lg p-4 border border-blue-200 dark:border-blue-700">
+                            <h3 class="text-sm font-semibold text-blue-700 dark:text-blue-300 mb-4 uppercase tracking-wide">{{ settingStore.language === 'ko' ? '기타 파라미터' : 'Other Parameters' }}</h3>
+                            <div class="grid lg:grid-cols-2 gap-4">
+                              <section class="rounded-lg border border-blue-200 dark:border-blue-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <div class="flex items-center justify-between mb-2">
+                                  <div>
+                                    <h2 class="font-semibold text-gray-800 dark:text-gray-200 text-base">Max Tokens</h2>
+                                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ settingStore.language === 'ko' ? '생성할 최대 토큰 수' : 'The maximum number of tokens to generate' }}</p>
+                                  </div>
+                                  <div class="flex items-center gap-2">
+                                    <input v-model.number="settingStore.queryMaxTokens" type="number" min="1" max="1024" step="1"
+                                      @input="clampQueryValue('queryMaxTokens', 1024, 1)"
+                                      class="border-2 border-blue-300 dark:border-blue-600 w-20 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" />
+                                    <button class="border-2 border-blue-300 dark:border-blue-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center" @click="resetQueryMaxTokens">↺</button>
+                                  </div>
+                                </div>
+                                <div class="flex items-center gap-2 h-8 mt-3">
+                                  <span class="text-xs text-gray-400 w-8 text-center">1</span>
+                                  <input v-model.number="settingStore.queryMaxTokens" type="range" min="1" max="1024" step="1"
+                                    class="flex-1 border-blue-300 dark:border-blue-600" />
+                                  <span class="text-xs text-gray-400 w-12 text-center">1024</span>
+                                </div>
+                              </section>
+
+                              <section class="rounded-lg border border-blue-200 dark:border-blue-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
+                                <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Seed</h2>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '샘플링에 사용할 시드 값' : 'Seed value to use for sampling' }}</p>
+                                <input v-model.number="settingStore.querySeed" type="number" min="1" max="4294967295" step="1"
+                                  @input="clampQueryValue('querySeed', 4294967295, 1)"
+                                  class="border-2 border-blue-300 dark:border-blue-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" />
+                              </section>
+                            </div>
+                          </div>
+                        </div>
+                      </Transition>
+                    </div>
+                </div>
+              </div>
+            </div>
+          </Transition>
+        </Teleport>
+
         <!-- 업로드 진행률 모달 -->
         <Teleport to="body">
           <div v-if="showUploadModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -616,13 +1508,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onActivated, computed, nextTick, watch, onBeforeUnmount } from "vue";
-import { useRouter } from 'vue-router';
+import { ref, onMounted, onActivated, onDeactivated, computed, nextTick, watch, onBeforeUnmount } from "vue";
+import { useRouter, onBeforeRouteLeave } from 'vue-router';
 import { useSummaryVideoStore } from '@/stores/summaryVideoStore';
 import { useSettingStore } from '@/stores/settingStore';
+import { getApiBaseUrl } from '@/utils/apiConfig';
+import { marked } from 'marked';
 
 // ==================== 상수 정의 ====================
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001';
+const API_BASE_URL = getApiBaseUrl();
 
 // VIA 파일 목록 조회 함수
 async function loadViaFiles() {
@@ -730,8 +1624,8 @@ const settingStore = useSettingStore();
 const translations = {
   ko: {
     workspace: "Video Search Workspace",
-    description: "업로드한 여러 동영상에서 원하는 장면을 검색하고,",
-    descriptionDetail: "오른쪽 패널에서 검색 결과 클립을 한눈에 확인할 수 있습니다.",
+    description: "동영상 업로드 후 동영상을 우클릭하여 요약 혹은 검색을 진행할 수 있습니다.",
+    descriptionDetail: "검색 메뉴에서 원하는 장면을 검색하고 해당 장면의 클립을 확인할 수 있습니다.",
     selectAll: "전체 선택",
     clearSelection: "선택 해제",
     uploadVideo: "동영상 업로드",
@@ -763,8 +1657,8 @@ const translations = {
   },
   en: {
     workspace: "Video Search Workspace",
-    description: "Search for desired scenes from multiple uploaded videos,",
-    descriptionDetail: "and view search result clips at a glance in the right panel.",
+    description: "Upload a video and right-click on the video to summarize or search.",
+    descriptionDetail: "Search for the desired scene in the search menu and view the clips of the scene.",
     selectAll: "Select All",
     clearSelection: "Clear Selection",
     uploadVideo: "Upload Video",
@@ -800,6 +1694,8 @@ const t = computed(() => translations[settingStore.language] || translations.ko)
 
 const isZoomed = ref(false);
 const zoomedVideo = ref(null);
+const zoomedClip = ref(null); // 현재 재생 중인 클립 정보 (sentence 포함)
+const showSentencePopup = ref(true); // 장면 설명 팝업 표시 여부
 const zoomVideoRef = ref(null);
 const zoomProgressBarRef = ref(null);
 const zoomPlaying = ref(false); // 확대 모달 재생 상태 (그리드와 분리)
@@ -827,6 +1723,17 @@ const chatNameInput = ref(null);
 // 업로드 진행률 모달 상태
 const showUploadModal = ref(false);
 const uploadProgress = ref([]); // { id, fileName, progress, status, uploaded, total }
+// 보고서 생성 로딩 상태
+const isCreatingReport = ref(false);
+const reportLoadingMessage = ref('');
+const reportSuccess = ref(false);
+const reportSuccessMessage = ref('');
+// 보고서 제목 입력 모달 상태
+const showReportTitleModal = ref(false);
+const reportTitleInput = ref('');
+const pendingReportData = ref(null); // 제목 입력 대기 중인 보고서 데이터
+const reportTitleError = ref(''); // 제목 중복 에러 메시지
+const isCheckingTitle = ref(false); // 제목 확인 중 플래그
 const activeUploads = ref({}); // { uploadId: XMLHttpRequest } - 진행 중인 업로드 추적
 
 // 진행 중인 fetch 요청을 취소하기 위한 AbortController
@@ -841,8 +1748,47 @@ const zoomCurrentTime = ref(0);
 const zoomDuration = ref(0);
 // Context menu state for right-click on video cards
 const contextMenu = ref({ visible: false, x: 0, y: 0, video: null });
+// 채팅 메시지 컨텍스트 메뉴 상태
+const chatMessageContextMenu = ref({ visible: false, messageIndex: null, x: 0, y: 0 });
+// 보고서 생성 서브메뉴 상태
+const reportSubmenu = ref({ visible: false, messageIndex: null, x: 0, y: 0 });
+// 보고서 목록 서브메뉴 상태
+const reportListSubmenu = ref({ visible: false, messageIndex: null, x: 0, y: 0, reports: [] });
+// 확대된 클립용 보고서 생성 서브메뉴 상태
+const zoomedClipReportSubmenu = ref({ visible: false, x: 0, y: 0 });
+// 확대된 클립용 보고서 목록 서브메뉴 상태
+const zoomedClipReportListSubmenu = ref({ visible: false, x: 0, y: 0, reports: [] });
+// 채팅창 탭 컨텍스트 메뉴 상태
+const chatTabContextMenu = ref({ visible: false, chatIndex: null, x: 0, y: 0 });
 
 // ==================== 유틸리티 함수 ====================
+// 팝업 배경 클릭 핸들러 (드래그 방지)
+let modalMouseDownPos = null;
+function handleModalBackgroundClick(event, closeFunction) {
+  // 배경이 아닌 내부 컨텐츠를 클릭한 경우 무시
+  if (event.target !== event.currentTarget) {
+    return;
+  }
+  
+  // mousedown 위치 저장
+  if (event.type === 'mousedown') {
+    modalMouseDownPos = { x: event.clientX, y: event.clientY };
+    return;
+  }
+  
+  // mouseup에서 위치 비교
+  if (event.type === 'mouseup' && modalMouseDownPos) {
+    const distance = Math.sqrt(
+      Math.pow(event.clientX - modalMouseDownPos.x, 2) + 
+      Math.pow(event.clientY - modalMouseDownPos.y, 2)
+    );
+    // 5픽셀 이내에서만 클릭으로 간주 (드래그가 아닌 경우)
+    if (distance < 5) {
+      closeFunction();
+    }
+    modalMouseDownPos = null;
+  }
+}
 function formatTime(sec) {
   if (!sec || isNaN(sec)) return '00:00';
   const m = Math.floor(sec / 60).toString().padStart(2, '0');
@@ -866,8 +1812,8 @@ function getCurrentTime() {
 
 function filterVideoFiles(files) {
   return Array.from(files).filter((file) => {
-    if (!file.type.startsWith('video/')) {
-      alert('동영상 파일만 업로드할 수 있습니다.');
+    if (!file.type.startsWith('video/') && !file.type.startsWith('image/')) {
+      alert(settingStore.language === 'ko' ? '동영상 또는 이미지 파일만 업로드할 수 있습니다.' : 'Only video or image files can be uploaded.');
       return false;
     }
     return true;
@@ -918,6 +1864,21 @@ function getVideoFileExtension(filename) {
 
 function isUnsupportedFormat(filename) {
   return UNSUPPORTED_VIDEO_FORMATS.includes(getVideoFileExtension(filename));
+}
+
+// 이미지 파일인지 확인하는 함수
+function isImageFile(video) {
+  if (!video) return false;
+  // file 객체가 있으면 type으로 확인
+  if (video.file && video.file.type) {
+    return video.file.type.startsWith('image/');
+  }
+  // 파일명으로 확인
+  const filename = video.title || video.name || '';
+  if (!filename) return false;
+  const ext = getVideoFileExtension(filename);
+  const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'tif'];
+  return imageExtensions.includes(ext.toLowerCase());
 }
 
 function constrainContextMenuPosition(x, y) {
@@ -1054,9 +2015,934 @@ function handleGlobalClick(e) {
   // 우클릭 이벤트는 무시 (컨텍스트 메뉴가 열릴 수 있음)
   if (e.button === 2 || e.which === 3) return;
   
-  if (!contextMenu.value.visible) return;
-  // close when clicking outside
-  closeContextMenu();
+  if (contextMenu.value.visible) {
+    // close when clicking outside
+    closeContextMenu();
+  }
+  
+  if (chatMessageContextMenu.value.visible) {
+    // close chat message context menu when clicking outside
+    closeChatMessageContextMenu();
+  }
+  
+  if (chatTabContextMenu.value.visible) {
+    // close chat tab context menu when clicking outside
+    closeChatTabContextMenu();
+  }
+}
+
+// ==================== 채팅 메시지 컨텍스트 메뉴 ====================
+function openChatMessageContextMenu(messageIndex, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  
+  // 같은 메시지의 컨텍스트 메뉴가 이미 열려있으면 닫기
+  if (chatMessageContextMenu.value.visible && chatMessageContextMenu.value.messageIndex === messageIndex) {
+    closeChatMessageContextMenu();
+    return;
+  }
+  
+  // 다른 메뉴들에게 채팅 메시지 컨텍스트 메뉴가 열릴 예정임을 알림
+  window.dispatchEvent(new CustomEvent('chat-message-context-menu-opened'));
+  
+  const { x, y } = constrainContextMenuPosition(e.clientX, e.clientY);
+  chatMessageContextMenu.value = { visible: true, messageIndex, x, y };
+}
+
+function closeChatMessageContextMenu() {
+  chatMessageContextMenu.value.visible = false;
+  chatMessageContextMenu.value.messageIndex = null;
+  reportSubmenu.value.visible = false;
+  reportSubmenu.value.messageIndex = null;
+  reportListSubmenu.value.visible = false;
+  reportListSubmenu.value.messageIndex = null;
+  reportListSubmenu.value.reports = [];
+}
+
+let submenuTimeout = null;
+
+function showReportSubmenu(messageIndex, parentX, parentY) {
+  if (submenuTimeout) {
+    clearTimeout(submenuTimeout);
+    submenuTimeout = null;
+  }
+  
+  // "보고서 생성" 버튼의 위치 계산 (두 번째 버튼이므로 첫 번째 버튼 높이만큼 아래)
+  const buttonHeight = 40; // py-2.5 = 약 40px
+  const submenuWidth = 180; // 서브메뉴 너비
+  const margin = 10; // 여백
+  
+  let submenuX = parentX + 160 + 4; // 메인 메뉴 너비(160px) + 간격(4px)
+  let submenuY = parentY + buttonHeight; // 첫 번째 버튼 높이만큼 아래
+  
+  // 화면 오른쪽 경계 체크
+  if (submenuX + submenuWidth + margin > window.innerWidth) {
+    // 오른쪽으로 나가면 왼쪽으로 표시 (메인 메뉴 왼쪽)
+    submenuX = parentX - submenuWidth - 4;
+    // 왼쪽으로도 나가면 화면 중앙에 배치
+    if (submenuX < margin) {
+      submenuX = (window.innerWidth - submenuWidth) / 2;
+    }
+  }
+  
+  // 화면 아래쪽 경계 체크
+  const submenuHeight = 80; // 대략적인 서브메뉴 높이 (2개 버튼)
+  const availableHeight = window.innerHeight - submenuY - margin;
+  if (availableHeight < submenuHeight) {
+    // 아래로 나가면 위로 조정
+    submenuY = Math.max(margin, window.innerHeight - submenuHeight - margin);
+  }
+  
+  reportSubmenu.value = {
+    visible: true,
+    messageIndex: messageIndex,
+    x: submenuX,
+    y: submenuY
+  };
+}
+
+function keepReportSubmenuVisible() {
+  // 서브메뉴에 마우스가 있을 때는 타이머 취소 (위치 재계산하지 않음)
+  if (submenuTimeout) {
+    clearTimeout(submenuTimeout);
+    submenuTimeout = null;
+  }
+}
+
+function hideReportSubmenu() {
+  // 약간의 지연을 두어 서브메뉴로 마우스 이동할 시간 제공
+  submenuTimeout = setTimeout(() => {
+    reportSubmenu.value.visible = false;
+    submenuTimeout = null;
+  }, 200);
+}
+
+// 확대된 클립에서 데이터 수집
+function collectZoomedClipData() {
+  if (!zoomedClip.value) {
+    alert(settingStore.language === 'ko' 
+      ? '클립 정보를 찾을 수 없습니다.' 
+      : 'Clip information not found.');
+    return null;
+  }
+  
+  return {
+    clips: [{
+      id: zoomedClip.value.id || `clip_${Date.now()}`,
+      title: zoomedClip.value.title || zoomedClip.value.id || '',
+      url: zoomedClip.value.url || '',
+      sentence: zoomedClip.value.sentence || '',
+      start_time: zoomedClip.value.start_time,
+      end_time: zoomedClip.value.end_time,
+      sourceVideo: zoomedClip.value.sourceVideo || zoomedClip.value.date || ''
+    }],
+    query: zoomedClip.value.search_query || ''
+  };
+}
+
+let zoomedClipSubmenuTimeout = null;
+
+// 확대된 클립용 보고서 생성 서브메뉴 표시 (버튼 위에 표시)
+function showZoomedClipReportSubmenu(event) {
+  if (zoomedClipSubmenuTimeout) {
+    clearTimeout(zoomedClipSubmenuTimeout);
+    zoomedClipSubmenuTimeout = null;
+  }
+  
+  const button = event.currentTarget;
+  const rect = button.getBoundingClientRect();
+  const submenuWidth = 180;
+  const submenuHeight = 80; // 2개 버튼 높이
+  const margin = 10;
+  
+  // 버튼 위에 표시 (버튼의 왼쪽 정렬)
+  let submenuX = rect.left;
+  let submenuY = rect.top - submenuHeight - 4; // 버튼 위에 4px 간격
+  
+  // 화면 왼쪽 경계 체크
+  if (submenuX < margin) {
+    submenuX = margin;
+  }
+  
+  // 화면 오른쪽 경계 체크
+  if (submenuX + submenuWidth + margin > window.innerWidth) {
+    submenuX = window.innerWidth - submenuWidth - margin;
+    if (submenuX < margin) {
+      submenuX = (window.innerWidth - submenuWidth) / 2;
+    }
+  }
+  
+  // 화면 위쪽 경계 체크 (버튼 위에 공간이 없으면 버튼 아래에 표시)
+  if (submenuY < margin) {
+    submenuY = rect.bottom + 4; // 버튼 아래에 4px 간격
+    // 아래쪽에도 공간이 없으면 화면 중앙에 배치
+    const availableHeight = window.innerHeight - submenuY - margin;
+    if (availableHeight < submenuHeight) {
+      submenuY = Math.max(margin, (window.innerHeight - submenuHeight) / 2);
+    }
+  }
+  
+  zoomedClipReportSubmenu.value = {
+    visible: true,
+    x: submenuX,
+    y: submenuY
+  };
+}
+
+function keepZoomedClipReportSubmenuVisible() {
+  if (zoomedClipSubmenuTimeout) {
+    clearTimeout(zoomedClipSubmenuTimeout);
+    zoomedClipSubmenuTimeout = null;
+  }
+}
+
+function hideZoomedClipReportSubmenu() {
+  zoomedClipSubmenuTimeout = setTimeout(() => {
+    zoomedClipReportSubmenu.value.visible = false;
+    zoomedClipSubmenuTimeout = null;
+  }, 200);
+}
+
+let zoomedClipReportListSubmenuTimeout = null;
+
+async function showZoomedClipReportListSubmenu(parentX, parentY) {
+  if (zoomedClipReportListSubmenuTimeout) {
+    clearTimeout(zoomedClipReportListSubmenuTimeout);
+    zoomedClipReportListSubmenuTimeout = null;
+  }
+  
+  const userId = localStorage.getItem("vss_user_id");
+  if (!userId) {
+    alert(settingStore.language === 'ko' 
+      ? '로그인이 필요합니다.' 
+      : 'Please log in.');
+    return;
+  }
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/reports?user_id=${userId}&page=1&page_size=50`);
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.reports && data.reports.length > 0) {
+        const reportListWidth = 250;
+        const margin = 10;
+        
+        let submenuX = parentX + 180 + 4;
+        let submenuY = parentY;
+        
+        if (submenuX + reportListWidth + margin > window.innerWidth) {
+          submenuX = parentX - reportListWidth - 4;
+          if (submenuX < margin) {
+            submenuX = (window.innerWidth - reportListWidth) / 2;
+          }
+        }
+        
+        const availableHeight = window.innerHeight - submenuY - margin;
+        const maxHeight = Math.min(400, availableHeight);
+        
+        zoomedClipReportListSubmenu.value = {
+          visible: true,
+          x: submenuX,
+          y: submenuY,
+          reports: data.reports
+        };
+      } else {
+        alert(settingStore.language === 'ko' 
+          ? '보고서를 찾을 수 없습니다. 새 보고서를 생성해주세요.' 
+          : 'No existing reports found. Please create a new report.');
+      }
+    }
+  } catch (error) {
+    console.error('보고서 목록 가져오기 실패:', error);
+    alert(settingStore.language === 'ko' 
+      ? '보고서 목록을 가져오는 중 오류가 발생했습니다.' 
+      : 'Error fetching report list.');
+  }
+}
+
+function keepZoomedClipReportListSubmenuVisible() {
+  if (zoomedClipReportListSubmenuTimeout) {
+    clearTimeout(zoomedClipReportListSubmenuTimeout);
+    zoomedClipReportListSubmenuTimeout = null;
+  }
+}
+
+function hideZoomedClipReportListSubmenu() {
+  zoomedClipReportListSubmenuTimeout = setTimeout(() => {
+    zoomedClipReportListSubmenu.value.visible = false;
+    zoomedClipReportListSubmenuTimeout = null;
+  }, 200);
+}
+
+let reportListSubmenuTimeout = null;
+
+async function showReportListSubmenu(messageIndex, parentX, parentY) {
+  if (reportListSubmenuTimeout) {
+    clearTimeout(reportListSubmenuTimeout);
+    reportListSubmenuTimeout = null;
+  }
+  
+  const userId = localStorage.getItem("vss_user_id");
+  if (!userId) {
+    alert(settingStore.language === 'ko' 
+      ? '로그인이 필요합니다.' 
+      : 'Please log in.');
+    return;
+  }
+  
+  try {
+    // 보고서 목록 가져오기
+    const response = await fetch(`${API_BASE_URL}/reports?user_id=${userId}&page=1&page_size=50`);
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.reports && data.reports.length > 0) {
+        const reportListWidth = 250; // 보고서 목록 너비
+        const reportListMaxHeight = 400; // 최대 높이
+        const margin = 10; // 여백
+        
+        // 오른쪽으로 표시할 위치 계산
+        let submenuX = parentX + 180 + 4; // 메인 서브메뉴 너비(180px) + 간격(4px)
+        let submenuY = parentY; // 같은 높이
+        
+        // 화면 오른쪽 경계 체크
+        if (submenuX + reportListWidth + margin > window.innerWidth) {
+          // 오른쪽으로 나가면 왼쪽으로 표시 (메인 서브메뉴 왼쪽)
+          submenuX = parentX - reportListWidth - 4;
+          // 왼쪽으로도 나가면 화면 중앙에 배치
+          if (submenuX < margin) {
+            submenuX = (window.innerWidth - reportListWidth) / 2;
+          }
+        }
+        
+        // 화면 아래쪽 경계 체크
+        const availableHeight = window.innerHeight - submenuY - margin;
+        if (availableHeight < reportListMaxHeight) {
+          // 아래로 나가면 위로 조정
+          submenuY = Math.max(margin, window.innerHeight - reportListMaxHeight - margin);
+        }
+        
+        reportListSubmenu.value = {
+          visible: true,
+          messageIndex: messageIndex,
+          x: submenuX,
+          y: submenuY,
+          reports: data.reports.map(r => ({
+            id: r.id || r.report_id,
+            title: r.title,
+            description: r.description || ''
+          }))
+        };
+      } else {
+        alert(settingStore.language === 'ko'
+          ? '추가할 기존 보고서가 없습니다. 새 보고서를 생성해주세요.'
+          : 'No existing reports found. Please create a new report.');
+      }
+    } else {
+      throw new Error('보고서 목록을 가져올 수 없습니다.');
+    }
+  } catch (error) {
+    console.error('보고서 목록 로드 실패:', error);
+    alert(settingStore.language === 'ko'
+      ? '보고서 목록을 불러오는 중 오류가 발생했습니다.'
+      : 'An error occurred while loading the report list.');
+  }
+}
+
+function keepReportListSubmenuVisible() {
+  // 보고서 리스트 서브메뉴에 마우스가 있을 때는 타이머 취소
+  if (reportListSubmenuTimeout) {
+    clearTimeout(reportListSubmenuTimeout);
+    reportListSubmenuTimeout = null;
+  }
+  // 첫 번째 서브메뉴(기존 보고서에 추가 메뉴)도 유지
+  if (submenuTimeout) {
+    clearTimeout(submenuTimeout);
+    submenuTimeout = null;
+  }
+}
+
+function hideReportListSubmenu() {
+  reportListSubmenuTimeout = setTimeout(() => {
+    reportListSubmenu.value.visible = false;
+    reportListSubmenuTimeout = null;
+    // 보고서 리스트가 닫힐 때 첫 번째 서브메뉴도 함께 닫기
+    hideReportSubmenu();
+  }, 200);
+}
+
+function copyChatMessage(messageIndex) {
+  if (messageIndex === null || messageIndex === undefined) return;
+  
+  const currentChat = chatSessions.value[currentChatIndex.value];
+  if (!currentChat || !currentChat.messages || !currentChat.messages[messageIndex]) return;
+  
+  const message = currentChat.messages[messageIndex];
+  // HTML 태그 제거하고 텍스트만 추출
+  const textContent = message.content.replace(/<[^>]*>/g, '').trim();
+  
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(textContent).then(() => {
+      // 복사 성공 알림 (선택사항)
+      console.log('메시지가 클립보드에 복사되었습니다.');
+    }).catch(err => {
+      console.error('복사 실패:', err);
+      alert('복사에 실패했습니다.');
+    });
+  } else {
+    // 클립보드 API를 사용할 수 없는 경우 대체 방법
+    const textArea = document.createElement('textarea');
+    textArea.value = textContent;
+    textArea.style.position = 'fixed';
+    textArea.style.opacity = '0';
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      console.log('메시지가 클립보드에 복사되었습니다.');
+    } catch (err) {
+      console.error('복사 실패:', err);
+      alert('복사에 실패했습니다.');
+    }
+    document.body.removeChild(textArea);
+  }
+  
+  closeChatMessageContextMenu();
+}
+
+// 클립 데이터 수집 공통 함수
+function collectClipsData(messageIndex) {
+  if (messageIndex === null || messageIndex === undefined) return null;
+  
+  const currentChat = chatSessions.value[currentChatIndex.value];
+  if (!currentChat || !currentChat.messages || !currentChat.messages[messageIndex]) return null;
+  
+  const message = currentChat.messages[messageIndex];
+  
+  // assistant 메시지가 아니거나 클립이 없으면 보고서 생성 불가
+  if (message.role !== 'assistant' || !message.clips || message.clips.length === 0) {
+    alert(settingStore.language === 'ko' 
+      ? '보고서를 생성할 수 있는 클립이 없습니다.' 
+      : 'No clips available to create a report.');
+    return null;
+  }
+  
+  // 사용자 질문 찾기 (이전 메시지 중 user 역할의 메시지)
+  let userQuery = '';
+  for (let i = messageIndex - 1; i >= 0; i--) {
+    const prevMessage = currentChat.messages[i];
+    if (prevMessage && prevMessage.role === 'user') {
+      // HTML 태그 제거하여 순수 텍스트만 추출
+      userQuery = prevMessage.content.replace(/<[^>]*>/g, '').trim();
+      break;
+    }
+  }
+  
+  return {
+    clips: message.clips.map(clip => ({
+      id: clip.id,
+      title: clip.title || '',
+      url: clip.url || '',
+      sentence: clip.sentence || '',
+      start_time: clip.start_time,
+      end_time: clip.end_time,
+      sourceVideo: clip.sourceVideo || clip.date || ''
+    })),
+    query: userQuery
+  };
+}
+
+// 보고서 제목 생성 공통 함수
+function generateReportTitle() {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString(settingStore.language === 'ko' ? 'ko-KR' : 'en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+  return settingStore.language === 'ko' 
+    ? `검색 결과 보고서 - ${dateStr}`
+    : `Search Results Report - ${dateStr}`;
+}
+
+// 선택한 보고서에 클립 추가
+async function addClipsToSelectedReport(reportId, messageIndex) {
+  closeChatMessageContextMenu();
+  
+  const reportData = collectClipsData(messageIndex);
+  if (!reportData) return;
+  
+  const userId = localStorage.getItem("vss_user_id");
+  if (!userId) {
+    alert(settingStore.language === 'ko' 
+      ? '로그인이 필요합니다.' 
+      : 'Please log in.');
+    return;
+  }
+  
+  // 로딩 시작
+  isCreatingReport.value = true;
+  reportSuccess.value = false;
+  reportLoadingMessage.value = settingStore.language === 'ko' 
+    ? '보고서에 클립을 추가하는 중입니다...' 
+    : 'Adding clips to report...';
+  reportSuccessMessage.value = '';
+  
+  try {
+    // 선택한 보고서에 클립 추가
+    const response = await fetch(`${API_BASE_URL}/reports/${reportId}/add-clips`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        clips: reportData.clips
+      })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success) {
+        let message = settingStore.language === 'ko' 
+          ? `${data.added_count || reportData.clips.length}개의 클립이 보고서에 추가되었습니다.` 
+          : `${data.added_count || reportData.clips.length} clips have been added to the report.`;
+        
+        if (data.duplicate_count && data.duplicate_count > 0) {
+          message += settingStore.language === 'ko'
+            ? ` (${data.duplicate_count}개의 중복 클립은 제외되었습니다)`
+            : ` (${data.duplicate_count} duplicate clips were excluded)`;
+        }
+        
+        message += settingStore.language === 'ko'
+          ? ' 리포트 메뉴에서 확인할 수 있습니다.'
+          : ' You can view it in the Report menu.';
+        
+        // 완료 상태로 변경
+        reportSuccess.value = true;
+        reportSuccessMessage.value = message;
+        
+        // 3초 후 모달 닫기
+        setTimeout(() => {
+          isCreatingReport.value = false;
+          reportSuccess.value = false;
+          reportLoadingMessage.value = '';
+          reportSuccessMessage.value = '';
+        }, 3000);
+      } else {
+        // 중복 클립만 있는 경우
+        if (data.message && data.message.includes('추가할 수 있는 새로운 클립이 없습니다')) {
+          reportSuccess.value = true;
+          reportSuccessMessage.value = settingStore.language === 'ko'
+            ? '모든 클립이 이미 보고서에 포함되어 있습니다.'
+            : 'All clips are already included in the report.';
+          
+          setTimeout(() => {
+            isCreatingReport.value = false;
+            reportSuccess.value = false;
+            reportLoadingMessage.value = '';
+            reportSuccessMessage.value = '';
+          }, 3000);
+          return;
+        }
+        throw new Error(data.message || '보고서에 클립 추가 실패');
+      }
+    } else {
+      const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(errorData.detail || '보고서에 클립 추가 실패');
+    }
+  } catch (error) {
+    console.error('보고서에 클립 추가 중 오류:', error);
+    // 에러 메시지를 모달에 표시
+    reportSuccess.value = false;
+    reportLoadingMessage.value = settingStore.language === 'ko' 
+      ? `오류: ${error.message}` 
+      : `Error: ${error.message}`;
+    
+    // 3초 후 모달 닫기
+    setTimeout(() => {
+      isCreatingReport.value = false;
+      reportSuccess.value = false;
+      reportLoadingMessage.value = '';
+      reportSuccessMessage.value = '';
+    }, 3000);
+  }
+}
+
+// 새 보고서 생성
+function createNewReport(messageIndex) {
+  closeChatMessageContextMenu();
+  
+  const reportData = collectClipsData(messageIndex);
+  if (!reportData) return;
+  
+  const userId = localStorage.getItem("vss_user_id");
+  if (!userId) {
+    alert(settingStore.language === 'ko' 
+      ? '로그인이 필요합니다.' 
+      : 'Please log in.');
+    return;
+  }
+  
+  // 제목 입력 모달 표시
+  pendingReportData.value = { reportData, userId };
+  reportTitleInput.value = generateReportTitle(); // 기본 제목으로 초기화
+  showReportTitleModal.value = true;
+}
+
+// 확대된 클립으로 새 보고서 생성
+function createNewReportFromZoomedClip() {
+  hideZoomedClipReportSubmenu();
+  hideZoomedClipReportListSubmenu();
+  
+  const reportData = collectZoomedClipData();
+  if (!reportData) return;
+  
+  const userId = localStorage.getItem("vss_user_id");
+  if (!userId) {
+    alert(settingStore.language === 'ko' 
+      ? '로그인이 필요합니다.' 
+      : 'Please log in.');
+    return;
+  }
+  
+  // 제목 입력 모달 표시
+  pendingReportData.value = { reportData, userId };
+  reportTitleInput.value = generateReportTitle(); // 기본 제목으로 초기화
+  showReportTitleModal.value = true;
+}
+
+// 확대된 클립을 선택한 보고서에 추가
+async function addZoomedClipToSelectedReport(reportId) {
+  hideZoomedClipReportSubmenu();
+  hideZoomedClipReportListSubmenu();
+  
+  const reportData = collectZoomedClipData();
+  if (!reportData) return;
+  
+  const userId = localStorage.getItem("vss_user_id");
+  if (!userId) {
+    alert(settingStore.language === 'ko' 
+      ? '로그인이 필요합니다.' 
+      : 'Please log in.');
+    return;
+  }
+  
+  // 로딩 시작
+  isCreatingReport.value = true;
+  reportSuccess.value = false;
+  reportLoadingMessage.value = settingStore.language === 'ko' 
+    ? '보고서에 클립을 추가하는 중입니다...' 
+    : 'Adding clip to report...';
+  reportSuccessMessage.value = '';
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/reports/${reportId}/add-clips`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        clips: reportData.clips
+      })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success) {
+        let message = settingStore.language === 'ko' 
+          ? `클립이 보고서에 추가되었습니다.` 
+          : `Clip has been added to the report.`;
+        
+        if (data.duplicate_count && data.duplicate_count > 0) {
+          message += settingStore.language === 'ko'
+            ? ` (중복 클립은 제외되었습니다)`
+            : ` (Duplicate clip was excluded)`;
+        }
+        
+        message += settingStore.language === 'ko'
+          ? ' 리포트 메뉴에서 확인할 수 있습니다.'
+          : ' You can view it in the Report menu.';
+        
+        reportSuccess.value = true;
+        reportSuccessMessage.value = message;
+        
+        setTimeout(() => {
+          isCreatingReport.value = false;
+          reportSuccess.value = false;
+          reportLoadingMessage.value = '';
+          reportSuccessMessage.value = '';
+        }, 3000);
+      } else {
+        if (data.message && data.message.includes('추가할 수 있는 새로운 클립이 없습니다')) {
+          reportSuccess.value = true;
+          reportSuccessMessage.value = settingStore.language === 'ko'
+            ? '이 클립은 이미 보고서에 포함되어 있습니다.'
+            : 'This clip is already included in the report.';
+          
+          setTimeout(() => {
+            isCreatingReport.value = false;
+            reportSuccess.value = false;
+            reportLoadingMessage.value = '';
+            reportSuccessMessage.value = '';
+          }, 3000);
+          return;
+        }
+        throw new Error(data.message || '보고서에 클립 추가 실패');
+      }
+    } else {
+      const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(errorData.detail || '보고서에 클립 추가 실패');
+    }
+  } catch (error) {
+    console.error('보고서에 클립 추가 중 오류:', error);
+    reportSuccess.value = false;
+    reportLoadingMessage.value = settingStore.language === 'ko' 
+      ? `오류: ${error.message}` 
+      : `Error: ${error.message}`;
+    
+    setTimeout(() => {
+      isCreatingReport.value = false;
+      reportSuccess.value = false;
+      reportLoadingMessage.value = '';
+      reportSuccessMessage.value = '';
+    }, 3000);
+  }
+}
+
+// 보고서 제목 중복 확인
+async function checkReportTitle() {
+  const title = reportTitleInput.value.trim();
+  reportTitleError.value = '';
+  
+  if (!title) {
+    return;
+  }
+  
+  if (!pendingReportData.value) return;
+  
+  const { userId } = pendingReportData.value;
+  
+  isCheckingTitle.value = true;
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/reports/check-title?user_id=${encodeURIComponent(userId)}&title=${encodeURIComponent(title)}`);
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.exists) {
+        reportTitleError.value = settingStore.language === 'ko' 
+          ? '이미 존재하는 보고서 제목입니다.' 
+          : 'This report title already exists.';
+      }
+    }
+  } catch (error) {
+    console.error('보고서 제목 확인 중 오류:', error);
+    // 에러가 발생해도 계속 진행 가능하도록 함
+  } finally {
+    isCheckingTitle.value = false;
+  }
+}
+
+// 보고서 제목 확인 및 생성
+async function confirmReportTitle() {
+  if (!reportTitleInput.value.trim()) return;
+  
+  // 중복 제목이면 생성하지 않음
+  if (reportTitleError.value) return;
+  
+  if (!pendingReportData.value) return;
+  
+  const { reportData, userId } = pendingReportData.value;
+  const reportTitle = reportTitleInput.value.trim();
+  
+  // 제목 입력 모달 닫기
+  showReportTitleModal.value = false;
+  reportTitleError.value = '';
+  pendingReportData.value = null;
+  
+  // 로딩 시작
+  isCreatingReport.value = true;
+  reportSuccess.value = false;
+  reportLoadingMessage.value = settingStore.language === 'ko' 
+    ? '보고서를 생성하는 중입니다...' 
+    : 'Creating report...';
+  reportSuccessMessage.value = '';
+  
+  try {
+    // 새 보고서 생성
+    const response = await fetch(`${API_BASE_URL}/reports/create-word`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        title: reportTitle,
+        description: settingStore.language === 'ko' 
+          ? `${reportData.clips.length}개의 클립 검색 결과`
+          : `Search results for ${reportData.clips.length} clips`,
+        query: reportData.query,
+        clips: reportData.clips
+      })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success) {
+        const message = settingStore.language === 'ko' 
+          ? '보고서가 성공적으로 생성되었습니다. 리포트 메뉴에서 확인할 수 있습니다.' 
+          : 'Report created successfully. You can view it in the Report menu.';
+        
+        // 완료 상태로 변경
+        reportSuccess.value = true;
+        reportSuccessMessage.value = message;
+        
+        // 3초 후 모달 닫기
+        setTimeout(() => {
+          isCreatingReport.value = false;
+          reportSuccess.value = false;
+          reportLoadingMessage.value = '';
+          reportSuccessMessage.value = '';
+        }, 3000);
+      } else {
+        throw new Error(data.message || '보고서 생성 실패');
+      }
+    } else {
+      const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(errorData.detail || '보고서 생성 실패');
+    }
+  } catch (error) {
+    console.error('보고서 생성 중 오류:', error);
+    // 에러 메시지를 모달에 표시
+    reportSuccess.value = false;
+    reportLoadingMessage.value = settingStore.language === 'ko' 
+      ? `오류: ${error.message}` 
+      : `Error: ${error.message}`;
+    
+    // 3초 후 모달 닫기
+    setTimeout(() => {
+      isCreatingReport.value = false;
+      reportSuccess.value = false;
+      reportLoadingMessage.value = '';
+      reportSuccessMessage.value = '';
+    }, 3000);
+  }
+}
+
+const showSearchSettingModal = ref(false);
+const showQueryVlmParams = ref(true);
+const showSummarizeVlmParams = ref(true);
+
+// Query 파라미터 값 범위 제한 함수
+function clampQueryValue(paramName, maxValue, minValue = null) {
+  const currentValue = settingStore[paramName];
+  if (currentValue > maxValue) {
+    settingStore[paramName] = maxValue;
+  } else if (minValue !== null && currentValue < minValue) {
+    settingStore[paramName] = minValue;
+  }
+}
+
+// Query 파라미터 리셋 함수들
+function resetQueryTopP() {
+  settingStore.queryTopp = 1.0;
+}
+
+function resetQueryTemperature() {
+  settingStore.queryTemp = 0.3;
+}
+
+function resetQueryMaxTokens() {
+  settingStore.queryMaxTokens = 1024;
+}
+
+// Summarize 파라미터 값 범위 제한 함수
+function clampSummarizeValue(paramName, maxValue, minValue = null) {
+  const currentValue = settingStore[paramName];
+  if (currentValue > maxValue) {
+    settingStore[paramName] = maxValue;
+  } else if (minValue !== null && currentValue < minValue) {
+    settingStore[paramName] = minValue;
+  }
+}
+
+// Summarize 파라미터 리셋 함수들
+function resetSummarizeTopP() {
+  settingStore.summarizeTopp = 1.0;
+}
+
+function resetSummarizeTemperature() {
+  settingStore.summarizeTemp = 0.4;
+}
+
+function resetSummarizeMaxTokens() {
+  settingStore.summarizeMaxTokens = 512;
+}
+
+function resetSummarizeSummarizeTopP() {
+  settingStore.summarizeSummarizeTopP = 0.7;
+}
+
+function resetSummarizeSummarizeTemperature() {
+  settingStore.summarizeSummarizeTemperature = 0.2;
+}
+
+function resetSummarizeSummarizeMaxTokens() {
+  settingStore.summarizeSummarizeMaxTokens = 2048;
+}
+
+function resetSummarizeChatTopP() {
+  settingStore.summarizeChatTopP = 0.7;
+}
+
+function resetSummarizeChatTemperature() {
+  settingStore.summarizeChatTemperature = 0.2;
+}
+
+function resetSummarizeChatMaxTokens() {
+  settingStore.summarizeChatMaxTokens = 2048;
+}
+
+function resetSummarizeNotificationTopP() {
+  settingStore.summarizeNotificationTopP = 0.7;
+}
+
+function resetSummarizeNotificationTemperature() {
+  settingStore.summarizeNotificationTemperature = 0.2;
+}
+
+function resetSummarizeNotificationMaxTokens() {
+  settingStore.summarizeNotificationMaxTokens = 2048;
+}
+
+function openSettingsFromContextMenu() {
+  closeChatMessageContextMenu();
+  showSearchSettingModal.value = true;
+}
+
+function closeSearchSettingModal() {
+  showSearchSettingModal.value = false;
+}
+
+function deleteChatMessage(messageIndex) {
+  if (messageIndex === null || messageIndex === undefined) return;
+  
+  const currentChat = chatSessions.value[currentChatIndex.value];
+  if (!currentChat || !currentChat.messages || !currentChat.messages[messageIndex]) return;
+  
+  // 초기 메시지는 삭제하지 않음
+  if (currentChat.messages[messageIndex].isInitial) {
+    alert(settingStore.language === 'ko' ? '초기 메시지는 삭제할 수 없습니다.' : 'Initial message cannot be deleted.');
+    closeChatMessageContextMenu();
+    return;
+  }
+  
+  // 삭제 확인
+  if (confirm(settingStore.language === 'ko' ? '이 메시지를 삭제하시겠습니까?' : 'Do you want to delete this message?')) {
+    currentChat.messages.splice(messageIndex, 1);
+    closeChatMessageContextMenu();
+  }
 }
 
 onMounted(() => window.addEventListener('click', handleGlobalClick));
@@ -1086,6 +2972,76 @@ const summaryVideoStore = useSummaryVideoStore();
 
 // ==================== Computed ====================
 const selectedVideos = computed(() => items.value.filter(v => selectedIds.value.includes(v.id)));
+
+// ==================== 청크 크기 자동 설정 ====================
+/**
+ * 추천 chunk_size를 API에서 가져오는 함수
+ */
+async function fetchRecommendedChunkSize(videoLength) {
+  if (!videoLength || !isFinite(videoLength)) return null;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/get-recommended-chunk-size`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ video_length: videoLength })
+    });
+
+    if (!response.ok) {
+      console.warn('추천 chunk_size 가져오기 실패:', response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    return data.recommended_chunk_size;
+  } catch (error) {
+    console.warn('추천 chunk_size 가져오기 중 오류:', error);
+    return null;
+  }
+}
+
+/**
+ * 선택된 동영상에 대해 추천 chunk_size를 가져와서 설정 스토어에 저장
+ */
+async function updateRecommendedChunkSize() {
+  if (selectedIds.value.length === 0) return;
+  
+  // 첫 번째 선택된 동영상의 duration 사용
+  const firstSelectedId = selectedIds.value[0];
+  const duration = durationMap.value[firstSelectedId];
+  
+  if (!duration || !isFinite(duration)) {
+    // duration이 아직 로드되지 않았으면 비디오 엘리먼트에서 가져오기 시도
+    const videoElement = videoRefs.value[firstSelectedId];
+    if (videoElement && videoElement.duration && isFinite(videoElement.duration)) {
+      const recommendedChunkSize = await fetchRecommendedChunkSize(videoElement.duration);
+      if (recommendedChunkSize !== null && settingStore) {
+        settingStore.summarizeChunk = recommendedChunkSize;
+      }
+    }
+    return;
+  }
+
+  const recommendedChunkSize = await fetchRecommendedChunkSize(duration);
+  if (recommendedChunkSize !== null && settingStore) {
+    // 추천된 chunk_size를 설정 스토어에 저장
+    settingStore.summarizeChunk = recommendedChunkSize;
+  }
+}
+
+// 선택된 동영상이 변경될 때 자동으로 청크 크기 업데이트
+watch(selectedIds, async (newIds, oldIds) => {
+  // 선택된 동영상이 있고, 이전과 다를 때만 업데이트
+  if (newIds.length > 0 && (oldIds.length === 0 || newIds[0] !== oldIds[0])) {
+    // 약간의 지연을 두어 duration이 로드될 시간을 줌
+    await nextTick();
+    setTimeout(() => {
+      updateRecommendedChunkSize();
+    }, 500);
+  }
+}, { deep: true });
 
 const currentChatMessages = computed(() => {
   if (chatSessions.value.length === 0) return [];
@@ -1252,10 +3208,81 @@ onMounted(() => {
   });
   // 다른 메뉴가 열렸을 때 컨텍스트 메뉴 닫기
   window.addEventListener('profile-menu-opened', closeContextMenu);
+  window.addEventListener('video-context-menu-opened', closeChatMessageContextMenu);
+  window.addEventListener('chat-message-context-menu-opened', closeContextMenu);
   
   // 검색 상태 복원
   restoreSearchStateFromLocalStorage();
 });
+
+// 라우터 네비게이션 가드: 다른 메뉴로 이동하기 전에 비디오 정리
+onBeforeRouteLeave((to, from, next) => {
+  cleanupVideos();
+  next();
+});
+
+// 컴포넌트가 비활성화될 때 (keep-alive로 인해 언마운트되지 않는 경우)
+onDeactivated(() => {
+  cleanupVideos();
+});
+
+// 비디오 정리 함수 (공통)
+function cleanupVideos() {
+  // 모든 비디오 요소 일시정지 및 Blob URL 정리
+  Object.values(videoRefs.value).forEach(videoEl => {
+    if (videoEl && videoEl instanceof HTMLVideoElement) {
+      try {
+        videoEl.pause();
+        // Blob URL인 경우 서버 URL로 전환
+        if (videoEl.src && videoEl.src.startsWith('blob:')) {
+          const video = items.value.find(v => v.displayUrl === videoEl.src || v.objectUrl === videoEl.src);
+          if (video && video.originUrl && !video.originUrl.startsWith('blob:')) {
+            videoEl.src = video.originUrl;
+            videoEl.crossOrigin = 'anonymous';
+          } else {
+            videoEl.src = '';
+          }
+        } else {
+          videoEl.src = '';
+        }
+        videoEl.load();
+      } catch (e) {
+        // 에러가 발생해도 무시
+      }
+    }
+  });
+  
+  // 확대 모달 비디오 정리
+  if (zoomVideoRef.value && zoomVideoRef.value instanceof HTMLVideoElement) {
+    try {
+      zoomVideoRef.value.pause();
+      if (zoomVideoRef.value.src && zoomVideoRef.value.src.startsWith('blob:')) {
+        if (zoomedVideo.value && zoomedVideo.value.originUrl && !zoomedVideo.value.originUrl.startsWith('blob:')) {
+          zoomVideoRef.value.src = zoomedVideo.value.originUrl;
+          zoomVideoRef.value.crossOrigin = 'anonymous';
+        } else {
+          zoomVideoRef.value.src = '';
+        }
+      } else {
+        zoomVideoRef.value.src = '';
+      }
+      zoomVideoRef.value.load();
+    } catch (e) {
+      // 에러가 발생해도 무시
+    }
+  }
+  
+  // Blob URL을 서버 URL로 전환 (나중에 다시 활성화될 때 사용)
+  items.value.forEach(video => {
+    if (video.displayUrl && video.displayUrl.startsWith('blob:')) {
+      if (video.originUrl && !video.originUrl.startsWith('blob:')) {
+        // Blob URL을 서버 URL로 전환
+        video.displayUrl = video.originUrl;
+      }
+    }
+    // objectUrl은 유지 (나중에 필요할 수 있음)
+  });
+}
 
 onActivated(() => {
   if (items.value.length === 0) {
@@ -1278,6 +3305,8 @@ onActivated(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('search-videos-updated', loadVideosFromStorage);
   window.removeEventListener('profile-menu-opened', closeContextMenu);
+  window.removeEventListener('video-context-menu-opened', closeChatMessageContextMenu);
+  window.removeEventListener('chat-message-context-menu-opened', closeContextMenu);
   
   // 진행 중인 모든 fetch 요청 취소
   abortControllers.value.forEach(controller => {
@@ -1617,11 +3646,15 @@ async function processUploadFiles(files) {
         });
       }
       
-      // 프로그레스 바를 100%로 업데이트 (리스트에 추가된 후)
-      const uploadItem = uploadProgress.value.find(u => u.id === uploadId);
-      if (uploadItem) {
-        uploadItem.progress = 100;
-        uploadItem.status = '완료';
+      // 업로드 완료된 항목을 즉시 제거
+      const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+      if (uploadItemIndex !== -1) {
+        uploadProgress.value.splice(uploadItemIndex, 1);
+      }
+      
+      // 모든 업로드가 완료되면 모달 닫기
+      if (uploadProgress.value.length === 0) {
+        showUploadModal.value = false;
       }
       
       // DB에 저장되므로 localStorage 저장 불필요
@@ -1630,12 +3663,26 @@ async function processUploadFiles(files) {
       // 업로드 취소는 정상적인 동작이므로 에러로 처리하지 않음
       if (error.message === '업로드 취소됨') {
         console.log('업로드 취소됨:', file.name);
+        // 취소된 항목도 제거
+        const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+        if (uploadItemIndex !== -1) {
+          uploadProgress.value.splice(uploadItemIndex, 1);
+        }
+        // 모든 업로드가 완료되면 모달 닫기
+        if (uploadProgress.value.length === 0) {
+          showUploadModal.value = false;
+        }
         return; // 조용히 종료
       }
       console.error('동영상 업로드 실패:', error);
-      const uploadItem = uploadProgress.value.find(u => u.id === uploadId);
-      if (uploadItem) {
-        uploadItem.status = `실패: ${error.message}`;
+      // 실패한 항목도 제거
+      const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+      if (uploadItemIndex !== -1) {
+        uploadProgress.value.splice(uploadItemIndex, 1);
+      }
+      // 모든 업로드가 완료되면 모달 닫기
+      if (uploadProgress.value.length === 0) {
+        showUploadModal.value = false;
       }
       alert(`동영상 업로드 실패: ${error.message}`);
     }
@@ -1683,6 +3730,8 @@ function unzoomVideo() {
 
   isZoomed.value = false;
   zoomedVideo.value = null;
+  zoomedClip.value = null;
+  showSentencePopup.value = true;
   nextTick(() => {
     if (zVideo) {
       const gridEl = videoRefs.value[zVideo.id];
@@ -1762,6 +3811,126 @@ async function confirmDelete() {
     await Promise.all(deletePromises);
   } else {
     console.warn('사용자 ID가 없어 DB 삭제를 건너뜁니다.');
+  }
+
+  // 삭제된 동영상의 ID와 dbId 수집
+  const deletedVideoIds = new Set();
+  const deletedVideoDbIds = new Set();
+  videosToDelete.forEach(video => {
+    if (video.id) deletedVideoIds.add(video.id);
+    if (video.dbId) deletedVideoDbIds.add(video.dbId);
+    // id와 dbId가 다른 경우도 고려
+    if (video.id && typeof video.id === 'number') deletedVideoDbIds.add(video.id);
+  });
+
+  // 삭제된 동영상과 연관된 채팅 탭 찾기 및 닫기
+  const tabsToClose = [];
+  chatSessions.value.forEach((chat, index) => {
+    if (chat.messages && chat.messages.length > 0) {
+      const initialMessage = chat.messages.find(msg => msg.isInitial && msg.selectedVideos);
+      if (initialMessage && initialMessage.selectedVideos) {
+        // 선택된 동영상 중 삭제된 동영상이 있는지 확인
+        const hasDeletedVideo = initialMessage.selectedVideos.some(savedVideo => {
+          const videoId = savedVideo.id || savedVideo.dbId;
+          const videoDbId = savedVideo.dbId || savedVideo.id;
+          return deletedVideoIds.has(videoId) || 
+                 deletedVideoDbIds.has(videoDbId) ||
+                 (videoId && deletedVideoDbIds.has(videoId)) ||
+                 (videoDbId && deletedVideoIds.has(videoDbId));
+        });
+        
+        if (hasDeletedVideo) {
+          tabsToClose.push(index);
+        }
+      }
+    }
+  });
+
+  // 연관된 탭 닫기 (역순으로 삭제하여 인덱스 문제 방지)
+  if (tabsToClose.length > 0) {
+    // 각 탭의 클립 삭제
+    const allClipUrls = new Set();
+    tabsToClose.forEach(tabIndex => {
+      const chat = chatSessions.value[tabIndex];
+      if (chat && chat.messages) {
+        chat.messages.forEach(message => {
+          if (message.clips && Array.isArray(message.clips)) {
+            message.clips.forEach(clip => {
+              if (clip.url && !clip.via_response) {
+                allClipUrls.add(clip.url);
+              }
+            });
+          }
+          if (message.groupedClips && Array.isArray(message.groupedClips)) {
+            message.groupedClips.forEach(group => {
+              if (group.clips && Array.isArray(group.clips)) {
+                group.clips.forEach(clip => {
+                  if (clip.url && !clip.via_response) {
+                    allClipUrls.add(clip.url);
+                  }
+                });
+              }
+            });
+          }
+        });
+      }
+    });
+
+    // 클립 삭제 요청
+    if (allClipUrls.size > 0) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/delete-clips`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            clip_urls: Array.from(allClipUrls)
+          })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          const deletedCount = data.deleted_count || 0;
+          if (deletedCount > 0) {
+            console.log(`동영상 삭제로 인한 탭 닫기: ${deletedCount}개의 클립이 삭제되었습니다.`);
+          }
+        } else {
+          const errorData = await response.json().catch(() => ({ detail: '알 수 없는 오류' }));
+          console.warn('클립 삭제 실패:', response.status, errorData);
+        }
+      } catch (error) {
+        console.error('클립 삭제 중 오류:', error);
+      }
+    }
+
+    // 탭 삭제 (역순으로 정렬하여 뒤에서부터 삭제)
+    tabsToClose.sort((a, b) => b - a);
+    tabsToClose.forEach(tabIndex => {
+      chatSessions.value.splice(tabIndex, 1);
+    });
+
+    // 현재 채팅 인덱스 조정
+    if (tabsToClose.includes(currentChatIndex.value)) {
+      // 현재 보고 있던 탭이 삭제된 경우
+      if (chatSessions.value.length > 0) {
+        currentChatIndex.value = Math.min(currentChatIndex.value, chatSessions.value.length - 1);
+      } else {
+        currentChatIndex.value = 0;
+        showSearchSidebar.value = false;
+      }
+    } else {
+      // 삭제된 탭이 현재 탭보다 앞에 있으면 인덱스 조정
+      const deletedBeforeCurrent = tabsToClose.filter(idx => idx < currentChatIndex.value).length;
+      if (deletedBeforeCurrent > 0) {
+        currentChatIndex.value = Math.max(0, currentChatIndex.value - deletedBeforeCurrent);
+      }
+    }
+
+    // 채팅이 모두 닫혔으면 사이드바도 닫기
+    if (chatSessions.value.length === 0) {
+      showSearchSidebar.value = false;
+    }
   }
 
   // 로컬에서 삭제
@@ -2105,6 +4274,218 @@ async function deleteChat(index) {
   }
 }
 
+// 채팅창 탭 컨텍스트 메뉴 함수
+function openChatTabContextMenu(chatIndex, event) {
+  event.preventDefault();
+  event.stopPropagation();
+  chatTabContextMenu.value = {
+    visible: true,
+    chatIndex: chatIndex,
+    x: event.clientX,
+    y: event.clientY
+  };
+}
+
+function closeChatTabContextMenu() {
+  chatTabContextMenu.value = {
+    visible: false,
+    chatIndex: null,
+    x: 0,
+    y: 0
+  };
+}
+
+async function closeChatTab(chatIndex) {
+  closeChatTabContextMenu();
+  if (chatIndex !== null && chatIndex >= 0 && chatIndex < chatSessions.value.length) {
+    await deleteChat(chatIndex);
+  }
+}
+
+async function closeOtherChatTabs(clickedTabIndex) {
+  closeChatTabContextMenu();
+  
+  // 현재 탭이 유효하지 않거나 탭이 1개 이하면 실행하지 않음
+  if (clickedTabIndex === null || clickedTabIndex < 0 || clickedTabIndex >= chatSessions.value.length || chatSessions.value.length <= 1) {
+    return;
+  }
+  
+  // 현재 보고 있던 탭의 인덱스를 저장
+  const activeTabIndex = currentChatIndex.value;
+  
+  // 현재 탭을 제외한 나머지 탭들의 클립 URL 수집
+  const otherClipUrls = new Set();
+  chatSessions.value.forEach((chat, index) => {
+    if (index !== clickedTabIndex && chat.messages) {
+      chat.messages.forEach(message => {
+        if (message.clips && Array.isArray(message.clips)) {
+          message.clips.forEach(clip => {
+            if (clip.url && !clip.via_response) {
+              otherClipUrls.add(clip.url);
+            }
+          });
+        }
+        if (message.groupedClips && Array.isArray(message.groupedClips)) {
+          message.groupedClips.forEach(group => {
+            if (group.clips && Array.isArray(group.clips)) {
+              group.clips.forEach(clip => {
+                if (clip.url && !clip.via_response) {
+                  otherClipUrls.add(clip.url);
+                }
+              });
+            }
+          });
+        }
+      });
+    }
+  });
+  
+  // 클립이 있으면 삭제 요청
+  if (otherClipUrls.size > 0) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/delete-clips`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          clip_urls: Array.from(otherClipUrls)
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        const deletedCount = data.deleted_count || 0;
+        if (deletedCount > 0) {
+          console.log(`나머지 탭 닫기: ${deletedCount}개의 클립이 삭제되었습니다.`);
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({ detail: '알 수 없는 오류' }));
+        console.warn('클립 삭제 실패:', response.status, errorData);
+      }
+    } catch (error) {
+      console.error('클립 삭제 중 오류:', error);
+    }
+  }
+  
+  // 현재 탭만 남기고 나머지 탭 삭제 (역순으로 삭제하여 인덱스 문제 방지)
+  const tabsToDelete = [];
+  for (let i = chatSessions.value.length - 1; i >= 0; i--) {
+    if (i !== clickedTabIndex) {
+      tabsToDelete.push(i);
+    }
+  }
+  
+  // 역순으로 삭제
+  tabsToDelete.sort((a, b) => b - a);
+  tabsToDelete.forEach(index => {
+    chatSessions.value.splice(index, 1);
+  });
+  
+  // 현재 보고 있던 탭 인덱스 조정
+  // 우클릭한 탭이 현재 보고 있던 탭이었다면, 삭제 후 0번 인덱스가 됨
+  if (activeTabIndex === clickedTabIndex) {
+    currentChatIndex.value = 0;
+  } else if (activeTabIndex < clickedTabIndex) {
+    // 현재 보고 있던 탭이 우클릭한 탭보다 앞에 있으면 인덱스 유지
+    // (삭제되는 탭들이 뒤에 있으므로)
+    currentChatIndex.value = activeTabIndex;
+  } else {
+    // 현재 보고 있던 탭이 우클릭한 탭보다 뒤에 있으면
+    // activeTabIndex보다 작은 탭들 중에서 clickedTabIndex가 아닌 탭들이 삭제됨
+    // 삭제 후에는 clickedTabIndex가 0번이 되고, activeTabIndex는 삭제되므로
+    // activeTabIndex가 유효한 범위 내에 있는지 확인
+    // 실제로는 activeTabIndex가 clickedTabIndex보다 크므로 삭제되어야 하는데,
+    // 이 경우 activeTabIndex는 삭제되므로 다른 탭을 보여줄 수 없음
+    // 하지만 activeTabIndex가 유효한 범위 내에 있다면, 삭제 후에도 그 탭이 남아있어야 함
+    // 다시 생각해보니, activeTabIndex > clickedTabIndex인 경우
+    // activeTabIndex는 삭제 대상이 아니므로 남아있어야 함
+    // 하지만 clickedTabIndex만 남게 되므로, activeTabIndex는 삭제됨
+    // 따라서 이 경우는 발생하지 않아야 함 (activeTabIndex가 clickedTabIndex와 다르고 더 크면 삭제됨)
+    
+    // 실제로는 activeTabIndex가 clickedTabIndex보다 크면 삭제되므로
+    // 이 경우는 발생하지 않아야 하지만, 안전을 위해 처리
+    // 삭제 후에는 clickedTabIndex만 남으므로, activeTabIndex는 유효하지 않음
+    // 하지만 사용자가 보고 있던 탭이 삭제되면 안 되므로, 
+    // 이 경우는 이미 위에서 처리되었어야 함
+    
+    // 다시 생각: activeTabIndex > clickedTabIndex인 경우
+    // activeTabIndex는 삭제 대상이 아니므로 남아있어야 함
+    // 하지만 clickedTabIndex만 남게 되므로, activeTabIndex는 삭제됨
+    // 따라서 이 경우는 발생하지 않아야 함
+    
+    // 실제로는 activeTabIndex가 clickedTabIndex와 다르면 삭제되므로
+    // 이 경우는 발생하지 않아야 하지만, 안전을 위해 0으로 설정
+    currentChatIndex.value = 0;
+  }
+}
+
+async function closeAllChatTabs() {
+  closeChatTabContextMenu();
+  
+  // 모든 채팅창의 클립 URL 수집
+  const allClipUrls = new Set();
+  chatSessions.value.forEach(chat => {
+    if (chat.messages) {
+      chat.messages.forEach(message => {
+        if (message.clips && Array.isArray(message.clips)) {
+          message.clips.forEach(clip => {
+            if (clip.url && !clip.via_response) {
+              allClipUrls.add(clip.url);
+            }
+          });
+        }
+        if (message.groupedClips && Array.isArray(message.groupedClips)) {
+          message.groupedClips.forEach(group => {
+            if (group.clips && Array.isArray(group.clips)) {
+              group.clips.forEach(clip => {
+                if (clip.url && !clip.via_response) {
+                  allClipUrls.add(clip.url);
+                }
+              });
+            }
+          });
+        }
+      });
+    }
+  });
+  
+  // 클립이 있으면 삭제 요청
+  if (allClipUrls.size > 0) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/delete-clips`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          clip_urls: Array.from(allClipUrls)
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        const deletedCount = data.deleted_count || 0;
+        if (deletedCount > 0) {
+          console.log(`모든 채팅창 삭제: ${deletedCount}개의 클립이 삭제되었습니다.`);
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({ detail: '알 수 없는 오류' }));
+        console.warn('클립 삭제 실패:', response.status, errorData);
+      }
+    } catch (error) {
+      console.error('클립 삭제 중 오류:', error);
+    }
+  }
+  
+  // 모든 채팅창 삭제
+  chatSessions.value = [];
+  currentChatIndex.value = 0;
+  
+  // 채팅 사이드바도 닫기
+  showSearchSidebar.value = false;
+}
+
 async function ensureVideoFile(video) {
   if (video.file instanceof File) {
     return video.file;
@@ -2210,68 +4591,213 @@ async function handleSearch() {
     if (Object.keys(videoIdMap).length > 0) {
       formData.append('video_ids', JSON.stringify(videoIdMap));
     }
+    
+    // NaN 방지 헬퍼
+    const safeNum = (val, fallback) => {
+      const n = Number(val);
+      return Number.isFinite(n) ? n : fallback;
+    };
+    
+    // Query 설정값 전달
+    formData.append('chunk_size', safeNum(settingStore.queryChunk, 10));
+    formData.append('top_k', safeNum(settingStore.queryTopk, 80));
+    formData.append('top_p', safeNum(settingStore.queryTopp, 1.0));
+    formData.append('temperature', safeNum(settingStore.queryTemp, 0.3));
+    formData.append('max_new_tokens', safeNum(settingStore.queryMaxTokens, 1024));
+    formData.append('seed', safeNum(settingStore.querySeed, 42));
+    
+    // Summarize 설정값 전달
+    formData.append('summarize_chunk_duration', safeNum(settingStore.summarizeChunk, 0));
+    formData.append('summarize_top_k', safeNum(settingStore.summarizeTopk, 80));
+    formData.append('summarize_top_p', safeNum(settingStore.summarizeTopp, 1.0));
+    formData.append('summarize_temperature', safeNum(settingStore.summarizeTemp, 0.4));
+    formData.append('summarize_max_new_tokens', safeNum(settingStore.summarizeMaxTokens, 512));
+    formData.append('summarize_seed', safeNum(settingStore.summarizeSeed, 1));
+    formData.append('summarize_num_frames_per_chunk', safeNum(settingStore.summarizeNumFramesPerChunk, 0));
+    formData.append('summarize_frame_width', safeNum(settingStore.summarizeFrameWidth, 1920));
+    formData.append('summarize_frame_height', safeNum(settingStore.summarizeFrameHeight, 1080));
+    formData.append('summarize_batch_size', safeNum(settingStore.summarizeBatchSize, 6));
+    formData.append('summarize_rag_batch_size', safeNum(settingStore.summarizeRagBatchSize, 1));
+    formData.append('summarize_rag_top_k', safeNum(settingStore.summarizeRagTopK, 5));
+    formData.append('summarize_summarize_top_p', safeNum(settingStore.summarizeSummarizeTopP, 0.7));
+    formData.append('summarize_summarize_temperature', safeNum(settingStore.summarizeSummarizeTemperature, 0.2));
+    formData.append('summarize_summarize_max_tokens', safeNum(settingStore.summarizeSummarizeMaxTokens, 2048));
+    formData.append('summarize_chat_top_p', safeNum(settingStore.summarizeChatTopP, 0.7));
+    formData.append('summarize_chat_temperature', safeNum(settingStore.summarizeChatTemperature, 0.2));
+    formData.append('summarize_chat_max_tokens', safeNum(settingStore.summarizeChatMaxTokens, 2048));
+    formData.append('summarize_notification_top_p', safeNum(settingStore.summarizeNotificationTopP, 0.7));
+    formData.append('summarize_notification_temperature', safeNum(settingStore.summarizeNotificationTemperature, 0.2));
+    formData.append('summarize_notification_max_tokens', safeNum(settingStore.summarizeNotificationMaxTokens, 2048));
+    formData.append('summarize_enable_audio', settingStore.summarizeEnableAudio ? 'true' : 'false');
 
     // AbortController 생성 및 추적
     const abortController = new AbortController();
     abortControllers.value.push(abortController);
-    
-    const response = await fetch(`${API_BASE_URL}/generate-clips`, {
+
+    const searchModeResponse = await fetch(`${API_BASE_URL}/check-search-mode`, {
       method: 'POST',
-      body: formData,
-      signal: abortController.signal
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ query: query })
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP error ${response.status}`);
+    if (!searchModeResponse.ok) {
+      throw new Error(`HTTP error ${searchModeResponse.status}`);
     }
 
-    const data = await response.json();
-    const clips_extracted = data.clips_extracted || false; // 클립 추출 여부
-    const groupedClipItems = (data.clips || []).map(group => ({
-      video: group.video,
-      clips: Array.isArray(group.clips) ? group.clips : []
-    }));
+    const searchMode = await searchModeResponse.json();
+    console.log(searchMode.search_mode);
 
-    // 실제 URL이 있는 클립만 필터링 (via_response만 있는 것은 제외)
-    // 타임스탬프 간격이 0초인 클립도 제외
-    const validClips = groupedClipItems.flatMap(group =>
-      group.clips
-        .filter(clip => {
-          // url이 있고 via_response가 없는 것만
-          if (!clip.url || clip.via_response) return false;
-          // 타임스탬프 간격이 0초 이하인 클립 제외
-          if (clip.start_time !== undefined && clip.end_time !== undefined) {
-            if (clip.end_time - clip.start_time <= 0) return false;
-          }
-          return true;
-        })
-        .map(clip => ({
-          ...clip,
-          sourceVideo: group.video
-        }))
-    );
+    // gen_clip 모드: 장면 검색 기능 (기존 로직)
+    if (searchMode.search_mode === "gen_clip") {
+      const response = await fetch(`${API_BASE_URL}/generate-clips`, {
+        method: 'POST',
+        body: formData,
+        signal: abortController.signal
+      });
 
-    if (!clips_extracted || validClips.length === 0) {
-      // 클립이 추출되지 않았을 경우
+      if (!response.ok) {
+        throw new Error(`HTTP error ${response.status}`);
+      }
+
+      const data = await response.json();
+      const clips_extracted = data.clips_extracted || false; // 클립 추출 여부
+      const groupedClipItems = (data.clips || []).map(group => ({
+        video: group.video,
+        clips: Array.isArray(group.clips) ? group.clips : []
+      }));
+
+      // 실제 URL이 있는 클립만 필터링 (via_response만 있는 것은 제외)
+      // 타임스탬프 간격이 0초인 클립도 제외
+      const validClips = groupedClipItems.flatMap(group =>
+        group.clips
+          .filter(clip => {
+            // url이 있고 via_response가 없는 것만
+            if (!clip.url || clip.via_response) return false;
+            // 타임스탬프 간격이 0초 이하인 클립 제외
+            if (clip.start_time !== undefined && clip.end_time !== undefined) {
+              if (clip.end_time - clip.start_time <= 0) return false;
+            }
+            return true;
+          })
+          .map(clip => ({
+            ...clip,
+            sourceVideo: group.video
+          }))
+      );
+
+      if (!clips_extracted || validClips.length === 0) {
+        // 클립이 추출되지 않았을 경우
+        currentChat.messages.push({
+          role: 'assistant',
+          content: t.value.noScenes,
+          timestamp: getCurrentTime()
+        });
+        return;
+      }
+
+      // 클립이 추출되었을 경우: 클립 동영상과 타임스탬프 표시
+      const foundMessage = settingStore.language === 'ko' 
+        ? `${groupedClipItems.length}${t.value.foundScenes} ${validClips.length}${t.value.foundClips}`
+        : `${validClips.length} ${t.value.foundClips} from ${groupedClipItems.length} ${t.value.foundScenes}`;
       currentChat.messages.push({
         role: 'assistant',
-        content: t.value.noScenes,
+        content: foundMessage,
+        clips: validClips,
+        groupedClips: groupedClipItems,
         timestamp: getCurrentTime()
       });
-      return;
-    }
+    } 
+    // query 모드: Summarize.vue의 onAskConfirmed와 같은 기능
+    else {
+      // NaN 방지 헬퍼
+      const safeNum = (val, fallback) => {
+        const n = Number(val);
+        return Number.isFinite(n) ? n : fallback;
+      };
 
-    // 클립이 추출되었을 경우: 클립 동영상과 타임스탬프 표시
-    const foundMessage = settingStore.language === 'ko' 
-      ? `${groupedClipItems.length}${t.value.foundScenes} ${validClips.length}${t.value.foundClips}`
-      : `${validClips.length} ${t.value.foundClips} from ${groupedClipItems.length} ${t.value.foundScenes}`;
-    currentChat.messages.push({
-      role: 'assistant',
-      content: foundMessage,
-      clips: validClips,
-      groupedClips: groupedClipItems,
-      timestamp: getCurrentTime()
-    });
+      // 첫 번째 선택된 동영상 사용
+      const firstVideo = fileEntries[0]?.video;
+      if (!firstVideo) {
+        currentChat.messages.push({
+          role: 'assistant',
+          content: settingStore.language === 'ko' 
+            ? '동영상을 선택해주세요.' 
+            : 'Please select a video.',
+          timestamp: getCurrentTime()
+        });
+        return;
+      }
+
+      // DB에서 VIA 서버의 video_id 조회
+      let serverVideoIdForQuery = null;
+      if (userId && firstVideo.dbId) {
+        try {
+          const videosResponse = await fetch(`${API_BASE_URL}/videos?user_id=${userId}`);
+          if (videosResponse.ok) {
+            const videosData = await videosResponse.json();
+            if (videosData.success && videosData.videos) {
+              const video = videosData.videos.find(v => v.id === firstVideo.dbId);
+              if (video && video.video_id) {
+                serverVideoIdForQuery = video.video_id; // VIA 서버의 video_id
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('VIA video_id 조회 실패:', error);
+        }
+      }
+
+      // query용 FormData 생성
+      const queryFormData = new FormData();
+      
+      if (serverVideoIdForQuery) {
+        queryFormData.append('video_id', serverVideoIdForQuery);
+      } else {
+        // video_id가 없으면 첫 번째 파일 사용
+        const firstFile = fileEntries[0]?.file;
+        if (!firstFile) {
+          currentChat.messages.push({
+            role: 'assistant',
+            content: settingStore.language === 'ko' 
+              ? '동영상 파일을 찾을 수 없습니다. 다시 업로드해주세요.' 
+              : 'Video file not found. Please upload again.',
+            timestamp: getCurrentTime()
+          });
+          return;
+        }
+        queryFormData.append('file', firstFile);
+      }
+
+      queryFormData.append('query', query);
+      queryFormData.append('chunk_size', safeNum(settingStore.queryChunk, 10));
+      queryFormData.append('top_k', safeNum(settingStore.queryTopk, 80));
+      queryFormData.append('top_p', safeNum(settingStore.queryTopp, 1.0));
+      queryFormData.append('temperature', safeNum(settingStore.queryTemp, 0.3));
+      queryFormData.append('max_new_tokens', safeNum(settingStore.queryMaxTokens, 1024));
+      queryFormData.append('seed', safeNum(settingStore.querySeed, 42));
+
+      const response = await fetch(`${API_BASE_URL}/vss-query`, {
+        method: 'POST',
+        body: queryFormData,
+        signal: abortController.signal
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error ${response.status}`);
+      }
+
+      const data = await response.json();
+      const markedanswer = marked.parse(data.summary || '');
+      const answerHtml = `<div class='font-semibold'>✅ ${settingStore.language === 'ko' ? '질의 응답' : 'Query Answered'}</div><br>${markedanswer}`;
+      
+      currentChat.messages.push({
+        role: 'assistant',
+        content: answerHtml,
+        timestamp: getCurrentTime()
+      });
+    }
   } catch (error) {
     // AbortError는 정상적인 취소이므로 무시
     if (error.name === 'AbortError') {
@@ -2306,6 +4832,9 @@ function zoomClip(clip) {
     displayUrl: clip.url,
     progress: 0
   };
+  // 클립 정보 저장 (sentence 포함)
+  zoomedClip.value = clip;
+  showSentencePopup.value = true; // 팝업 표시
   isZoomed.value = true;
   zoomPlaying.value = false;
   zoomProgress.value = 0;
@@ -2386,6 +4915,10 @@ function onVideoMetadataLoaded(videoId, event) {
     }
     if (duration && isFinite(duration)) {
       durationMap.value[videoId] = duration;
+      // 선택된 동영상의 메타데이터가 로드되면 청크 크기 업데이트
+      if (selectedIds.value.includes(videoId) && selectedIds.value[0] === videoId) {
+        updateRecommendedChunkSize();
+      }
     }
   }
 }
@@ -2435,13 +4968,42 @@ async function handleVideoError(videoId, event, isZoom = false) {
   const video = items.value.find(v => v.id === videoId);
   if (!video) return;
   
+  // currentUrl과 isBlobUrl을 함수 시작 부분에서 한 번만 선언
+  const currentUrl = isZoom && zoomedVideo.value 
+    ? zoomedVideo.value.displayUrl 
+    : video.displayUrl;
+  const isBlobUrl = currentUrl?.startsWith('blob:');
+  
+  // Blob URL 에러이고 originUrl이 있으면 즉시 서버 URL로 전환
+  if (isBlobUrl && video.originUrl && !video.originUrl.startsWith('blob:')) {
+    const videoElement = isZoom ? zoomVideoRef.value : videoRefs.value[videoId];
+    if (videoElement) {
+      try {
+        videoElement.pause();
+        videoElement.src = video.originUrl;
+        videoElement.crossOrigin = 'anonymous';
+        videoElement.load();
+      } catch (e) {
+        // 에러 무시
+      }
+    }
+    // displayUrl도 서버 URL로 업데이트
+    if (!isZoom) {
+      video.displayUrl = video.originUrl;
+    } else if (zoomedVideo.value) {
+      zoomedVideo.value.displayUrl = video.originUrl;
+    }
+    // 에러 처리는 여기서 종료 (조용히 처리)
+    return;
+  }
+  
   initializeVideoErrorTracking(video);
   
   // 에러 상세 정보 수집 (디버깅용)
   const errorInfo = {
     videoId,
     title: video.title,
-    currentUrl: isZoom && zoomedVideo.value ? zoomedVideo.value.displayUrl : video.displayUrl,
+    currentUrl: currentUrl,
     originUrl: video.originUrl,
     errorCount: video._errorRetryCount,
     event: event?.type || 'unknown'
@@ -2458,14 +5020,10 @@ async function handleVideoError(videoId, event, isZoom = false) {
     return;
   }
   
-  const currentUrl = isZoom && zoomedVideo.value 
-    ? zoomedVideo.value.displayUrl 
-    : video.displayUrl;
   video._triedUrls.add(currentUrl);
   video._errorRetryCount++;
   
   const videoElement = isZoom ? zoomVideoRef.value : videoRefs.value[videoId];
-  const isBlobUrl = currentUrl?.startsWith('blob:');
   
   // 지원하지 않는 형식인지 확인 (AVI, MKV, FLV, WMV)
   const isUnsupported = isUnsupportedFormat(video.title || video.name || '');
@@ -2608,6 +5166,14 @@ function handleZoomVideoError(videoId, event) {
   handleVideoError(videoId, event, true);
 }
 
+function handleImageError(videoId, event) {
+  const video = items.value.find(v => v.id === videoId);
+  if (!video) return;
+  console.warn('이미지 로드 실패:', video.title, video.displayUrl, event);
+  // 이미지 로드 실패 시 displayUrl을 null로 설정하여 대체 UI 표시
+  video.displayUrl = null;
+}
+
 function updateProgress(videoId, event) {
   const video = items.value.find(v => v.id === videoId);
   if (video) {
@@ -2653,6 +5219,11 @@ function seekVideo(videoId, event) {
 }
 
 function startDragging(videoId, evt) {
+  // 이미 드래그 중이면 중복 등록 방지
+  if (isDragging.value) {
+    return;
+  }
+  
   isDragging.value = true;
   draggedVideoId.value = videoId;
   // 확대 모달의 경우 zoomProgressBarRef 사용
@@ -2665,6 +5236,7 @@ function startDragging(videoId, evt) {
   document.addEventListener('mousemove', handleDragging);
   document.addEventListener('mouseup', stopDragging);
   if (evt) evt.preventDefault();
+  if (evt) evt.stopPropagation();
 }
 
 function handleDragging(event) {
@@ -2693,11 +5265,36 @@ function handleDragging(event) {
 }
 
 function stopDragging() {
+  // 드래그 중이 아니면 아무것도 하지 않음
+  if (!isDragging.value) {
+    return;
+  }
+  
   isDragging.value = false;
   draggedVideoId.value = null;
   draggingBarEl = null;
   document.removeEventListener('mousemove', handleDragging);
   document.removeEventListener('mouseup', stopDragging);
+}
+
+// 보고서 제목 입력 모달 닫기
+function closeReportTitleModal() {
+  showReportTitleModal.value = false;
+  reportTitleInput.value = '';
+  reportTitleError.value = '';
+  isCheckingTitle.value = false;
+  pendingReportData.value = null;
+}
+
+// 보고서 생성 모달 닫기
+function closeReportModal() {
+  // 완료 상태일 때만 닫기 (로딩 중에는 닫지 않음)
+  if (reportSuccess.value) {
+    isCreatingReport.value = false;
+    reportSuccess.value = false;
+    reportLoadingMessage.value = '';
+    reportSuccessMessage.value = '';
+  }
 }
 
 // 업로드 모달 닫기 (X 버튼 클릭 시 업로드 중단)
@@ -2763,6 +5360,9 @@ function uploadVideoWithProgress(file, userId, uploadId) {
     activeUploads.value[uploadId] = xhr;
 
     xhr.timeout = UPLOAD_TIMEOUT;
+
+    // 모든 파일은 /upload-video 엔드포인트 사용
+    const uploadEndpoint = `${API_BASE_URL}/upload-video`;
 
     // 진행률 업데이트 (99%까지만 표시)
     xhr.upload.addEventListener('progress', (e) => {
@@ -2852,7 +5452,7 @@ function uploadVideoWithProgress(file, userId, uploadId) {
     });
 
     try {
-      xhr.open('POST', `${API_BASE_URL}/upload-video`);
+      xhr.open('POST', uploadEndpoint);
       xhr.send(formData);
     } catch (error) {
       // 활성 업로드 목록에서 제거
@@ -2870,3 +5470,72 @@ function uploadVideoWithProgress(file, userId, uploadId) {
 
 </script>
 
+<style scoped>
+.slide-left-enter-active,
+.slide-left-leave-active {
+  transition: all 0.3s ease;
+}
+
+.slide-left-enter-from {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+.slide-left-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+.fade-slide-enter-active, .fade-slide-leave-active { 
+  transition: all .28s cubic-bezier(.4,0,.2,1); 
+}
+.fade-slide-enter-from, .fade-slide-leave-to { 
+  opacity:0; 
+  transform: translateY(-6px); 
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+@keyframes scale-in {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-scale-in {
+  animation: scale-in 0.5s ease-out;
+}
+
+@keyframes check-draw {
+  0% {
+    stroke-dasharray: 0, 100;
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dasharray: 100, 0;
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-check-draw .check-path {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: check-draw 0.6s ease-out 0.3s forwards;
+}
+</style>

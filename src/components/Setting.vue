@@ -51,12 +51,14 @@
         <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
           <h2 class="font-semibold mb-3">Caption Summarization Prompt</h2>
           <textarea v-model="settingStore.captionPrompt" rows="6" class="w-full border-2 border-gray-300 rounded-md p-3"></textarea>
+          <p class="text-xs text-gray-500 mt-2">이미지가 업로드되면 자동으로 이미지 전용 프롬프트로 변경되고, 동영상만 있을 때는 동영상 전용 프롬프트로 표시됩니다.</p>
         </section>
 
         <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
           <h2 class="font-semibold mb-3">Summary Aggregation Prompt</h2>
           <textarea v-model="settingStore.aggregationPrompt" rows="6"
             class="w-full border-2 border-gray-300 rounded-md p-3"></textarea>
+          <p class="text-xs text-gray-500 mt-2">이미지가 업로드되면 자동으로 이미지 전용 프롬프트로 변경되고, 동영상만 있을 때는 동영상 전용 프롬프트로 표시됩니다.</p>
         </section>
       </div>
 
@@ -64,8 +66,8 @@
         <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
           <h2 class="font-semibold mb-3">num_frames_per_chunk</h2>
           <p class="text-xs text-gray-500 mt-2">The number of frames to choose from chunk</p>
-          <input v-model.number="settingStore.nfmc" type="number" min="0" max="256" step="1"
-            @input="clampValue('nfmc', 256, 0)"
+          <input v-model.number="settingStore.nfmc" type="number" min="0" max="128" step="1"
+            @input="clampValue('nfmc', 128, 0)"
             class="border-2 border-gray-300 rounded-md px-3 py-2 w-full mt-3" />
         </section>
 

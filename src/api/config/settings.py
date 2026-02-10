@@ -31,7 +31,11 @@ VIA_UPLOAD_TIMEOUT_PER_MB = 10  # 1MB당 타임아웃 (초)
 # 기본 포트는 11434입니다 (Ollama 기본 포트)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
+OLLAMA_TRANSLATION_MODEL = os.getenv("OLLAMA_TRANSLATION_MODEL", "hy-mt15-translation")  # 번역 전용 모델
 OLLAMA_TIMEOUT = 60  # Ollama API 타임아웃 (초)
+
+# ==================== CV Event Detector API 설정 ====================
+CV_EVENT_DETECTOR_API_URL = os.getenv("CV_EVENT_DETECTOR_API_URL", "http://localhost:7862")
 
 # ==================== 파일 설정 ====================
 ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'}
@@ -52,12 +56,13 @@ IP_PATTERN = r'^(\d{1,3}\.){3}\d{1,3}$'
 EMAIL_CODE_EXPIRY_MINUTES = 10
 
 # ==================== VIA 서버 요약 기본 설정 ====================
-DEFAULT_SUMMARIZE_PROMPT = "You are a video monitoring system. Describe the events in this video and look for any anomalies. Start each sentence with the start and end timestamp of the event."
+#DEFAULT_SUMMARIZE_PROMPT = "You are a video monitoring system. Analyze the video frame by frame and identify all meaningful events. For each event, output in the format START_TIME-END_TIME=Detailed Event Description using seconds for timestamps. Each event must be on a separate line with no text before or after the timestamp-event pairs. Describe events chronologically from initial state through actions to final outcome. Include specific details about human behavior (movements, directions, posture changes, gestures, object interactions, person-to-person interactions, facial expressions if visible), environmental context (location type, background elements, weather, lighting, spatial relationships, time of day), and scene changes (objects appearing/disappearing, doors opening/closing). Focus on events involving human activity, movement, or interaction that are relevant for security or monitoring. Be precise and specific, use active voice and present tense, include quantitative details when possible, and distinguish between multiple people. For overlapping events, create separate entries. Each description must be self-contained and focus on observable facts. Output only timestamp-event pairs in the specified format."
+DEFAULT_SUMMARIZE_PROMPT = "You are a video/CCTV monitoring system. Describe events chronologically and flag any anomalies. For each event, start the sentence with SS.SSS-SS.SSS and include when visible the location/area in the scene, the people involved with distinguishing attributes what happens, and why it may be anomalous or safety-relevant."
 DEFAULT_CAPTION_SUMMARIZATION_PROMPT = "You will be given captions from sequential clips of a video. Aggregate captions in the format start_time:end_time:caption based on whether captions are related to one another or create a continuous scene."
 DEFAULT_SUMMARY_AGGREGATION_PROMPT = "Based on the available information, generate a summary that captures the important events in the video. The summary should be organized chronologically and in logical sections. This should be a concise, yet descriptive summary of all the important events. The format should be intuitive and easy for a user to read and understand what happened. Format the output in Markdown so it can be displayed nicely. Timestamps are in seconds so please format them as SS.SSS"
 
 # ==================== VIA 서버 요약 파라미터 기본값 ====================
-DEFAULT_NUM_FRAMES_PER_CHUNK = 90
+DEFAULT_NUM_FRAMES_PER_CHUNK = 15
 DEFAULT_FRAME_WIDTH = 0
 DEFAULT_FRAME_HEIGHT = 0
 DEFAULT_TOP_K = 80
@@ -85,7 +90,6 @@ DEFAULT_QUERY_SEED = 42
 DEFAULT_QUERY_MAX_TOKENS = 1024  # VIA 서버는 최대 1024까지만 허용
 DEFAULT_QUERY_TOP_P = 1.0
 DEFAULT_QUERY_TOP_K = 80
-DEFAULT_QUERY_TIMESTAMP_SUFFIX = " 장면의 시작 타임스탬프와 종료 타임스탬프를 추출하여 반드시 '시작시간-끝시간' 형태로만 출력해주세요. 타임스탬프 형식은 초 단위(예: 10.5-120.3) 또는 분:초 형식(예: 1:30-2:45)일 수 있습니다. 타임스탬프만 출력하고 다른 설명은 포함하지 마세요."
 
 # ==================== 데이터베이스 설정 ====================
 DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -107,6 +111,7 @@ VIDEOS_DIR = BASE_DIR / "videos"
 CLIPS_DIR = BASE_DIR / "clips"
 CONVERTED_VIDEOS_DIR = BASE_DIR / "converted-videos"
 PROFILE_IMAGES_DIR = BASE_DIR / "profile-images"
+REPORTS_DIR = BASE_DIR / "reports"
 TMP_DIR = BASE_DIR / "tmp"
 LOGS_DIR = BASE_DIR / "logs"
 SAMPLE_DIR = BASE_DIR.parent / "assets" / "sample"
