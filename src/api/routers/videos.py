@@ -6,7 +6,7 @@ import aiofiles
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, File, UploadFile, Form, BackgroundTasks
-from database.connection import ensure_db_connection, verify_user_exists
+from database.connection import ensure_db_connection, verify_user_exists, get_db_connection
 from config.settings import VIDEOS_DIR, CONVERTED_VIDEOS_DIR
 from utils.helpers import build_file_url
 from utils.video_utils import convert_video_to_mp4, extract_video_metadata
@@ -16,6 +16,11 @@ from config.settings import UNSUPPORTED_VIDEO_FORMATS
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+def _format_datetime(value):
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
 # 허용된 동영상 확장자
 ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v'}
@@ -29,17 +34,15 @@ FILE_BUFFER_SIZE = 8192  # 8KB 청크
 async def get_videos(user_id: str = Query(...)):
     """사용자의 동영상 목록 조회 (파일 존재 여부 확인 및 유효한 URL 반환)"""
     try:
-        ensure_db_connection()
-        from database.connection import cursor
-        
-        cursor.execute(
-            """SELECT ID, FILE_NAME, FILE_URL, FILE_SIZE, WIDTH, HEIGHT, DURATION, CREATED_AT, VIDEO_ID 
-               FROM vss_videos 
-               WHERE USER_ID = ? 
-               ORDER BY CREATED_AT DESC""",
-            (user_id,)
-        )
-        rows = cursor.fetchall()
+        with get_db_connection() as local_cursor:
+            local_cursor.execute(
+                """SELECT ID, FILE_NAME, FILE_URL, FILE_SIZE, WIDTH, HEIGHT, DURATION, CREATED_AT, VIDEO_ID 
+                   FROM vss_videos 
+                   WHERE USER_ID = ? 
+                   ORDER BY CREATED_AT DESC""",
+                (user_id,)
+            )
+            rows = local_cursor.fetchall()
         
         videos = []
         for row in rows:
@@ -93,7 +96,7 @@ async def get_videos(user_id: str = Query(...)):
                 "width": width,
                 "height": height,
                 "duration": duration,
-                "created_at": created_at.isoformat() if created_at else None,
+                "created_at": _format_datetime(created_at),
                 "video_id": via_video_id
             })
         

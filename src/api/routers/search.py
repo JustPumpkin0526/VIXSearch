@@ -38,6 +38,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+def _get_subclip(video, start_time, end_time):
+    """MoviePy v1/v2 호환: subclip 또는 subclipped 사용"""
+    if hasattr(video, "subclip"):
+        return video.subclip(start_time, end_time)
+    return video.subclipped(start_time, end_time)
+
 # ==================== 요청 모델 ====================
 class RecommendedChunkSizeRequest(BaseModel):
     video_length: float
@@ -373,7 +379,7 @@ async def generate_clips(
             try:
                 enhanced_prompt = await build_query_prompt(prompt)
                 
-                enhanced_prompt = f"""{enhanced_prompt}. Output each match on a new line as SS.SSS-SS.SSS=Scene Description, in chronological order, with no extra text. Only output scenes that are directly related to the requested content. Do not include scenes that are unrelated to the request. If none match, output nothing."""
+                enhanced_prompt = f"""{enhanced_prompt}. Output each match on a new line as START-END=Scene Description using real numeric seconds, in chronological order, with no extra text. Never output the placeholder SS.SSS-SS.SSS. If exact timestamps are unknown, omit that line. Only output scenes that are directly related to the requested content. Do not include scenes that are unrelated to the request. If none match, output nothing."""
                 
                 logger.info(f"enhanced_prompt: {enhanced_prompt}")
                 
@@ -437,11 +443,10 @@ async def generate_clips(
                         clip_filename = f"clip_{base_name}_{timestamp_suffix}_{clip_index+1}.mp4"
                         clip_path = str(CLIPS_DIR / clip_filename)
                         try:
-                            video.subclip(start_time, end_time).write_videofile(
+                            _get_subclip(video, start_time, end_time).write_videofile(
                                 clip_path,
                                 codec="libx264",
-                                audio=False,
-                                verbose=False
+                                audio=False
                             )
                             base = str(request.base_url).rstrip('/')
                             clip_url = f"{base}/clips/{clip_filename}"

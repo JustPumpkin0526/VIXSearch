@@ -6,7 +6,7 @@ import logging
 from queue import Queue, Empty
 from fastapi import HTTPException
 from config.settings import (
-    DB_HOST, DB_USER, DB_PASSWORD, DB_PORT, DB_NAME, IP_PATTERN
+    DB_HOST, DB_USER, DB_PASSWORD, DB_PORT, DB_NAME, IP_PATTERN, DB_POOL_SIZE, DB_POOL_WARMUP
 )
 
 logger = logging.getLogger(__name__)
@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 # ==================== 데이터베이스 연결 풀 설정 클래스 ====================
 class ConnectionPool:
     """DB 커넥션 풀 (동시 요청 처리 최적화)"""
-    def __init__(self, max_connections=10, **kwargs):
+    def __init__(self, max_connections=10, warmup_connections=1, **kwargs):
         self.max_connections = max_connections
+        self.warmup_connections = max(0, min(warmup_connections, max_connections))
         self.connection_kwargs = kwargs
         self.pool = Queue(maxsize=max_connections)
         self.lock = threading.Lock()
@@ -23,7 +24,7 @@ class ConnectionPool:
         
         # 초기 연결 생성 (실패해도 애플리케이션 시작은 계속)
         try:
-            for _ in range(min(3, max_connections)):
+            for _ in range(self.warmup_connections):
                 try:
                     conn = self._create_connection()
                     self.pool.put(conn)
@@ -121,7 +122,8 @@ db_host_str = str(DB_HOST).strip()
 logger.info(f"DB 연결 풀 초기화: host={db_host_str} (타입: {type(db_host_str).__name__})")
 
 db_pool = ConnectionPool(
-    max_connections=20,
+    max_connections=DB_POOL_SIZE,
+    warmup_connections=DB_POOL_WARMUP,
     user=DB_USER,
     password=DB_PASSWORD,
     host=db_host_str,  # IP 주소를 문자열로 명시적으로 전달
@@ -134,6 +136,15 @@ db_pool = ConnectionPool(
 # 실제 사용 시점에 연결을 다시 시도하도록 함
 conn = None
 cursor = None
+
+def _is_connection_alive(connection) -> bool:
+    if connection is None:
+        return False
+    try:
+        connection.ping()
+        return True
+    except Exception:
+        return False
 
 try:
     conn = db_pool.get_connection()
@@ -150,8 +161,13 @@ except Exception as e:
 def ensure_db_connection():
     """전역 DB 연결이 없으면 다시 시도"""
     global conn, cursor
-    if conn is None or cursor is None:
+    if conn is None or cursor is None or not _is_connection_alive(conn):
         try:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
             conn = db_pool.get_connection()
             conn.autocommit = True
             cursor = conn.cursor()
@@ -163,27 +179,27 @@ def ensure_db_connection():
 
 def verify_user_exists(user_id: str):
     """사용자 존재 확인"""
-    ensure_db_connection()
-    cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
-    if not cursor.fetchone():
-        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+    with get_db_connection() as local_cursor:
+        local_cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
+        if not local_cursor.fetchone():
+            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
 
 
 def validate_video_ownership(video_id: str, user_id: str, via_video_id: bool = False):
     """동영상 소유권 확인"""
-    ensure_db_connection()
-    if via_video_id:
-        cursor.execute(
-            "SELECT ID FROM vss_videos WHERE VIDEO_ID = ? AND USER_ID = ?",
-            (video_id, user_id)
-        )
-    else:
-        cursor.execute(
-            "SELECT ID FROM vss_videos WHERE ID = ? AND USER_ID = ?",
-            (video_id, user_id)
-        )
-    if not cursor.fetchone():
-        raise HTTPException(status_code=404, detail="동영상을 찾을 수 없거나 권한이 없습니다.")
+    with get_db_connection() as local_cursor:
+        if via_video_id:
+            local_cursor.execute(
+                "SELECT ID FROM vss_videos WHERE VIDEO_ID = ? AND USER_ID = ?",
+                (video_id, user_id)
+            )
+        else:
+            local_cursor.execute(
+                "SELECT ID FROM vss_videos WHERE ID = ? AND USER_ID = ?",
+                (video_id, user_id)
+            )
+        if not local_cursor.fetchone():
+            raise HTTPException(status_code=404, detail="동영상을 찾을 수 없거나 권한이 없습니다.")
 
 
 class DBConnectionContext:

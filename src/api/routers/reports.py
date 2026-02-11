@@ -24,6 +24,8 @@ from moviepy.video.io.VideoFileClip import VideoFileClip
 from config.settings import CLIPS_DIR, VIDEOS_DIR, CONVERTED_VIDEOS_DIR, REPORTS_DIR
 from database.connection import conn, cursor, ensure_db_connection, verify_user_exists
 
+logger = logging.getLogger(__name__)
+
 # PDF 변환 라이브러리 import (Windows: docx2pdf, Linux: LibreOffice)
 try:
     from docx2pdf import convert
@@ -33,8 +35,6 @@ except ImportError:
     PDF_CONVERSION_AVAILABLE = False
     PDF_CONVERSION_METHOD = None
     logger.warning("docx2pdf가 설치되지 않았습니다. PDF 변환 기능을 사용할 수 없습니다.")
-
-logger = logging.getLogger(__name__)
 
 def add_horizontal_line(paragraph):
     """단락에 구분선(horizontal rule) 추가 (Word에서 --- 입력 후 엔터와 동일한 효과)"""

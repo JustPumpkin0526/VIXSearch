@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from fastapi import APIRouter, File, UploadFile, HTTPException
 from pydantic import BaseModel
-from database.connection import conn, cursor, ensure_db_connection, verify_user_exists
+from database.connection import conn, cursor, ensure_db_connection, verify_user_exists, get_db_connection
 from utils.validators import validate_email
 from utils.helpers import build_file_url
 from config.settings import ALLOWED_IMAGE_EXTENSIONS, PROFILE_IMAGES_DIR
@@ -12,6 +12,11 @@ from config.settings import ALLOWED_IMAGE_EXTENSIONS, PROFILE_IMAGES_DIR
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+def _format_datetime(value):
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
 class UpdateUserEmailRequest(BaseModel):
     email: str
@@ -26,23 +31,24 @@ def get_user_info(user_id: str):
     """사용자 정보 조회"""
     try:
         verify_user_exists(user_id)
-        ensure_db_connection()
-        cursor.execute(
-            "SELECT ID, EMAIL, CREATED_AT, UPDATED_AT, ROLE, APPROVED FROM vss_user WHERE ID = ?",
-            (user_id,)
-        )
-        row = cursor.fetchone()
+        with get_db_connection() as local_cursor:
+            local_cursor.execute(
+                "SELECT ID, EMAIL, CREATED_AT, UPDATED_AT, ROLE, APPROVED FROM vss_user WHERE ID = ?",
+                (user_id,)
+            )
+            row = local_cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
         
         # 프로필 이미지 경로 조회 (PROFILE_IMAGE_URL 필드가 있는 경우)
         profile_image_url = None
         try:
-            cursor.execute(
-                "SELECT PROFILE_IMAGE_URL FROM vss_user WHERE ID = ?",
-                (user_id,)
-            )
-            profile_row = cursor.fetchone()
+            with get_db_connection() as local_cursor:
+                local_cursor.execute(
+                    "SELECT PROFILE_IMAGE_URL FROM vss_user WHERE ID = ?",
+                    (user_id,)
+                )
+                profile_row = local_cursor.fetchone()
             if profile_row and profile_row[0]:
                 profile_image_url = profile_row[0]
         except Exception as e:
@@ -58,8 +64,8 @@ def get_user_info(user_id: str):
             "user": {
                 "id": row[0],
                 "email": row[1],
-                "created_at": row[2].isoformat() if row[2] else None,
-                "updated_at": row[3].isoformat() if row[3] else None,
+                "created_at": _format_datetime(row[2]),
+                "updated_at": _format_datetime(row[3]),
                 "profile_image_url": profile_image_url,
                 "role": row[4] if len(row) > 4 else "USER",
                 "approved": bool(row[5]) if len(row) > 5 else True

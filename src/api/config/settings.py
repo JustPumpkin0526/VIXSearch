@@ -97,6 +97,8 @@ DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")  # 환경 변수에서 로드 (필수)
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_NAME = os.getenv("DB_NAME", "vss")
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "20"))
+DB_POOL_WARMUP = int(os.getenv("DB_POOL_WARMUP", "1"))
 
 # ==================== SMTP 설정 ====================
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")

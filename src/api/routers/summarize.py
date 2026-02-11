@@ -26,6 +26,12 @@ class DeleteSummaryRequest(BaseModel):
     user_id: str
 
 
+def _format_datetime(value):
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
 # ==================== 엔드포인트 ====================
 @router.post("/vss-summarize")
 async def vss_summarize(
@@ -274,6 +280,85 @@ async def vss_summarize_multi(
         logger.error(f"vss_summarize_multi 실행 중 오류: {e}")
         error_msg = str(e)
         raise HTTPException(status_code=500, detail=f"멀티 이미지 요약 생성 중 오류가 발생했습니다: {error_msg}")
+
+
+@router.get("/summaries/{video_id}")
+def get_summary(video_id: str, user_id: str):
+    """특정 동영상의 요약 결과 조회 (VIA 서버 video_id 기준)"""
+    try:
+        verify_user_exists(user_id)
+        ensure_db_connection()
+
+        cursor.execute(
+            """SELECT ID, VIDEO_ID, USER_ID, PROMPT, SUMMARY_TEXT, CREATED_AT, UPDATED_AT
+               FROM vss_summaries
+               WHERE VIDEO_ID = ? AND USER_ID = ?""",
+            (video_id, user_id)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {
+                "success": False,
+                "message": "요약 결과가 없습니다."
+            }
+
+        return {
+            "success": True,
+            "summary": {
+                "id": row[0],
+                "video_id": row[1],
+                "user_id": row[2],
+                "prompt": row[3],
+                "summary_text": row[4],
+                "created_at": _format_datetime(row[5]),
+                "updated_at": _format_datetime(row[6])
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"요약 결과 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"요약 결과 조회 중 오류가 발생했습니다: {str(e)}")
+
+
+@router.get("/summaries")
+def get_summaries(user_id: str):
+    """사용자 요약 결과 목록 조회"""
+    try:
+        verify_user_exists(user_id)
+        ensure_db_connection()
+
+        cursor.execute(
+            """SELECT ID, VIDEO_ID, USER_ID, PROMPT, SUMMARY_TEXT, CREATED_AT, UPDATED_AT
+               FROM vss_summaries
+               WHERE USER_ID = ?
+               ORDER BY UPDATED_AT DESC""",
+            (user_id,)
+        )
+        rows = cursor.fetchall()
+
+        summaries = [
+            {
+                "id": row[0],
+                "video_id": row[1],
+                "user_id": row[2],
+                "prompt": row[3],
+                "summary_text": row[4],
+                "created_at": _format_datetime(row[5]),
+                "updated_at": _format_datetime(row[6])
+            }
+            for row in rows
+        ]
+
+        return {
+            "success": True,
+            "summaries": summaries
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"요약 목록 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"요약 목록 조회 중 오류가 발생했습니다: {str(e)}")
 
 @router.delete("/summaries")
 async def delete_summaries(request: DeleteSummaryRequest):
