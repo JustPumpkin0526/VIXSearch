@@ -31,7 +31,7 @@ from config.settings import (
     DEFAULT_SUMMARIZE_TOP_P, DEFAULT_SUMMARIZE_TEMPERATURE, DEFAULT_SUMMARIZE_MAX_TOKENS,
     DEFAULT_CHAT_TOP_P, DEFAULT_CHAT_TEMPERATURE, DEFAULT_CHAT_MAX_TOKENS,
     DEFAULT_NOTIFICATION_TOP_P, DEFAULT_NOTIFICATION_TEMPERATURE, DEFAULT_NOTIFICATION_MAX_TOKENS,
-    DEFAULT_ENABLE_AUDIO
+    DEFAULT_ENABLE_AUDIO, VIA_UPLOAD_TIMEOUT_MIN, VIA_UPLOAD_TIMEOUT_MAX, VIA_UPLOAD_TIMEOUT_PER_MB
 )
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,56 @@ async def remove_all_media(session: aiohttp.ClientSession, media_ids):
                     logger.info(f"Successfully deleted media {media_id}")
         except Exception as e:
             logger.error(f"Error deleting media {media_id}: {e}")
+
+async def fetch_via_file_index() -> dict:
+    """VIA 서버의 업로드된 파일 목록을 filename -> id로 매핑"""
+    session = await get_session()
+    try:
+        async with session.get(f"{VIA_SERVER_URL}/files") as resp:
+            if resp.status >= 400:
+                logger.warning(f"VIA /files returned status {resp.status}")
+                return {}
+            data = await resp.json()
+            items = data.get("data", []) if isinstance(data, dict) else []
+            return {item.get("filename"): item.get("id") for item in items if item.get("filename") and item.get("id")}
+    except Exception as e:
+        logger.warning(f"Failed to fetch VIA /files: {e}")
+        return {}
+
+def detect_media_type(filename: str, content_type: Optional[str]) -> str:
+    """파일 타입 판단 (image/video)"""
+    if content_type:
+        return "video" if content_type.startswith("video/") else "image"
+    ext = os.path.splitext(filename)[1].lower()
+    image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif"}
+    return "image" if ext in image_exts else "video"
+
+async def upload_via_file(tmp_path: str, filename: str, media_type: str) -> str:
+    """VIA 서버에 파일 업로드 후 file_id 반환"""
+    session = await get_session()
+    file_size = os.path.getsize(tmp_path)
+    timeout_seconds = max(
+        VIA_UPLOAD_TIMEOUT_MIN,
+        min(VIA_UPLOAD_TIMEOUT_MAX, int(file_size / (1024 * 1024) * VIA_UPLOAD_TIMEOUT_PER_MB))
+    )
+    data = aiohttp.FormData()
+    file_handle = open(tmp_path, "rb")
+    try:
+        data.add_field("file", file_handle, filename=filename)
+        data.add_field("purpose", "vision")
+        data.add_field("media_type", media_type)
+        async with session.post(
+            f"{VIA_SERVER_URL}/files",
+            data=data,
+            timeout=aiohttp.ClientTimeout(total=timeout_seconds)
+        ) as response:
+            if response.status >= 400:
+                text = await response.text()
+                raise HTTPException(status_code=response.status, detail=f"VIA 업로드 실패: {text}")
+            json_data = await response.json()
+            return json_data.get("id")
+    finally:
+        file_handle.close()
 
 # ==================== 엔드포인트 ====================
 @router.post("/check-search-mode")
@@ -164,6 +214,8 @@ async def generate_clips(
             except:
                 video_id_map = {}
         
+        via_file_index = await fetch_via_file_index()
+
         for upfile in upload_list:
             file_path = os.path.basename(upfile.filename)
             tmp_path = str(TMP_DIR / file_path)
@@ -201,11 +253,19 @@ async def generate_clips(
                     except Exception as e:
                         logger.warning(f"VIDEO_ID 조회 중 오류: {e}")
             
-            # video_id가 없으면 VIA 서버에 업로드하여 video_id 얻기
+            # video_id가 없으면 VIA 서버 파일 목록에서 확인
             if not video_id:
-                logger.info("업로드 시작")
-                video_id = await vss_client.upload_video(tmp_path)
-                logger.info(f"VIA 서버에 업로드하여 video_id 획득: {video_id}")
+                existing_id = via_file_index.get(file_path)
+                if existing_id:
+                    video_id = existing_id
+                    logger.info(f"VIA 서버에 이미 존재하는 파일 사용: {file_path} -> {video_id}")
+                else:
+                    logger.info("VIA 서버에 파일이 없어 업로드 시작")
+                    media_type = detect_media_type(file_path, upfile.content_type)
+                    video_id = await upload_via_file(tmp_path, file_path, media_type)
+                    if video_id:
+                        via_file_index[file_path] = video_id
+                    logger.info(f"VIA 서버에 업로드하여 video_id 획득: {video_id}")
 
             video_clips = []
             # MoviePy에 파일 경로(문자열)로 전달

@@ -3428,8 +3428,9 @@ async function loadVideosFromStorage() {
     const validVideos = data.videos.filter(v => v && v.file_url && v.file_url.trim() !== '');
     
     if (validVideos.length > 0) {
-      const loadedItems = await Promise.all(validVideos.map(async v => {
-        const videoObj = createVideoObject({
+      // 동기적으로 비디오 객체 생성 (변환 체크는 나중에)
+      const loadedItems = validVideos.map(v => {
+        return createVideoObject({
           id: v.id,
           title: v.title,
           originUrl: v.file_url,
@@ -3441,20 +3442,32 @@ async function loadVideosFromStorage() {
           dbId: v.id,
           videoId: v.video_id
         });
-        
-        // 지원하지 않는 형식인 경우 MP4로 변환 요청 (비동기로 실행, 완료를 기다리지 않음)
-        if (isUnsupportedFormat(v.title || '')) {
-          convertVideoToMp4(v.id, userId, videoObj).catch(err => {
-            console.warn(`동영상 변환 실패 (${v.title}):`, err);
-          });
-        }
-        
-        return videoObj;
-      }));
+      });
       
       // Vue 반응성 업데이트를 보장하기 위해 nextTick 사용
       await nextTick();
       items.value = loadedItems;
+      
+      // 지연 로딩: 지원하지 않는 형식의 동영상만 백그라운드에서 변환 체크
+      // 초기 로딩 속도를 위해 requestIdleCallback 사용 (또는 setTimeout으로 폴백)
+      const checkUnsupportedVideos = () => {
+        validVideos.forEach((v, index) => {
+          if (isUnsupportedFormat(v.title || '')) {
+            const videoObj = loadedItems[index];
+            // 비동기로 변환 요청 (완료를 기다리지 않음)
+            convertVideoToMp4(v.id, userId, videoObj).catch(err => {
+              console.warn(`동영상 변환 실패 (${v.title}):`, err);
+            });
+          }
+        });
+      };
+      
+      // 브라우저가 유휴 상태일 때 실행
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(checkUnsupportedVideos, { timeout: 2000 });
+      } else {
+        setTimeout(checkUnsupportedVideos, 500);
+      }
     } else {
       // 모든 동영상의 file_url이 비어있는 경우
       console.warn('모든 동영상의 file_url이 비어있습니다.');
@@ -3464,9 +3477,20 @@ async function loadVideosFromStorage() {
     }
     
     // VIA 서버 파일 목록 조회 (동기화 확인용, 비동기로 실행, 완료를 기다리지 않음)
-    loadViaFiles().catch(err => {
-      console.warn('VIA 파일 목록 조회 실패:', err);
-    });
+    // 이것도 지연 로딩
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(() => {
+        loadViaFiles().catch(err => {
+          console.warn('VIA 파일 목록 조회 실패:', err);
+        });
+      }, { timeout: 3000 });
+    } else {
+      setTimeout(() => {
+        loadViaFiles().catch(err => {
+          console.warn('VIA 파일 목록 조회 실패:', err);
+        });
+      }, 1000);
+    }
   } catch (error) {
     // AbortError는 정상적인 취소이므로 무시
     if (error.name === 'AbortError') {

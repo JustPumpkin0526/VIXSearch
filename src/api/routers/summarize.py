@@ -6,6 +6,7 @@ import tempfile
 from typing import Optional, List
 import json
 from fastapi import APIRouter, HTTPException, Form, UploadFile
+from services.video_service import _save_summary_to_db
 from pydantic import BaseModel
 
 from utils.helpers import (
@@ -62,6 +63,7 @@ async def vss_summarize(
     alert_max_tokens: int = Form(...),
     enable_audio: bool = Form(...),
     video_id: Optional[str] = Form(None),  # VIA 서버의 video_id (이미 업로드된 경우)
+    user_id: str = Form(...),  # 사용자 ID (DB 저장용)
 ):
     """동영상/이미지 요약 VSS API"""
     await ensure_vss_client()
@@ -169,6 +171,14 @@ async def vss_summarize(
         logger.info(
             "[CA-RAG DEBUG] ⚠️ 이후 query_video 호출 시 CA-RAG 컨텍스트 상태 확인 필요"
         )
+
+        # DB에 요약 결과 저장
+        try:
+            _save_summary_to_db(video_id, user_id, result, prompt)
+            logger.info(f"요약 결과 DB 저장 완료: video_id={video_id}, user_id={user_id}")
+        except Exception as save_error:
+            logger.error(f"요약 결과 DB 저장 실패: {save_error}")
+            # DB 저장 실패해도 요약 결과는 반환 (사용자 경험 우선)
         
         return {"summary": result, "video_id": video_id, "image_mode": image_mode}
     except HTTPException:
@@ -215,6 +225,7 @@ async def vss_summarize_multi(
     alert_temperature: float = Form(...),
     alert_max_tokens: int = Form(...),
     enable_audio: str = Form("false"),
+    user_id: str = Form(...),  # 사용자 ID (DB 저장용)
 ):
     """
     멀티 이미지 요약 VSS API (여러 이미지를 한 번에 요약)
@@ -273,6 +284,17 @@ async def vss_summarize_multi(
         )
         from utils.helpers import vss_client
         result = await vss_client.summarize_video(*summarize_params)
+        
+        # DB에 요약 결과 저장 (멀티 이미지의 경우 첫 번째 video_id를 대표로 사용)
+        try:
+            # 멀티 이미지는 하나의 요약으로 통합되므로 첫 번째 video_id로 저장
+            primary_video_id = video_id_list[0]
+            _save_summary_to_db(primary_video_id, user_id, result, prompt)
+            logger.info(f"멀티 이미지 요약 결과 DB 저장 완료: video_ids={video_id_list}, user_id={user_id}")
+        except Exception as save_error:
+            logger.error(f"멀티 이미지 요약 결과 DB 저장 실패: {save_error}")
+            # DB 저장 실패해도 요약 결과는 반환
+        
         return {"summary": result, "video_ids": video_id_list, "image_mode": True}
     except HTTPException:
         raise

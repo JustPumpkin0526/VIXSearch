@@ -6,12 +6,12 @@ from typing import Optional
 # .env 파일 지원 (python-dotenv가 설치되어 있는 경우)
 try:
     from dotenv import load_dotenv
-    # 현재 스크립트 위치 기준으로 .env 파일 찾기
-    env_path = Path(__file__).parent.parent.parent.parent / ".env"  # config/ -> api/ -> src/ -> 프로젝트 루트
+    # 프로젝트 루트 기준 상대 경로에서 .env 파일 로드
+    env_path = Path(__file__).resolve().parents[3] / ".env"
     if env_path.exists():
         load_dotenv(env_path)
     else:
-        # 프로젝트 루트에 없으면 현재 디렉토리에서 찾기
+        # 경로가 바뀐 경우를 대비해 현재 디렉터리에서도 탐색
         load_dotenv()
 except ImportError:
     pass  # python-dotenv가 없으면 시스템 환경 변수 사용
@@ -30,6 +30,7 @@ VIA_UPLOAD_TIMEOUT_PER_MB = 10  # 1MB당 타임아웃 (초)
 # 같은 서버에서 실행 중이면 localhost 사용, 다른 서버면 해당 IP 주소 사용
 # 기본 포트는 11434입니다 (Ollama 기본 포트)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+print("OLLAMA_BASE_URL:", OLLAMA_BASE_URL)
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
 OLLAMA_TRANSLATION_MODEL = os.getenv("OLLAMA_TRANSLATION_MODEL", "hy-mt15-translation")  # 번역 전용 모델
 OLLAMA_TIMEOUT = 60  # Ollama API 타임아웃 (초)

@@ -2764,6 +2764,7 @@ async function processImageGroup(imageGroup, startIdx, totalCount, taskId, taskP
   formData.append('alert_temperature', safeNum(settingStore.A_TEMPERATURE, 1.0));
   formData.append('alert_max_tokens', safeNum(settingStore.A_MAX_TOKENS, 512));
   formData.append('enable_audio', 'false'); // 이미지는 오디오 없음
+  formData.append('user_id', userId); // 사용자 ID 추가 (DB 저장용)
   
   try {
     const res = await fetch(VSS_API_URL, { method: 'POST', body: formData });
@@ -3051,6 +3052,7 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
     formData.append('alert_max_tokens', safeNum(settingStore.A_MAX_TOKENS, 512));
     formData.append('enable_audio', settingStore.enableAudio ? true : false);
     formData.append('video_id', viaVideoId); // VIA 서버의 video_id 전달
+    formData.append('user_id', userId); // 사용자 ID 추가 (DB 저장용)
 
     // 경과 시간 추적기 설정 (페이지가 활성화된 경우에만 UI 업데이트)
     const intervalId = setInterval(() => {
@@ -3167,84 +3169,9 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
         addChatMessage({ id: Date.now() + Math.random(), role: 'assistant', content: summaryHtml });
       }
       
-      // DB에 요약 결과 저장
-      const userId = localStorage.getItem("vss_user_id");
-      if (userId) {
-        try {
-          // vss_videos 테이블의 VIDEO_ID 컬럼 (VIA 서버의 video_id) 찾기
-          let dbVideoId = null;
-          
-          // 먼저 videoObj.dbId로 동영상 찾기
-          let dbInternalId = videoObj.dbId;
-          
-          if (!dbInternalId) {
-            // 파일명으로 DB에서 내부 ID 찾기
-            try {
-              const videosResponse = await fetch(`${API_BASE_URL}/videos?user_id=${userId}`);
-              if (videosResponse.ok) {
-                const videosData = await videosResponse.json();
-                if (videosData.success && videosData.videos) {
-                  const video = videosData.videos.find(v => v.title === videoObj.name);
-                  if (video) {
-                    dbInternalId = video.id;
-                    // videoObj에 dbId 저장 (다음 요약 시 재사용)
-                    videoObj.dbId = dbInternalId;
-                  }
-                }
-              }
-            } catch (error) {
-              console.warn('동영상 목록 조회 실패:', error);
-            }
-          }
-          
-          // 내부 ID로 vss_videos 테이블에서 VIDEO_ID 컬럼 (VIA 서버의 video_id) 가져오기
-          if (dbInternalId) {
-            try {
-              const videosResponse = await fetch(`${API_BASE_URL}/videos?user_id=${userId}`);
-              if (videosResponse.ok) {
-                const videosData = await videosResponse.json();
-                if (videosData.success && videosData.videos) {
-                  const video = videosData.videos.find(v => v.id === dbInternalId);
-                  if (video && video.video_id) {
-                    dbVideoId = video.video_id; // vss_videos 테이블의 VIDEO_ID 컬럼 (VIA 서버의 video_id)
-                  }
-                }
-              }
-            } catch (error) {
-              console.warn('VIDEO_ID 조회 실패:', error);
-            }
-          }
-          
-          if (dbVideoId) {
-            const saveResponse = await fetch(`${API_BASE_URL}/save-summary`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                video_id: dbVideoId,
-                user_id: userId,
-                prompt: taskPrompt ?? prompt.value ?? '',
-                summary_text: summaryText,
-                via_video_id: serverVideoId  // VIA 서버의 video_id 저장
-              })
-            });
-            
-            if (saveResponse.ok) {
-              await saveResponse.json();
-            } else {
-              const errorData = await saveResponse.json().catch(() => ({ detail: '알 수 없는 오류' }));
-              console.warn('요약 결과 저장 실패:', errorData);
-            }
-          } else {
-            console.warn(`요약 결과 저장 실패: 동영상 ID를 찾을 수 없습니다. (파일명: ${videoObj.name})`);
-          }
-        } catch (error) {
-          console.warn('요약 결과 저장 중 오류:', error);
-        }
-      } else {
-        console.warn('요약 결과 저장 실패: 사용자 ID가 없습니다.');
-      }
+      // 더 이상 프론트엔드에서 별도로 DB 저장을 호출하지 않음
+      // 백엔드의 /vss-summarize 엔드포인트에서 자동으로 DB에 저장됨
+      
     } catch (e) {
       // 타이머 정리 (설정된 경우에만)
       if (intervalId) {

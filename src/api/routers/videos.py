@@ -1,4 +1,5 @@
 """동영상 관련 라우터"""
+import asyncio
 import logging
 import os
 import time
@@ -32,7 +33,7 @@ FILE_BUFFER_SIZE = 8192  # 8KB 청크
 
 @router.get("")
 async def get_videos(user_id: str = Query(...)):
-    """사용자의 동영상 목록 조회 (파일 존재 여부 확인 및 유효한 URL 반환)"""
+    """사용자의 동영상 목록 조회 (파일 존재 여부 확인 및 유효한 URL 반환) - 최적화 버전"""
     try:
         with get_db_connection() as local_cursor:
             local_cursor.execute(
@@ -44,11 +45,14 @@ async def get_videos(user_id: str = Query(...)):
             )
             rows = local_cursor.fetchall()
         
-        videos = []
-        for row in rows:
+        if not rows:
+            return {"success": True, "videos": []}
+        
+        # 병렬 처리를 위한 비동기 함수
+        async def process_video_row(row):
             video_id = row[0]
             file_name = row[1]
-            file_url = row[2]  # DB에 저장된 FILE_URL (예: /video-files/filename_timestamp.ext)
+            file_url = row[2]
             file_size = row[3]
             width = row[4]
             height = row[5]
@@ -61,34 +65,31 @@ async def get_videos(user_id: str = Query(...)):
             
             # 1. 원본 파일 확인 (FILE_URL에서 파일명 추출)
             if file_url:
-                # FILE_URL에서 파일명 추출 (예: /video-files/filename.ext -> filename.ext)
+                # FILE_URL에서 파일명 추출
                 original_filename = file_url.replace("/video-files/", "").lstrip("/")
                 original_file_path = VIDEOS_DIR / original_filename
                 
-                if original_file_path.exists():
+                # 파일 존재 확인 (asyncio.to_thread를 사용하여 비동기로 처리)
+                if await asyncio.to_thread(original_file_path.exists):
                     # 원본 파일이 존재하면 원본 URL 사용
                     valid_file_url = build_file_url(file_url)
                 else:
                     # 원본 파일이 없으면 변환된 MP4 확인
-                    # 변환된 파일명: filename_timestamp.mp4 (확장자를 .mp4로 변경)
-                    base_name = Path(original_filename).stem  # 확장자 제거
+                    base_name = Path(original_filename).stem
                     converted_filename = f"{base_name}.mp4"
                     converted_file_path = CONVERTED_VIDEOS_DIR / converted_filename
                     
-                    if converted_file_path.exists():
+                    if await asyncio.to_thread(converted_file_path.exists):
                         # 변환된 MP4가 존재하면 변환된 URL 사용
                         converted_url = f"/converted-videos/{converted_filename}"
                         valid_file_url = build_file_url(converted_url)
-                        logger.info(f"원본 파일 없음, 변환된 MP4 사용: {file_name} -> {converted_filename}")
                     else:
                         # 둘 다 없으면 원본 URL 사용 (나중에 404 처리)
                         valid_file_url = build_file_url(file_url)
-                        logger.warning(f"동영상 파일을 찾을 수 없음: {file_name} (원본: {original_filename}, 변환: {converted_filename})")
             else:
-                # FILE_URL이 없으면 빈 문자열
                 logger.warning(f"FILE_URL이 없음: video_id={video_id}, file_name={file_name}")
             
-            videos.append({
+            return {
                 "id": video_id,
                 "title": file_name,
                 "file_url": valid_file_url,
@@ -98,11 +99,14 @@ async def get_videos(user_id: str = Query(...)):
                 "duration": duration,
                 "created_at": _format_datetime(created_at),
                 "video_id": via_video_id
-            })
+            }
+        
+        # 모든 비디오를 병렬로 처리
+        videos = await asyncio.gather(*[process_video_row(row) for row in rows])
         
         return {
             "success": True,
-            "videos": videos
+            "videos": list(videos)
         }
     except Exception as e:
         logger.error(f"동영상 목록 조회 실패: {e}")

@@ -228,15 +228,22 @@ class VSS:
                 response.status
             )
             if isinstance(json_data, dict):
+                has_choices = "choices" in json_data
                 logger.info(
                     "[CA-RAG DEBUG] 응답 타입: dict, choices 존재: %s",
-                    "choices" in json_data
+                    has_choices
                 )
-                if "choices" in json_data:
-                    logger.info(
-                        "[CA-RAG DEBUG] 요약 완료: choices[0].message.content 길이=%d",
-                        len(json_data["choices"][0]["message"]["content"]) if json_data["choices"][0].get("message", {}).get("content") else 0
-                    )
+                if has_choices:
+                    choices = json_data.get("choices") or []
+                    if choices and isinstance(choices[0], dict):
+                        message = choices[0].get("message", {})
+                        content = message.get("content") if isinstance(message, dict) else None
+                        logger.info(
+                            "[CA-RAG DEBUG] 요약 완료: choices[0].message.content 길이=%d",
+                            len(content) if content else 0
+                        )
+                    else:
+                        logger.warning("[CA-RAG DEBUG] summarize 응답 choices가 비어 있습니다.")
             else:
                 logger.info(
                     "[CA-RAG DEBUG] 응답 타입: %s (dict 아님)",
@@ -387,7 +394,15 @@ class VSS:
             
             # 정상 응답 처리
             if isinstance(json_data, dict) and "choices" in json_data:
-                message_content = json_data["choices"][0]["message"]["content"]
+                choices = json_data.get("choices") or []
+                if not choices:
+                    logger.warning("[CA-RAG DEBUG] query_video 응답에 choices가 비어 있습니다.")
+                    return None
+                message = choices[0].get("message") if isinstance(choices[0], dict) else None
+                message_content = message.get("content") if isinstance(message, dict) else None
+                if not message_content:
+                    logger.warning("[CA-RAG DEBUG] query_video 응답에 message.content가 없습니다.")
+                    return None
                 logger.info(f"message_content: {message_content}")
                 
                 # ========== CA-RAG 컨텍스트 디버깅 로그 시작 ==========
