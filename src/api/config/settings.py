@@ -29,7 +29,7 @@ VIA_UPLOAD_TIMEOUT_PER_MB = 10  # 1MB당 타임아웃 (초)
 # ==================== Ollama 설정 ====================
 # 같은 서버에서 실행 중이면 localhost 사용, 다른 서버면 해당 IP 주소 사용
 # 기본 포트는 11434입니다 (Ollama 기본 포트)
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 print("OLLAMA_BASE_URL:", OLLAMA_BASE_URL)
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
 OLLAMA_TRANSLATION_MODEL = os.getenv("OLLAMA_TRANSLATION_MODEL", "hy-mt15-translation")  # 번역 전용 모델
