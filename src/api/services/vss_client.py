@@ -111,8 +111,7 @@ class VSS:
 
             async with session.post(
                 self.files_endpoint, 
-                data=data,
-                timeout=aiohttp.ClientTimeout(total=timeout_seconds)
+                data=data
             ) as response:
                 self.f_count += 1
                 json_data = await self.check_response(response)

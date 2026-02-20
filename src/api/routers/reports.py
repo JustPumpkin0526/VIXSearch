@@ -22,7 +22,10 @@ from PIL import Image
 import requests
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from config.settings import CLIPS_DIR, VIDEOS_DIR, CONVERTED_VIDEOS_DIR, REPORTS_DIR
-from database.connection import conn, cursor, ensure_db_connection, verify_user_exists
+from database.connection import get_db_connection
+from dependencies import verify_user_dependency
+from exceptions import NotFoundException, ValidationException, DatabaseException
+from fastapi import Depends
 
 logger = logging.getLogger(__name__)
 
@@ -114,37 +117,33 @@ class UpdateReportRequest(BaseModel):
 # ==================== 엔드포인트 ====================
 @router.get("/check-title")
 async def check_report_title(
-    user_id: str = Query(..., description="사용자 ID"),
-    title: str = Query(..., description="확인할 보고서 제목")
+    title: str = Query(..., description="확인할 보고서 제목"),
+    user_id: str = Depends(verify_user_dependency)
 ):
     """보고서 제목 중복 확인"""
     try:
-        if not user_id:
-            raise HTTPException(status_code=400, detail="사용자 ID가 필요합니다.")
         if not title:
-            raise HTTPException(status_code=400, detail="보고서 제목이 필요합니다.")
+            raise ValidationException("보고서 제목이 필요합니다.")
         
-        verify_user_exists(user_id)
-        ensure_db_connection()
-        
-        # 동일한 제목의 보고서가 있는지 확인
-        cursor.execute("""
-            SELECT COUNT(*) FROM vss_reports
-            WHERE USER_ID = ? AND TITLE = ?
-        """, (user_id, title))
-        
-        count = cursor.fetchone()[0]
+        with get_db_connection() as cursor:
+            # 동일한 제목의 보고서가 있는지 확인
+            cursor.execute("""
+                SELECT COUNT(*) FROM vss_reports
+                WHERE USER_ID = ? AND TITLE = ?
+            """, (user_id, title))
+            
+            count = cursor.fetchone()[0]
         
         return {
             "success": True,
             "exists": count > 0,
             "message": "이미 존재하는 보고서 제목입니다." if count > 0 else "사용 가능한 제목입니다."
         }
-    except HTTPException:
+    except (ValidationException, NotFoundException):
         raise
     except Exception as e:
         logger.error(f"보고서 제목 확인 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"보고서 제목 확인 중 오류가 발생했습니다: {str(e)}")
+        raise DatabaseException(f"보고서 제목 확인 중 오류가 발생했습니다: {str(e)}")
 
 @router.post("", response_model=CreateReportResponse)
 async def create_report(request: CreateReportRequest):

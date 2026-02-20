@@ -603,7 +603,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, onActivated, computed, nextTick, watch } from "vue";
+import { ref, onMounted, onUnmounted, onActivated, computed, nextTick, watch, reactive } from "vue";
 import { useSummaryVideoStore } from '@/stores/summaryVideoStore';
 import { useSettingStore } from '@/stores/settingStore';
 import { marked } from 'marked';
@@ -859,7 +859,13 @@ function applySamplePrompt() {
 const summarizedVideoId = ref(null); // 마지막으로 요약된 서버 video_id
 const summarizedVideoMap = ref({}); // 로컬 video.id -> 서버 video_id 매핑 (다중 요약 지원)
 // 채팅 메시지 배열: { id, role: 'user' | 'assistant' | 'system', content(html) }
-const chatMessages = ref([]);
+// videoId별 메시지 관리
+const chatMessagesMap = reactive({});
+const chatMessages = computed(() => {
+  if (!selectedIndexes.value || selectedIndexes.value.length === 0) return [];
+  const videoId = selectedIndexes.value[0];
+  return chatMessagesMap[videoId] || [];
+});
 const chatWindowRef = ref(null); // 채팅 자동 스크롤용
 const isDragging = ref(false); // 업로드 영역 드래그 상태
 const isScrubbing = ref(false); // 재생바(진행 막대) 드래그 상태
@@ -1077,7 +1083,11 @@ function addChatMessage(message) {
     content: message.content || '',
     time: message.time || new Date().toISOString()
   };
-  chatMessages.value.push(enriched);
+  // videoId 기준으로 메시지 추가
+  const videoId = message.videoId || (selectedIndexes.value && selectedIndexes.value[0]);
+  if (!videoId) return;
+  if (!chatMessagesMap[videoId]) chatMessagesMap[videoId] = [];
+  chatMessagesMap[videoId].push(enriched);
   scrollChatToBottom();
 }
 
@@ -1260,16 +1270,13 @@ async function loadVideosFromStore() {
                              Array.from(newVideoIds).some(id => !currentVideoIds.has(id));
         
         if (videosChanged) {
-          // 동영상이 변경되었으면 기존 요약 메시지 제거
-          chatMessages.value = chatMessages.value.filter(m => {
-            // 시스템 메시지나 사용자 메시지는 유지, 요약 결과만 제거
-            if (m.role === 'assistant' && m.content.includes('요약')) {
-              return false;
+          // 동영상이 변경되면 chatMessagesMap에서 해당 videoId의 메시지만 유지
+          const newVideoIdsArr = Array.from(newVideoIds);
+          Object.keys(chatMessagesMap).forEach(id => {
+            if (!newVideoIdsArr.includes(id)) {
+              delete chatMessagesMap[id];
             }
-            return true;
           });
-          // 동영상이 바뀌었는데 이전 프롬프트가 남아있으면 혼동되므로 초기화
-          // (새로 로드되는 동영상의 저장된 요약이 있다면 loadSummariesFromDB()에서 다시 채워짐)
           prompt.value = "";
         }
 
@@ -1354,13 +1361,13 @@ onMounted(async () => {
     return;
   }
 
-  // 먼저 localStorage에서 상태 복원 시도
-  const restored = restoreStateFromLocalStorage();
+  // localStorage에서 상태 복원 로직 제거
+  const restored = false;
 
   // 샘플 동영상 경로 초기화
   sampleVideoPath.value = `${API_BASE_URL}/sample/sample.mp4`;
 
-  // 상태가 복원되지 않았거나 동영상이 없는 경우에만 기본 초기화
+  // 항상 기본 초기화
   if (!restored || videoFiles.value.length === 0) {
     // 초기 상태: 동영상이 없으면 streaming을 false로 설정
     streaming.value = false;
@@ -1377,76 +1384,7 @@ onMounted(async () => {
 
     // summaryVideoStore에서 동영상 로드
     await loadVideosFromStore();
-  } else {
-    // 상태가 복원된 경우
-    // summaryVideoStore에 새로운 동영상이 있으면 우선시 (Search.vue에서 새로 선택한 경우)
-    if (Array.isArray(summaryVideoStore.videos) && summaryVideoStore.videos.length > 0) {
-      const storeVideoIds = new Set(summaryVideoStore.videos.map(v => v.id || v.dbId));
-      const currentVideoIds = new Set(videoFiles.value.map(v => v.id));
-      
-      // 동영상 목록이 다르면 summaryVideoStore의 동영상으로 업데이트
-      const isDifferent = storeVideoIds.size !== currentVideoIds.size || 
-                          Array.from(storeVideoIds).some(id => !currentVideoIds.has(id));
-      
-      if (isDifferent) {
-        await loadVideosFromStore();
-      } else {
-        // 동영상이 같으면 복원된 상태 유지하되, 현재 사용자의 것인지 확인
-        if (videoFiles.value.length > 0) {
-          const filteredVideos = await filterVideosByCurrentUser(videoFiles.value);
-          if (filteredVideos.length !== videoFiles.value.length) {
-            // 일부 동영상이 현재 사용자의 것이 아니면 필터링된 목록으로 교체
-            videoFiles.value = filteredVideos;
-            if (videoFiles.value.length === 0) {
-              // 모든 동영상이 제거되었으면 상태 초기화
-              streaming.value = false;
-              selectedIndexes.value = [];
-              isZoomed.value = false;
-              zoomedIndex.value = null;
-              prompt.value = "";
-              response.value = "";
-              chatMessages.value = [];
-            }
-          }
-        }
-        
-        // DB에서 저장된 요약 결과 로드
-        await loadSummariesFromDB();
-        
-        // 채팅 스크롤 처리
-        nextTick(() => {
-          scrollChatToBottom();
-        });
-      }
-    } else {
-      // summaryVideoStore가 비어있으면 복원된 상태 유지
-      if (videoFiles.value.length > 0) {
-        const filteredVideos = await filterVideosByCurrentUser(videoFiles.value);
-        if (filteredVideos.length !== videoFiles.value.length) {
-          // 일부 동영상이 현재 사용자의 것이 아니면 필터링된 목록으로 교체
-          videoFiles.value = filteredVideos;
-          if (videoFiles.value.length === 0) {
-            // 모든 동영상이 제거되었으면 상태 초기화
-            streaming.value = false;
-            selectedIndexes.value = [];
-            isZoomed.value = false;
-            zoomedIndex.value = null;
-            prompt.value = "";
-            response.value = "";
-            chatMessages.value = [];
-          }
-        }
-      }
-      
-      // DB에서 저장된 요약 결과 로드
-      await loadSummariesFromDB();
-      
-      // 채팅 스크롤 처리
-      nextTick(() => {
-        scrollChatToBottom();
-      });
-    }
-  }
+  } // 상태 복원 분기 제거
 });
 
 // summaryVideoStore.videos 변경 감지하여 자동 업데이트
@@ -1529,133 +1467,7 @@ onActivated(async () => {
   }
 });
 
-/**
- * 진행 중인 작업의 결과를 확인하고 UI에 업데이트
- */
-async function checkAndUpdateTaskResults() {
-  const userId = localStorage.getItem("vss_user_id");
-  if (!userId) return;
 
-  // 전역 작업 관리자에서 진행 중인 작업 확인
-  for (const [taskId, taskInfo] of window.__vssActiveTasks.entries()) {
-    // 작업이 완료되었는지 확인
-    if (taskInfo.status === 'completed') {
-      // 완료된 작업의 결과를 UI에 반영
-      await applyTaskResults(taskId, taskInfo);
-      continue;
-    }
-
-    // localStorage에서 작업 상태 확인
-    const storageKey = `vss_active_task_${userId}_${taskId}`;
-    const savedTaskState = localStorage.getItem(storageKey);
-    if (savedTaskState) {
-      try {
-        const taskState = JSON.parse(savedTaskState);
-        // 작업이 완료되었는지 확인
-        if (taskState.completedVideos && taskState.completedVideos.length > 0) {
-          // 완료된 비디오의 결과를 UI에 반영
-          for (const completedVideo of taskState.completedVideos) {
-            const resultKey = `vss_task_result_${taskId}_${completedVideo.videoId}`;
-            const result = window.__vssTaskResults.get(resultKey);
-            if (result && !chatMessages.value.some(m => 
-              m.role === 'assistant' && m.content.includes(`'${completedVideo.videoName}'`) && m.content.includes('요약 완료')
-            )) {
-              // 결과를 UI에 추가
-              addChatMessage({
-                id: Date.now() + Math.random(),
-                role: 'assistant',
-                content: result.summaryHtml
-              });
-              
-              // 요약 결과를 동영상 객체에 저장
-              const video = videoFiles.value.find(v => v.id === completedVideo.videoId);
-              if (video) {
-                video.summary = completedVideo.summaryText;
-                summarizedVideoMap.value[video.id] = completedVideo.serverVideoId;
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('작업 상태 파싱 실패:', e);
-      }
-    }
-  }
-
-  // 전역 작업 결과에서 새로운 결과 확인
-  for (const [resultKey, result] of window.__vssTaskResults.entries()) {
-    if (result.timestamp && Date.now() - result.timestamp < 60000) { // 1분 이내 결과만
-      // 이미 표시된 결과인지 확인
-      const alreadyShown = chatMessages.value.some(m => 
-        m.role === 'assistant' && m.content.includes(`'${result.videoName}'`) && m.content.includes('요약 완료')
-      );
-      
-      if (!alreadyShown) {
-        // 결과를 UI에 추가
-        addChatMessage({
-          id: Date.now() + Math.random(),
-          role: 'assistant',
-          content: result.summaryHtml
-        });
-        
-        // 요약 결과를 동영상 객체에 저장
-        const video = videoFiles.value.find(v => v.id === result.videoId);
-        if (video) {
-          video.summary = result.summaryText;
-          summarizedVideoMap.value[video.id] = result.serverVideoId;
-        }
-      }
-    }
-  }
-}
-
-/**
- * 작업 완료 결과를 UI에 적용
- */
-async function applyTaskResults(taskId, taskInfo) {
-  // 완료된 비디오의 결과를 UI에 반영
-  for (const completedVideo of taskInfo.completedVideos) {
-    const resultKey = `vss_task_result_${taskId}_${completedVideo.videoId}`;
-    const result = window.__vssTaskResults.get(resultKey);
-    if (result && !chatMessages.value.some(m => 
-      m.role === 'assistant' && m.content.includes(`'${completedVideo.videoName}'`) && m.content.includes('요약 완료')
-    )) {
-      addChatMessage({
-        id: Date.now() + Math.random(),
-        role: 'assistant',
-        content: result.summaryHtml
-      });
-      
-      // 요약 결과를 동영상 객체에 저장
-      const video = videoFiles.value.find(v => v.id === completedVideo.videoId);
-      if (video) {
-        video.summary = completedVideo.summaryText;
-        summarizedVideoMap.value[video.id] = completedVideo.serverVideoId;
-      }
-    }
-  }
-
-  // 전체 완료 메시지 추가
-  if (taskInfo.completedVideos.length > 0) {
-    const alreadyShown = chatMessages.value.some(m => 
-      m.role === 'system' && m.content.includes('모든 요약 처리 완료')
-    );
-    
-    if (!alreadyShown) {
-      addChatMessage({
-        id: Date.now() + Math.random(),
-        role: 'system',
-        content: `✅ 모든 요약 처리 완료 (${taskInfo.completedVideos.length}개 성공). 질의 시 선택된 영상의 서버 요약을 우선 사용합니다.`
-      });
-    }
-  }
-}
-
-// 작업 완료 이벤트 리스너 등록
-window.addEventListener('vss-task-completed', async (event) => {
-  const { taskId, taskInfo } = event.detail;
-  await applyTaskResults(taskId, taskInfo);
-});
 
 // DB에서 저장된 요약 결과를 로드하는 함수
 async function loadSummariesFromDB() {
@@ -1749,221 +1561,7 @@ async function loadSummariesFromDB() {
   }
 }
 
-// localStorage 키 생성 함수 (사용자 ID 기반)
-function getStorageKey() {
-  const userId = localStorage.getItem("vss_user_id");
-  if (!userId) {
-    return 'summarize_page_state_no_user';
-  }
-  return `summarize_page_state_${userId}`;
-}
-
-// 상태를 localStorage에 저장하는 함수
-function saveStateToLocalStorage() {
-  try {
-    const userId = localStorage.getItem("vss_user_id");
-    if (!userId) {
-      console.warn('사용자 ID가 없어 상태를 저장할 수 없습니다.');
-      return;
-    }
-
-    const state = {
-      // 사용자 ID 저장 (복원 시 검증용)
-      userId: userId,
-      // 동영상 정보 (File 객체는 제외하고 메타데이터만 저장)
-      videoFiles: videoFiles.value.map(v => ({
-        id: v.id,
-        name: v.name,
-        originUrl: v.originUrl,
-        date: v.date,
-        summary: v.summary || '',
-        // File 객체는 저장하지 않음 (summaryVideoStore에 저장됨)
-      })),
-      // 프롬프트 및 요약 결과
-      prompt: prompt.value,
-      response: response.value,
-      // 채팅 메시지
-      chatMessages: chatMessages.value,
-      // 질문 입력
-      ask_prompt: ask_prompt.value,
-      // 요약된 비디오 ID 매핑
-      summarizedVideoId: summarizedVideoId.value,
-      summarizedVideoMap: summarizedVideoMap.value,
-      // 선택된 동영상 ID
-      selectedIndexes: selectedIndexes.value,
-      // 확대 상태
-      isZoomed: isZoomed.value,
-      zoomedIndex: zoomedIndex.value,
-      // 스트리밍 상태
-      streaming: streaming.value,
-      // 실행 중인 작업 정보
-      activeTasks: activeTasks.value.map(task => ({
-        taskId: task.taskId,
-        type: task.type,
-        startTime: task.startTime,
-        currentIndex: task.currentIndex,
-        totalCount: task.totalCount,
-        videoIds: task.videoIds,
-        loadingIds: task.loadingIds,
-        prompt: task.prompt || task.query,
-        query: task.query,
-        // File 객체는 저장하지 않음
-      })),
-      // 저장 시간
-      savedAt: new Date().toISOString()
-    };
-    const storageKey = getStorageKey();
-    localStorage.setItem(storageKey, JSON.stringify(state));
-  } catch (e) {
-    console.warn('localStorage 저장 실패:', e);
-  }
-}
-
-// localStorage에서 상태를 복원하는 함수
-function restoreStateFromLocalStorage() {
-  try {
-    const currentUserId = localStorage.getItem("vss_user_id");
-    if (!currentUserId) {
-      return false;
-    }
-
-    const storageKey = getStorageKey();
-    const saved = localStorage.getItem(storageKey);
-    if (!saved) return false;
-
-    const state = JSON.parse(saved);
-    
-    // 저장된 사용자 ID와 현재 사용자 ID 비교
-    if (state.userId && state.userId !== currentUserId) {
-      // 다른 사용자의 상태는 삭제하지 않고 그대로 두고, 복원만 하지 않음
-      return false;
-    }
-    
-    // 프롬프트 및 요약 결과 복원
-    if (state.prompt) prompt.value = state.prompt;
-    if (state.response) response.value = state.response;
-    
-    // 채팅 메시지 복원
-    if (Array.isArray(state.chatMessages)) {
-      chatMessages.value = state.chatMessages;
-      nextTick(() => scrollChatToBottom());
-    }
-    
-    // 질문 입력 복원
-    if (state.ask_prompt) ask_prompt.value = state.ask_prompt;
-    
-    // 요약된 비디오 ID 매핑 복원
-    if (state.summarizedVideoId) summarizedVideoId.value = state.summarizedVideoId;
-    if (state.summarizedVideoMap) summarizedVideoMap.value = state.summarizedVideoMap;
-    
-    // 선택된 동영상 ID 복원
-    if (Array.isArray(state.selectedIndexes)) {
-      selectedIndexes.value = state.selectedIndexes;
-    }
-    
-    // 확대 상태 복원
-    if (typeof state.isZoomed === 'boolean') isZoomed.value = state.isZoomed;
-    if (state.zoomedIndex !== null && state.zoomedIndex !== undefined) {
-      zoomedIndex.value = state.zoomedIndex;
-    }
-    
-    // 스트리밍 상태 복원
-    if (typeof state.streaming === 'boolean') streaming.value = state.streaming;
-    
-    // 실행 중인 작업 복원
-    if (Array.isArray(state.activeTasks) && state.activeTasks.length > 0) {
-      // 복원된 작업을 activeTasks에 추가하고 계속 실행
-      nextTick(async () => {
-        for (const savedTask of state.activeTasks) {
-          if (savedTask.type === 'inference') {
-            // runInference 작업 복원
-            await restoreAndContinueInference(savedTask);
-          } else if (savedTask.type === 'ask') {
-            // onAsk 작업 복원
-            await restoreAndContinueAsk(savedTask);
-          }
-        }
-      });
-    }
-    
-    // 동영상 정보 복원 (summaryVideoStore에서 File 객체를 가져와야 함)
-    if (Array.isArray(state.videoFiles) && state.videoFiles.length > 0) {
-      // 현재 사용자의 동영상만 필터링 (비동기이므로 여기서는 일단 복원하고, onMounted에서 필터링)
-      // summaryVideoStore의 videos와 병합하여 복원
-      const restoredVideos = state.videoFiles.map(savedVideo => {
-        // summaryVideoStore에서 해당 ID의 동영상 찾기
-        const storeVideo = summaryVideoStore.videos.find(v => v.id === savedVideo.id);
-        const hasFile = storeVideo && storeVideo.file instanceof File;
-        let summaryObjectUrl = null;
-        // displayUrl 우선순위: summaryObjectUrl > savedVideo.originUrl > storeVideo.displayUrl > storeVideo.originUrl > storeVideo.url
-        let displayUrl = savedVideo.originUrl || (storeVideo ? (storeVideo.displayUrl || storeVideo.originUrl || storeVideo.url) : '');
-        
-        if (hasFile) {
-          // File 객체가 있으면 새로운 ObjectURL 생성
-          summaryObjectUrl = URL.createObjectURL(storeVideo.file);
-          displayUrl = summaryObjectUrl;
-        } else if (savedVideo.originUrl) {
-          // File 객체가 없으면 원본 URL 사용 (나중에 restoreMissingFile로 복원 시도)
-          displayUrl = savedVideo.originUrl;
-        } else if (storeVideo) {
-          // storeVideo의 displayUrl 또는 originUrl 사용
-          displayUrl = storeVideo.displayUrl || storeVideo.originUrl || storeVideo.url || '';
-        }
-        
-        const originUrl = savedVideo.originUrl || (storeVideo ? (storeVideo.originUrl || storeVideo.url || displayUrl) : displayUrl);
-        
-        return {
-          id: savedVideo.id,
-          name: savedVideo.name,
-          originUrl,
-          displayUrl,
-          summaryObjectUrl,
-          date: savedVideo.date || (storeVideo ? storeVideo.date : ''),
-          summary: savedVideo.summary || (storeVideo ? storeVideo.summary : ''),
-          file: hasFile ? storeVideo.file : null
-        };
-      });
-      
-      videoFiles.value = restoredVideos;
-      
-      // File 객체가 없는 동영상은 URL에서 복원 시도
-      nextTick(() => {
-        restoreAllMissingFiles().then(() => {
-          // 복원 후 ObjectURL 재생성
-          videoFiles.value.forEach(video => {
-            if (video.file instanceof File && !video.summaryObjectUrl) {
-              video.summaryObjectUrl = URL.createObjectURL(video.file);
-              video.displayUrl = video.summaryObjectUrl;
-            }
-          });
-          
-          // 복원된 동영상이 있으면 추천 chunk_size 계산
-          setTimeout(() => {
-            videoFiles.value.forEach(video => {
-              updateRecommendedChunkSize(video.id);
-            });
-          }, 1000);
-        });
-      });
-    }
-    
-    return true;
-  } catch (e) {
-    console.warn('localStorage 복원 실패:', e);
-    return false;
-  }
-}
-
-/**
- * 상태 변경 감지하여 자동 저장 (debounce 적용)
- */
-let saveTimeout = null;
-function autoSaveState() {
-  if (saveTimeout) clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(() => {
-    saveStateToLocalStorage();
-  }, AUTO_SAVE_DELAY);
-}
+// localStorage 상태 저장/복원 및 작업 자동 재개 관련 함수 완전 제거
 
 // 이미지/동영상 업로드 감지 및 프롬프트 자동 변경
 watch(videoFiles, (newFiles, oldFiles) => {
@@ -2034,33 +1632,7 @@ watch(videoFiles, (newFiles, oldFiles) => {
   }
 }, { deep: true });
 
-// 주요 상태 변경 감지
-watch([prompt, response, chatMessages, ask_prompt, selectedIndexes, videoFiles, activeTasks], () => {
-  autoSaveState();
-}, { deep: true });
-
-// Summarize 페이지에서 벗어날 때 상태 저장
-onUnmounted(() => {
-  document.removeEventListener('click', handleGlobalClick);
-  window.removeEventListener('profile-menu-opened', closeContextMenu);
-  
-  // 페이지를 벗어나기 전에 상태 저장
-  saveStateToLocalStorage();
-  
-  // 진행 중인 작업은 전역 관리자에 등록되어 있으므로 계속 실행됨
-  // 타이머는 유지하지 않음 (페이지 전환 시 UI 업데이트가 불가능하므로)
-  // 하지만 fetch 요청은 계속 진행되며, 완료 시 결과가 전역 저장소에 저장됨
-  
-  // Summarize에서 만든 전용 ObjectURL만 해제 (원본은 유지)
-  videoFiles.value.forEach(v => {
-    if (v.summaryObjectUrl) {
-      try { URL.revokeObjectURL(v.summaryObjectUrl); } catch (_) { }
-    }
-  });
-  
-  // summaryVideoStore는 유지 (다른 페이지에서도 사용 가능)
-  // clearVideos() 호출 제거 - 상태 유지를 위해
-});
+// 상태 변경 감지 자동 저장, onUnmounted 상태 저장 로직 완전 제거
 
 // watch 제거: 매 변경마다 새 ObjectURL 생성되어 누수 가능성 감소
 
@@ -2579,70 +2151,7 @@ async function onUpload(e) {
   }
 }
 
-// 실행 중인 Ask 작업 복원 및 계속 진행
-async function restoreAndContinueAsk(savedTask) {
-  const taskId = savedTask.taskId;
-  const query = savedTask.query || savedTask.prompt;
-  
-  if (!query) {
-    console.warn('복원할 질문을 찾을 수 없습니다.');
-    return;
-  }
-  
-  // 작업 상태 업데이트
-  const taskIndex = activeTasks.value.findIndex(t => t.taskId === taskId);
-  if (taskIndex === -1) {
-    activeTasks.value.push({
-      taskId,
-      type: 'ask',
-      startTime: savedTask.startTime || Date.now(),
-      query: query
-    });
-  }
-  
-  // 질문 계속 진행
-  await onAskConfirmed(query);
-  
-  // 작업 완료
-  const finalTaskIndex = activeTasks.value.findIndex(t => t.taskId === taskId);
-  if (finalTaskIndex !== -1) {
-    activeTasks.value.splice(finalTaskIndex, 1);
-  }
-}
 
-// 실행 중인 작업 복원 및 계속 진행
-async function restoreAndContinueInference(savedTask) {
-  const taskId = savedTask.taskId;
-  const currentIndex = savedTask.currentIndex || 0;
-  const totalCount = savedTask.totalCount;
-  const videoIds = savedTask.videoIds || [];
-  
-  // 동영상 객체 복원
-  const targetVideos = videoIds.map(id => videoFiles.value.find(v => v.id === id)).filter(Boolean);
-  
-  if (targetVideos.length === 0) {
-    console.warn('복원할 동영상을 찾을 수 없습니다.');
-    return;
-  }
-  
-  // 작업 상태 업데이트
-  const taskIndex = activeTasks.value.findIndex(t => t.taskId === taskId);
-  if (taskIndex === -1) {
-    activeTasks.value.push({
-      taskId,
-      type: 'inference',
-      startTime: savedTask.startTime,
-      currentIndex,
-      totalCount,
-      videoIds,
-      loadingIds: [],
-      prompt: savedTask.prompt
-    });
-  }
-  
-  // 중단된 지점부터 계속 실행
-  await continueInferenceFromIndex(taskId, targetVideos, currentIndex, totalCount, savedTask.prompt);
-}
 
 /**
  * 특정 인덱스부터 요약 계속 진행 (백그라운드에서 계속 실행)
@@ -2867,6 +2376,8 @@ async function processImageGroup(imageGroup, startIdx, totalCount, taskId, taskP
 }
 
 async function continueInferenceFromIndex(taskId, targetVideos, startIndex, totalCount, taskPrompt) {
+    // 이미 실패한 비디오 ID를 추적하여 중복 요청 방지
+    const failedVideoIds = new Set();
   const VSS_API_URL = `${API_BASE_URL}/vss-summarize`;
   
   // 전역 작업 관리자에 등록 (페이지 전환 후에도 계속 실행되도록)
@@ -2916,33 +2427,47 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
   let idx = startIndex;
   while (idx < targetVideos.length) {
     const currentVideo = targetVideos[idx];
-    
+    // 이미 실패한 비디오라면 건너뜀
+    if (failedVideoIds.has(currentVideo.id)) {
+      idx++;
+      continue;
+    }
+
     // 현재 파일이 이미지인지 확인
     const isCurrentImage = isImageFile(currentVideo);
-    
+
     // 이미지인 경우: 연속된 이미지들을 그룹화
     if (isCurrentImage) {
       const imageGroup = [];
       let groupIdx = idx;
-      
+
       // 연속된 이미지들을 수집
       while (groupIdx < targetVideos.length && isImageFile(targetVideos[groupIdx])) {
-        imageGroup.push(targetVideos[groupIdx]);
+        // 실패한 비디오는 그룹에서 제외
+        if (!failedVideoIds.has(targetVideos[groupIdx].id)) {
+          imageGroup.push(targetVideos[groupIdx]);
+        }
         groupIdx++;
       }
-      
+
       // 이미지 그룹을 한 번에 처리
       if (imageGroup.length > 0) {
         const currentTask = activeTasks.value.find(t => t.taskId === taskId);
         await processImageGroup(imageGroup, idx, totalCount, taskId, taskPrompt, currentTask, taskInfo, updateTaskState);
+        // 그룹 내 실패한 비디오도 failedVideoIds에 추가
+        for (const img of imageGroup) {
+          if (taskInfo.failedVideos.some(f => f.videoId === img.id)) {
+            failedVideoIds.add(img.id);
+          }
+        }
         idx = groupIdx; // 다음 비이미지 파일로 이동
         continue;
       }
     }
-    
+
     // 비이미지 파일 또는 단일 이미지 처리 (기존 로직)
     const videoObj = currentVideo;
-    
+
     // 작업 상태 업데이트 (로컬 및 전역)
     const currentTask = activeTasks.value.find(t => t.taskId === taskId);
     if (currentTask) {
@@ -2952,7 +2477,7 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
       taskInfo.currentIndex = idx;
       updateTaskState();
     }
-    
+
     // File 복원 시도
     if (videoObj && !(videoObj.file instanceof File)) {
       await restoreMissingFile(videoObj);
@@ -2963,6 +2488,8 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
         role: 'system',
         content: `❌ '${videoObj?.name || 'Unnamed'}' 파일 객체를 확보하지 못했습니다. 건너뜁니다.`
       });
+      failedVideoIds.add(videoObj?.id);
+      idx++;
       continue;
     }
 
@@ -3098,7 +2625,7 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
       if (!res.ok) {
         let errText = await res.text();
         const errHtml = `❌ [${idx + 1}/${totalCount}] '${videoObj.name}' 실패 (HTTP ${res.status})<br><code>${errText}</code><br><div class='text-xs text-gray-500'>시간: ${elapsed}s`;
-        
+
         // 실패한 작업 정보 저장
         if (taskInfo) {
           taskInfo.failedVideos.push({
@@ -3108,7 +2635,9 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
           });
           updateTaskState();
         }
-        
+        // 실패한 비디오 ID 기록 (재시도 방지)
+        failedVideoIds.add(videoObj.id);
+
         // UI 업데이트 (컴포넌트가 활성화된 경우에만)
         if (document.visibilityState === 'visible') {
           const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
@@ -3116,6 +2645,7 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
           addChatMessage({ id: Date.now() + Math.random(), role: 'system', content: errHtml });
         }
         console.error('Summarization error response:', errText);
+        idx++;
         continue;
       }
       const data = await res.json();
@@ -3166,7 +2696,7 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
       if (document.visibilityState === 'visible') {
         const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
         if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
-        addChatMessage({ id: Date.now() + Math.random(), role: 'assistant', content: summaryHtml });
+        addChatMessage({ id: Date.now() + Math.random(), role: 'assistant', content: summaryHtml, time: new Date().toISOString(), videoId: videoObj.id });
       }
       
       // 더 이상 프론트엔드에서 별도로 DB 저장을 호출하지 않음
@@ -3200,7 +2730,8 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
         });
         updateTaskState();
       }
-      
+      // 실패한 비디오 ID 기록 (재시도 방지)
+      failedVideoIds.add(videoObj.id);
       // UI 업데이트 (컴포넌트가 활성화된 경우에만)
       if (document.visibilityState === 'visible') {
         const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
@@ -3208,6 +2739,8 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
         addChatMessage({ id: Date.now() + Math.random(), role: 'system', content: errHtml });
       }
       console.error('Summarization request failed:', e);
+      idx++;
+      continue;
     }
     
     // 로딩 ID 제거

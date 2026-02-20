@@ -234,13 +234,13 @@ const translations = {
   ko: {
     helpCenter: "Help Center",
     title: "사용자 가이드",
-    subtitle: "Vix VSS의 모든 기능을 쉽게 배워보세요",
+    subtitle: "VIXScope의 모든 기능을 쉽게 배워보세요",
     tableOfContents: "목차",
     gettingStarted: {
       title: "시작하기",
       step1: {
         title: "1. 계정 생성",
-        description: "Vix VSS를 사용하기 위해 먼저 계정을 생성해야 합니다.",
+        description: "VIXScope를 사용하기 위해 먼저 계정을 생성해야 합니다.",
         item1: "회원가입 페이지에서 이메일 주소를 입력하세요",
         item2: "이메일로 전송된 인증 코드를 입력하세요",
         item3: "사용자 ID와 비밀번호를 설정하세요"
@@ -386,13 +386,13 @@ const translations = {
   en: {
     helpCenter: "Help Center",
     title: "User Guide",
-    subtitle: "Learn all features of Vix VSS easily",
+    subtitle: "Learn all features of VIXScope easily",
     tableOfContents: "Table of Contents",
     gettingStarted: {
       title: "Getting Started",
       step1: {
         title: "1. Create Account",
-        description: "To use Vix VSS, you need to create an account first.",
+        description: "To use VIXScope, you need to create an account first.",
         item1: "Enter your email address on the registration page",
         item2: "Enter the verification code sent to your email",
         item3: "Set your user ID and password"

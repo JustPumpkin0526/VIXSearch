@@ -5,7 +5,7 @@ import shutil
 import tempfile
 from typing import Optional, List
 import json
-from fastapi import APIRouter, HTTPException, Form, UploadFile
+from fastapi import APIRouter, HTTPException, Form, UploadFile, Query
 from services.video_service import _save_summary_to_db
 from pydantic import BaseModel
 
@@ -15,7 +15,8 @@ from utils.helpers import (
     build_summarize_params,
     check_video_type
 )
-from database.connection import cursor, conn, ensure_db_connection, verify_user_exists
+from database.connection import get_db_connection
+from exceptions import NotFoundException, DatabaseException, ValidationException
 
 logger = logging.getLogger(__name__)
 
@@ -186,8 +187,12 @@ async def vss_summarize(
         raise
     except Exception as e:
         # 기타 예외 처리
-        logger.error(f"vss_summarize 실행 중 오류: {e}")
+        logger.error(f"vss_summarize 실행 중 오류: {e}", exc_info=True)
         error_msg = str(e)
+        
+        # 빈 에러 메시지 처리
+        if not error_msg or error_msg.strip() == "":
+            error_msg = "알 수 없는 오류가 발생했습니다"
         
         if "gst-stream-error" in error_msg or "qtdemux" in error_msg or "not-negotiated" in error_msg:
             raise HTTPException(
@@ -299,30 +304,36 @@ async def vss_summarize_multi(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"vss_summarize_multi 실행 중 오류: {e}")
-        error_msg = str(e)
+        logger.error(f"vss_summarize_multi 실행 중 오류: {e}", exc_info=True)
+        error_msg = str(e) if str(e) else "알 수 없는 오류가 발생했습니다"
         raise HTTPException(status_code=500, detail=f"멀티 이미지 요약 생성 중 오류가 발생했습니다: {error_msg}")
 
 
 @router.get("/summaries/{video_id}")
-def get_summary(video_id: str, user_id: str):
+def get_summary(
+    video_id: str,
+    user_id: str = Query(...)
+):
     """특정 동영상의 요약 결과 조회 (VIA 서버 video_id 기준)"""
     try:
-        verify_user_exists(user_id)
-        ensure_db_connection()
-
-        cursor.execute(
-            """SELECT ID, VIDEO_ID, USER_ID, PROMPT, SUMMARY_TEXT, CREATED_AT, UPDATED_AT
-               FROM vss_summaries
-               WHERE VIDEO_ID = ? AND USER_ID = ?""",
-            (video_id, user_id)
-        )
-        row = cursor.fetchone()
-        if not row:
-            return {
-                "success": False,
-                "message": "요약 결과가 없습니다."
-            }
+        # 사용자 존재 확인
+        with get_db_connection() as cursor:
+            cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
+            if not cursor.fetchone():
+                raise NotFoundException("사용자", user_id)
+        with get_db_connection() as cursor:
+            cursor.execute(
+                """SELECT ID, VIDEO_ID, USER_ID, PROMPT, SUMMARY_TEXT, CREATED_AT, UPDATED_AT
+                   FROM vss_summaries
+                   WHERE VIDEO_ID = ? AND USER_ID = ?""",
+                (video_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {
+                    "success": False,
+                    "message": "요약 결과가 없습니다."
+                }
 
         return {
             "success": True,
@@ -336,28 +347,31 @@ def get_summary(video_id: str, user_id: str):
                 "updated_at": _format_datetime(row[6])
             }
         }
-    except HTTPException:
+    except NotFoundException:
         raise
     except Exception as e:
         logger.error(f"요약 결과 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"요약 결과 조회 중 오류가 발생했습니다: {str(e)}")
+        raise DatabaseException(f"요약 결과 조회 중 오류가 발생했습니다: {str(e)}")
 
 
 @router.get("/summaries")
-def get_summaries(user_id: str):
+def get_summaries(user_id: str = Query(...)):
     """사용자 요약 결과 목록 조회"""
     try:
-        verify_user_exists(user_id)
-        ensure_db_connection()
-
-        cursor.execute(
-            """SELECT ID, VIDEO_ID, USER_ID, PROMPT, SUMMARY_TEXT, CREATED_AT, UPDATED_AT
-               FROM vss_summaries
-               WHERE USER_ID = ?
-               ORDER BY UPDATED_AT DESC""",
-            (user_id,)
-        )
-        rows = cursor.fetchall()
+        # 사용자 존재 확인
+        with get_db_connection() as cursor:
+            cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
+            if not cursor.fetchone():
+                raise NotFoundException("사용자", user_id)
+        with get_db_connection() as cursor:
+            cursor.execute(
+                """SELECT ID, VIDEO_ID, USER_ID, PROMPT, SUMMARY_TEXT, CREATED_AT, UPDATED_AT
+                   FROM vss_summaries
+                   WHERE USER_ID = ?
+                   ORDER BY UPDATED_AT DESC""",
+                (user_id,)
+            )
+            rows = cursor.fetchall()
 
         summaries = [
             {
@@ -376,11 +390,11 @@ def get_summaries(user_id: str):
             "success": True,
             "summaries": summaries
         }
-    except HTTPException:
+    except NotFoundException:
         raise
     except Exception as e:
         logger.error(f"요약 목록 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"요약 목록 조회 중 오류가 발생했습니다: {str(e)}")
+        raise DatabaseException(f"요약 목록 조회 중 오류가 발생했습니다: {str(e)}")
 
 @router.delete("/summaries")
 async def delete_summaries(request: DeleteSummaryRequest):
@@ -390,47 +404,45 @@ async def delete_summaries(request: DeleteSummaryRequest):
     vss_videos 테이블의 내부 ID 목록을 받아서 해당 동영상들의 요약 결과를 삭제합니다.
     """
     try:
-        verify_user_exists(request.user_id)
-        ensure_db_connection()
-        
         if not request.video_ids or len(request.video_ids) == 0:
-            raise HTTPException(status_code=400, detail="video_ids는 비어있지 않은 배열이어야 합니다.")
+            raise ValidationException("video_ids는 비어있지 않은 배열이어야 합니다.")
         
-        # vss_videos 테이블에서 해당 동영상들의 VIDEO_ID (VIA 서버의 video_id) 조회
-        placeholders = ','.join(['?' for _ in request.video_ids])
-        cursor.execute(
-            f"""SELECT VIDEO_ID FROM vss_videos 
-               WHERE ID IN ({placeholders}) AND USER_ID = ?""",
-            request.video_ids + [request.user_id]
-        )
-        rows = cursor.fetchall()
-        
-        if not rows:
-            return {
-                "success": True,
-                "message": "삭제할 요약 결과가 없습니다.",
-                "deleted_count": 0
-            }
-        
-        # VIDEO_ID 목록 추출 (None 제외)
-        video_ids = [row[0] for row in rows if row[0] is not None]
-        
-        if not video_ids:
-            return {
-                "success": True,
-                "message": "삭제할 요약 결과가 없습니다.",
-                "deleted_count": 0
-            }
-        
-        # vss_summaries 테이블에서 해당 VIDEO_ID와 USER_ID로 요약 결과 삭제
-        video_placeholders = ','.join(['?' for _ in video_ids])
-        cursor.execute(
-            f"""DELETE FROM vss_summaries 
-               WHERE VIDEO_ID IN ({video_placeholders}) AND USER_ID = ?""",
-            video_ids + [request.user_id]
-        )
-        deleted_count = cursor.rowcount
-        conn.commit()
+        with get_db_connection() as cursor:
+            # vss_videos 테이블에서 해당 동영상들의 VIDEO_ID (VIA 서버의 video_id) 조회
+            placeholders = ','.join(['?' for _ in request.video_ids])
+            cursor.execute(
+                f"""SELECT VIDEO_ID FROM vss_videos 
+                   WHERE ID IN ({placeholders}) AND USER_ID = ?""",
+                request.video_ids + [request.user_id]
+            )
+            rows = cursor.fetchall()
+            
+            if not rows:
+                return {
+                    "success": True,
+                    "message": "삭제할 요약 결과가 없습니다.",
+                    "deleted_count": 0
+                }
+            
+            # VIDEO_ID 목록 추출 (None 제외)
+            video_ids = [row[0] for row in rows if row[0] is not None]
+            
+            if not video_ids:
+                return {
+                    "success": True,
+                    "message": "삭제할 요약 결과가 없습니다.",
+                    "deleted_count": 0
+                }
+            
+            # vss_summaries 테이블에서 해당 VIDEO_ID와 USER_ID로 요약 결과 삭제
+            video_placeholders = ','.join(['?' for _ in video_ids])
+            cursor.execute(
+                f"""DELETE FROM vss_summaries 
+                   WHERE VIDEO_ID IN ({video_placeholders}) AND USER_ID = ?""",
+                video_ids + [request.user_id]
+            )
+            deleted_count = cursor.rowcount
+            # autocommit이 활성화되어 있으므로 명시적 커밋 불필요
         
         logger.info(f"요약 결과 삭제 완료: USER_ID={request.user_id}, 삭제된 요약 수={deleted_count}")
         
@@ -439,8 +451,8 @@ async def delete_summaries(request: DeleteSummaryRequest):
             "message": f"{deleted_count}개의 요약 결과가 삭제되었습니다.",
             "deleted_count": deleted_count
         }
-    except HTTPException:
+    except (ValidationException, NotFoundException):
         raise
     except Exception as e:
         logger.error(f"요약 결과 삭제 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"요약 결과 삭제 중 오류가 발생했습니다: {str(e)}")
+        raise DatabaseException(f"요약 결과 삭제 중 오류가 발생했습니다: {str(e)}")

@@ -17,26 +17,29 @@ except ImportError:
     pass  # python-dotenv가 없으면 시스템 환경 변수 사용
 
 # ==================== API 설정 ====================
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8001")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://172.16.7.64:8001")
 
 # ==================== VIA 서버 설정 ====================
-VIA_SERVER_URL = "http://172.16.7.64:8101"
-VIA_MODEL_TIMEOUT = 10  # VIA 모델 조회 타임아웃 (초)
-VIA_UPLOAD_TIMEOUT_MIN = 60  # 최소 업로드 타임아웃 (초)
-VIA_UPLOAD_TIMEOUT_MAX = 600  # 최대 업로드 타임아웃 (초)
-VIA_UPLOAD_TIMEOUT_PER_MB = 10  # 1MB당 타임아웃 (초)
+VIA_SERVER_URL = os.getenv("VIA_SERVER_URL", "http://172.16.7.64:8101")
+VIA_MODEL_TIMEOUT = int(os.getenv("VIA_MODEL_TIMEOUT", "10"))  # VIA 모델 조회 타임아웃 (초)
+VIA_UPLOAD_TIMEOUT_MIN = 300  # 최소 업로드 타임아웃 (초, 5분)
+VIA_UPLOAD_TIMEOUT_MAX = 1800  # 최대 업로드 타임아웃 (초, 30분)
+VIA_UPLOAD_TIMEOUT_PER_MB = 15  # 1MB당 타임아웃 (초, 기존 10초에서 증가)
 
 # ==================== Ollama 설정 ====================
 # 같은 서버에서 실행 중이면 localhost 사용, 다른 서버면 해당 IP 주소 사용
 # 기본 포트는 11434입니다 (Ollama 기본 포트)
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-print("OLLAMA_BASE_URL:", OLLAMA_BASE_URL)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://172.16.7.64:11434")
+# 로깅으로 변경 (print 대신)
+import logging
+_logger = logging.getLogger(__name__)
+_logger.info(f"OLLAMA_BASE_URL: {OLLAMA_BASE_URL}")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
 OLLAMA_TRANSLATION_MODEL = os.getenv("OLLAMA_TRANSLATION_MODEL", "hy-mt15-translation")  # 번역 전용 모델
 OLLAMA_TIMEOUT = 60  # Ollama API 타임아웃 (초)
 
 # ==================== CV Event Detector API 설정 ====================
-CV_EVENT_DETECTOR_API_URL = os.getenv("CV_EVENT_DETECTOR_API_URL", "http://localhost:7862")
+CV_EVENT_DETECTOR_API_URL = os.getenv("CV_EVENT_DETECTOR_API_URL", "http://172.16.7.64:7862")
 
 # ==================== 파일 설정 ====================
 ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'}
@@ -93,7 +96,7 @@ DEFAULT_QUERY_TOP_P = 1.0
 DEFAULT_QUERY_TOP_K = 80
 
 # ==================== 데이터베이스 설정 ====================
-DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_HOST = os.getenv("DB_HOST", "172.16.15.69")
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")  # 환경 변수에서 로드 (필수)
 DB_PORT = int(os.getenv("DB_PORT", "3306"))

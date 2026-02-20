@@ -48,7 +48,7 @@
                 :disabled="isLoading"
                 class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed"
                 placeholder="사용할 ID를 입력하세요"
-                @input="clearError"
+                @input="clearMessages"
               />
             </div>
             <p v-if="id && !isValidId" class="mt-1 text-xs text-red-600">ID는 3자 이상이어야 합니다.</p>
@@ -74,7 +74,7 @@
                 :disabled="isLoading"
                 class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed"
                 placeholder="비밀번호를 입력하세요 (8자 이상)"
-                @input="clearError"
+                @input="clearMessages"
               />
             </div>
             <div class="mt-1 space-y-1">
@@ -109,7 +109,7 @@
                 class="block w-full pl-10 pr-3 py-3 border rounded-lg focus:ring-2 transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed"
                 :class="confirmPw && pw !== confirmPw ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-indigo-500 focus:border-indigo-500'"
                 placeholder="비밀번호를 다시 입력하세요"
-                @input="clearError"
+                @input="clearMessages"
               />
             </div>
             <p v-if="confirmPw && pw !== confirmPw" class="mt-1 text-xs text-red-600">비밀번호가 일치하지 않습니다.</p>
@@ -136,7 +136,7 @@
                   :disabled="isLoading || isEmailVerified"
                   class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed"
                   placeholder="이메일을 입력하세요"
-                  @input="clearError"
+                  @input="clearMessages"
                 />
               </div>
               <button
@@ -180,7 +180,7 @@
                   :disabled="isLoading || isVerifyingCode"
                   class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed text-center text-lg tracking-widest"
                   placeholder="000000"
-                  @input="clearError"
+                  @input="clearMessages"
                 />
               </div>
               <button
@@ -227,13 +227,13 @@
 <script setup>
 import { ref, computed } from "vue";
 import { useRouter } from "vue-router";
-import axios from "axios";
-import { getApiBaseUrl } from '@/utils/apiConfig';
-
-// API 설정
-const API_BASE_URL = getApiBaseUrl();
+import { useErrorHandler } from "@/composables/useErrorHandler";
+import { usePost } from "@/composables/useApi";
+import { validateEmail, validatePasswordStrength } from "@/composables/useFormValidation";
 
 const router = useRouter();
+const { errorMessage, successMessage, clearMessages, handleError, showSuccess } = useErrorHandler();
+
 const id = ref("");
 const pw = ref("");
 const confirmPw = ref("");
@@ -244,36 +244,32 @@ const isSendingCode = ref(false);
 const isVerifyingCode = ref(false);
 const codeSent = ref(false);
 const isEmailVerified = ref(false);
-const errorMessage = ref("");
-const successMessage = ref("");
 
+// 폼 검증
 const isValidId = computed(() => id.value.length >= 3);
 const isValidPassword = computed(() => pw.value.length >= 8);
 const isValidEmail = computed(() => {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return email.value === "" || emailRegex.test(email.value);
+  return email.value === "" || validateEmail(email.value);
 });
 
+const passwordStrengthInfo = computed(() => validatePasswordStrength(pw.value));
 const passwordStrength = computed(() => {
   if (!pw.value) return 0;
-  let strength = 0;
-  if (pw.value.length >= 8) strength += 25;
-  if (pw.value.length >= 12) strength += 25;
-  if (/[a-z]/.test(pw.value) && /[A-Z]/.test(pw.value)) strength += 25;
-  if (/\d/.test(pw.value)) strength += 12.5;
-  if (/[^a-zA-Z\d]/.test(pw.value)) strength += 12.5;
-  return Math.min(strength, 100);
+  const { score } = passwordStrengthInfo.value;
+  return Math.min((score / 5) * 100, 100);
 });
 
 const passwordStrengthClass = computed(() => {
-  if (passwordStrength.value < 50) return "bg-red-500";
-  if (passwordStrength.value < 75) return "bg-yellow-500";
+  const { strength } = passwordStrengthInfo.value;
+  if (strength === 'weak') return "bg-red-500";
+  if (strength === 'medium') return "bg-yellow-500";
   return "bg-green-500";
 });
 
 const passwordStrengthText = computed(() => {
-  if (passwordStrength.value < 50) return "약함";
-  if (passwordStrength.value < 75) return "보통";
+  const { strength } = passwordStrengthInfo.value;
+  if (strength === 'weak') return "약함";
+  if (strength === 'medium') return "보통";
   return "강함";
 });
 
@@ -287,47 +283,56 @@ const isFormValid = computed(() => {
          email.value.trim() !== "";
 });
 
-function clearError() {
-  errorMessage.value = "";
-  successMessage.value = "";
-}
+// API 호출
+const { execute: sendCode, loading: sendingCode } = usePost('/send-verification-code', {
+  onSuccess: (data) => {
+    showSuccess(data?.message || "인증 코드가 이메일로 전송되었습니다.");
+    codeSent.value = true;
+    verificationCode.value = "";
+  },
+  onError: handleError,
+});
+
+const { execute: verifyCode, loading: verifyingCode } = usePost('/verify-email-code', {
+  onSuccess: (data) => {
+    showSuccess(data?.message || "이메일 인증이 완료되었습니다.");
+    isEmailVerified.value = true;
+  },
+  onError: handleError,
+});
+
+const { execute: registerUser, loading: registering } = usePost('/register', {
+  onSuccess: (data) => {
+    showSuccess(data?.message || "회원가입이 완료되었습니다!");
+    
+    // 성공 메시지 표시 후 폼 초기화 및 로그인 페이지로 이동
+    setTimeout(() => {
+      id.value = "";
+      pw.value = "";
+      confirmPw.value = "";
+      email.value = "";
+      verificationCode.value = "";
+      codeSent.value = false;
+      isEmailVerified.value = false;
+      router.push("/login");
+    }, 1500);
+  },
+  onError: handleError,
+});
 
 async function sendVerificationCode() {
   if (!isValidEmail.value) {
-    errorMessage.value = "올바른 이메일 형식을 입력해주세요.";
+    handleError(new Error("올바른 이메일 형식을 입력해주세요."));
     return;
   }
 
-  isSendingCode.value = true;
-  errorMessage.value = "";
-  successMessage.value = "";
-
+  clearMessages();
+  isSendingCode.value = sendingCode.value;
+  
   try {
-    const res = await axios.post(`${API_BASE_URL}/send-verification-code`, {
-      email: email.value.trim()
-    });
-    
-    if (res.data && res.data.success) {
-      successMessage.value = res.data.message || "인증 코드가 이메일로 전송되었습니다.";
-      codeSent.value = true;
-      verificationCode.value = "";
-    } else {
-      errorMessage.value = res.data?.message || "인증 코드 전송에 실패했습니다.";
-    }
+    await sendCode({ email: email.value.trim() });
   } catch (err) {
-    if (err.response && err.response.data) {
-      if (err.response.data.detail) {
-        errorMessage.value = err.response.data.detail;
-      } else if (err.response.data.message) {
-        errorMessage.value = err.response.data.message;
-      } else {
-        errorMessage.value = "인증 코드 전송 중 오류가 발생했습니다.";
-      }
-    } else if (err.request) {
-      errorMessage.value = "서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.";
-    } else {
-      errorMessage.value = "인증 코드 전송 중 오류가 발생했습니다.";
-    }
+    // 에러는 usePost의 onError에서 처리됨
   } finally {
     isSendingCode.value = false;
   }
@@ -335,40 +340,20 @@ async function sendVerificationCode() {
 
 async function verifyEmailCode() {
   if (!verificationCode.value || verificationCode.value.length !== 6) {
-    errorMessage.value = "6자리 인증 코드를 입력해주세요.";
+    handleError(new Error("6자리 인증 코드를 입력해주세요."));
     return;
   }
 
-  isVerifyingCode.value = true;
-  errorMessage.value = "";
-  successMessage.value = "";
-
+  clearMessages();
+  isVerifyingCode.value = verifyingCode.value;
+  
   try {
-    const res = await axios.post(`${API_BASE_URL}/verify-email-code`, {
+    await verifyCode({
       email: email.value.trim(),
       code: verificationCode.value.trim()
     });
-    
-    if (res.data && res.data.success) {
-      successMessage.value = res.data.message || "이메일 인증이 완료되었습니다.";
-      isEmailVerified.value = true;
-    } else {
-      errorMessage.value = res.data?.message || "인증 코드가 일치하지 않습니다.";
-    }
   } catch (err) {
-    if (err.response && err.response.data) {
-      if (err.response.data.detail) {
-        errorMessage.value = err.response.data.detail;
-      } else if (err.response.data.message) {
-        errorMessage.value = err.response.data.message;
-      } else {
-        errorMessage.value = "인증 코드 확인 중 오류가 발생했습니다.";
-      }
-    } else if (err.request) {
-      errorMessage.value = "서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.";
-    } else {
-      errorMessage.value = "인증 코드 확인 중 오류가 발생했습니다.";
-    }
+    // 에러는 usePost의 onError에서 처리됨
   } finally {
     isVerifyingCode.value = false;
   }
@@ -376,54 +361,27 @@ async function verifyEmailCode() {
 
 async function register() {
   if (!isFormValid.value) {
-    errorMessage.value = "모든 필드를 올바르게 입력하고 이메일 인증을 완료해주세요.";
+    handleError(new Error("모든 필드를 올바르게 입력하고 이메일 인증을 완료해주세요."));
     return;
   }
 
   if (!isEmailVerified.value) {
-    errorMessage.value = "이메일 인증을 먼저 완료해주세요.";
+    handleError(new Error("이메일 인증을 먼저 완료해주세요."));
     return;
   }
 
-  isLoading.value = true;
-  errorMessage.value = "";
-  successMessage.value = "";
-
+  clearMessages();
+  isLoading.value = registering.value;
+  
   try {
-      const res = await axios.post(`${API_BASE_URL}/register`, {
+    await registerUser({
       username: id.value.trim(),
       password: pw.value,
       email: email.value.trim(),
       verification_code: verificationCode.value.trim()
     });
-    
-    successMessage.value = res.data?.message || "회원가입이 완료되었습니다!";
-    
-    // 성공 메시지 표시 후 폼 초기화 및 로그인 페이지로 이동
-    setTimeout(() => {
-    id.value = "";
-    pw.value = "";
-      confirmPw.value = "";
-    email.value = "";
-      verificationCode.value = "";
-      codeSent.value = false;
-      isEmailVerified.value = false;
-      router.push("/login");
-    }, 1500);
   } catch (err) {
-    if (err.response && err.response.data) {
-      if (err.response.data.detail) {
-        errorMessage.value = err.response.data.detail;
-      } else if (err.response.data.message) {
-        errorMessage.value = err.response.data.message;
-      } else {
-        errorMessage.value = "회원가입 중 오류가 발생했습니다.";
-      }
-    } else if (err.request) {
-      errorMessage.value = "서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.";
-    } else {
-      errorMessage.value = "회원가입 중 오류가 발생했습니다.";
-    }
+    // 에러는 usePost의 onError에서 처리됨
   } finally {
     isLoading.value = false;
   }

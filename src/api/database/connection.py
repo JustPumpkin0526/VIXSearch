@@ -5,9 +5,11 @@ import threading
 import logging
 from queue import Queue, Empty
 from fastapi import HTTPException
+from typing import Optional
 from config.settings import (
     DB_HOST, DB_USER, DB_PASSWORD, DB_PORT, DB_NAME, IP_PATTERN, DB_POOL_SIZE, DB_POOL_WARMUP
 )
+from exceptions import DatabaseException, NotFoundException
 
 logger = logging.getLogger(__name__)
 
@@ -131,13 +133,16 @@ db_pool = ConnectionPool(
     database=DB_NAME
 )
 
-# 하위 호환성을 위한 전역 연결 (점진적 마이그레이션용)
-# 모듈 레벨에서 연결을 시도하되, 실패해도 애플리케이션 시작은 계속 진행
-# 실제 사용 시점에 연결을 다시 시도하도록 함
+# ==================== 하위 호환성을 위한 전역 연결 (Deprecated) ====================
+# ⚠️ 경고: 전역 변수 conn, cursor는 동시성 문제를 일으킬 수 있습니다.
+# 새로운 코드에서는 get_db_connection() 컨텍스트 매니저를 사용하세요.
+# 이 변수들은 기존 코드와의 호환성을 위해 유지되지만, 사용을 권장하지 않습니다.
+
 conn = None
 cursor = None
 
 def _is_connection_alive(connection) -> bool:
+    """연결이 살아있는지 확인"""
     if connection is None:
         return False
     try:
@@ -148,9 +153,9 @@ def _is_connection_alive(connection) -> bool:
 
 try:
     conn = db_pool.get_connection()
-    conn.autocommit = True  # 자동 커밋 활성화
+    conn.autocommit = True
     cursor = conn.cursor()
-    logger.info("데이터베이스 연결 성공 (전역 연결)")
+    logger.info("데이터베이스 연결 성공 (전역 연결 - Deprecated)")
 except Exception as e:
     logger.warning(f"전역 데이터베이스 연결 실패 (시작 시점): {e}")
     logger.warning("첫 요청 시 연결을 다시 시도합니다.")
@@ -159,7 +164,12 @@ except Exception as e:
 
 
 def ensure_db_connection():
-    """전역 DB 연결이 없으면 다시 시도"""
+    """
+    전역 DB 연결이 없으면 다시 시도 (Deprecated)
+    
+    ⚠️ 경고: 이 함수는 하위 호환성을 위해 유지됩니다.
+    새로운 코드에서는 get_db_connection() 컨텍스트 매니저를 사용하세요.
+    """
     global conn, cursor
     if conn is None or cursor is None or not _is_connection_alive(conn):
         try:
@@ -174,19 +184,29 @@ def ensure_db_connection():
             logger.info("데이터베이스 연결 성공 (재연결)")
         except Exception as e:
             logger.error(f"데이터베이스 연결 실패: {e}")
-            raise HTTPException(status_code=500, detail=f"데이터베이스 연결에 실패했습니다: {str(e)}")
+            raise DatabaseException(f"데이터베이스 연결에 실패했습니다: {str(e)}")
 
 
 def verify_user_exists(user_id: str):
-    """사용자 존재 확인"""
+    """
+    사용자 존재 확인 (Deprecated)
+    
+    ⚠️ 경고: 이 함수는 하위 호환성을 위해 유지됩니다.
+    새로운 코드에서는 dependencies.verify_user_dependency를 사용하세요.
+    """
     with get_db_connection() as local_cursor:
         local_cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
         if not local_cursor.fetchone():
-            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+            raise NotFoundException("사용자", user_id)
 
 
 def validate_video_ownership(video_id: str, user_id: str, via_video_id: bool = False):
-    """동영상 소유권 확인"""
+    """
+    동영상 소유권 확인 (Deprecated)
+    
+    ⚠️ 경고: 이 함수는 하위 호환성을 위해 유지됩니다.
+    새로운 코드에서는 dependencies.verify_video_ownership을 사용하세요.
+    """
     with get_db_connection() as local_cursor:
         if via_video_id:
             local_cursor.execute(
@@ -199,7 +219,7 @@ def validate_video_ownership(video_id: str, user_id: str, via_video_id: bool = F
                 (video_id, user_id)
             )
         if not local_cursor.fetchone():
-            raise HTTPException(status_code=404, detail="동영상을 찾을 수 없거나 권한이 없습니다.")
+            raise NotFoundException("동영상", str(video_id))
 
 
 class DBConnectionContext:

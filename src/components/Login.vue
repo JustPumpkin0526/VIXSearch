@@ -115,69 +115,41 @@
 <script setup>
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import axios from "axios";
-import { getApiBaseUrl } from '@/utils/apiConfig';
+import { useAuth } from "@/composables/useAuth";
+import { useErrorHandler } from "@/composables/useErrorHandler";
 
 const router = useRouter();
+const { login: authLogin } = useAuth();
+const { errorMessage, successMessage, clearMessages, handleError, showSuccess } = useErrorHandler();
+
 const id = ref("");
 const pw = ref("");
 const isLoading = ref(false);
-const errorMessage = ref("");
-const successMessage = ref("");
-
-function clearError() {
-  errorMessage.value = "";
-  successMessage.value = "";
-}
 
 async function login() {
   if (!id.value.trim() || !pw.value.trim()) {
-    errorMessage.value = "ID와 비밀번호를 모두 입력해주세요.";
+    handleError(new Error("ID와 비밀번호를 모두 입력해주세요."));
     return;
   }
 
   isLoading.value = true;
-  errorMessage.value = "";
-  successMessage.value = "";
+  clearMessages();
 
   try {
-    const API_BASE_URL = getApiBaseUrl();
-    const res = await axios.post(`${API_BASE_URL}/login`, {
-      username: id.value.trim(),
-      password: pw.value
-    });
+    const result = await authLogin(id.value.trim(), pw.value);
     
-    if (res.data && res.data.success) {
-      successMessage.value = "로그인 성공!";
-      localStorage.setItem("vss_user_id", id.value.trim());
-      if (res.data.role) {
-        localStorage.setItem("vss_user_role", res.data.role);
-      } else {
-        localStorage.removeItem("vss_user_role");
-      }
-      window.dispatchEvent(new Event("vss-login"));
+    if (result?.success) {
+      showSuccess("로그인 성공!");
       
       // 성공 메시지 표시 후 페이지 이동
       setTimeout(() => {
-      router.push("/search");
+        router.push("/search");
       }, 500);
     } else {
-      errorMessage.value = res.data?.message || "가입되지 않았거나 비밀번호가 올바르지 않습니다.";
+      handleError(new Error(result?.message || "가입되지 않았거나 비밀번호가 올바르지 않습니다."));
     }
   } catch (err) {
-    if (err.response && err.response.data) {
-      if (err.response.data.detail) {
-        errorMessage.value = err.response.data.detail;
-      } else if (err.response.data.message) {
-        errorMessage.value = err.response.data.message;
-      } else {
-        errorMessage.value = "로그인 중 오류가 발생했습니다.";
-      }
-    } else if (err.request) {
-      errorMessage.value = "서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.";
-    } else {
-      errorMessage.value = "로그인 중 오류가 발생했습니다.";
-    }
+    handleError(err, "로그인 중 오류가 발생했습니다.");
   } finally {
     isLoading.value = false;
   }

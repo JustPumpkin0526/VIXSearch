@@ -271,6 +271,30 @@ npm run dev
 
 기본적으로 `http://localhost:3000`에서 실행됩니다.
 
+## 🧩 우분투 서버 최적화(권장)
+
+개발 모드(`npm run dev`, `python main.py`)는 느릴 수 있으므로
+우분투 서버에서는 프로덕션 실행 방식을 권장합니다.
+
+### 1) 백엔드: 멀티 워커 uvicorn
+```bash
+cd src/api
+UVICORN_WORKERS=4 python -m uvicorn main:app --host 0.0.0.0 --port 8001 --workers 4
+```
+- 코어 수에 맞춰 `UVICORN_WORKERS`를 조정하세요.
+
+### 2) 프론트엔드: 빌드 후 실행
+```bash
+# 프로젝트 루트에서
+npm run build
+npm run preview -- --host 0.0.0.0 --port 3000
+```
+
+### 3) 스크립트 사용
+```bash
+./start-servers.sh
+```
+
 ### 3. 외부 접속 설정 (Vite)
 
 `vite.config.js`에서 이미 `host: true`로 설정되어 있어 네트워크를 통해 접속 가능합니다.

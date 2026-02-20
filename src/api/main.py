@@ -44,6 +44,7 @@ from utils.helpers import get_session
 import utils.helpers as utils_helpers
 
 from contextlib import asynccontextmanager
+from exceptions import VSSException
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -76,8 +77,8 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info("서버가 정상적으로 시작되었습니다.")
     logger.info(f"서버 주소: http://0.0.0.0:8001")
-    logger.info(f"로컬 접속: http://localhost:8001")
-    logger.info("API 문서: http://localhost:8001/docs")
+    logger.info(f"로컬 접속: http://172.16.7.64:8001")
+    logger.info("API 문서: http://172.16.7.64:8001/docs")
     logger.info("=" * 60)
     logger.info("서버가 요청을 기다리는 중입니다... (정상 상태)")
     
@@ -88,7 +89,26 @@ async def lifespan(app: FastAPI):
         await utils_helpers.http_session.close()
         logger.info("aiohttp 세션이 종료되었습니다.")
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    title="VSS API",
+    description="Video Summarization System API",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# 예외 핸들러 등록
+@app.exception_handler(VSSException)
+async def vss_exception_handler(request, exc: VSSException):
+    """VSS 커스텀 예외 핸들러"""
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "detail": exc.detail,
+            "error_code": exc.error_code
+        }
+    )
 
 # Serve generated clips as static files under /clips
 CLIPS_DIR.mkdir(exist_ok=True)

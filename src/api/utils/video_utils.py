@@ -7,6 +7,8 @@ import shutil
 import logging
 import asyncio
 import aiohttp
+import threading
+import subprocess
 from pathlib import Path
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from database.connection import conn, cursor, ensure_db_connection
@@ -16,6 +18,10 @@ from config.settings import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 동시 메타데이터 추출 작업 제한 (최대 1개만 동시 실행)
+_metadata_extraction_semaphore = threading.Semaphore(1)
+_metadata_extraction_queue = []
 
 async def parse_timestamps_with_llm(timestamp_text, video_duration):
     """
@@ -529,32 +535,42 @@ def parse_timestamps_regex(timestamp_text, video_duration):
 def convert_video_to_mp4(input_path: str, output_path: str):
     """동영상을 MP4 형식으로 변환"""
     try:
-        video = VideoFileClip(str(input_path))
-        # MP4로 변환 (H.264 코덱 사용)
-        video.write_videofile(
-            str(output_path),
-            codec='libx264',
-            audio_codec='aac',
-            temp_audiofile='temp-audio.m4a',
-            remove_temp=True,
-            verbose=False,
-            logger=None
-        )
-        video.close()
+        cmd = [
+            "ffmpeg", "-y", "-i", str(input_path),
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-threads", "2",
+            str(output_path)
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         logger.info(f"동영상 변환 완료: {input_path} -> {output_path}")
         return True
     except Exception as e:
         logger.error(f"동영상 변환 실패: {e}")
-        if 'video' in locals():
-            try:
-                video.close()
-            except:
-                pass
         return False
 
 def extract_video_metadata(file_path: str, video_id: int, filename: str):
-    """동영상 메타데이터를 추출하여 DB에 업데이트"""
+    """동영상 메타데이터를 추출하여 DB에 업데이트 (동시 실행 제한)"""
+    global _metadata_extraction_queue
+    
+    # 큐에 추가
+    _metadata_extraction_queue.append((file_path, video_id, filename))
+    logger.info(f"메타데이터 추출 대기열에 추가: {filename} (ID: {video_id}), 대기 중인 작업: {len(_metadata_extraction_queue)}")
+    
+    # 세마포 획득 (최대 1개만 동시 실행)
+    acquired = _metadata_extraction_semaphore.acquire(blocking=False)
+    if not acquired:
+        logger.info(f"메타데이터 추출 작업 대기 중: {filename} (ID: {video_id})")
+        _metadata_extraction_semaphore.acquire()  # 대기
+    
     try:
+        # 큐에서 제거
+        if _metadata_extraction_queue and _metadata_extraction_queue[0][1] == video_id:
+            _metadata_extraction_queue.pop(0)
+        
+        logger.info(f"메타데이터 추출 시작: {filename} (ID: {video_id})")
+        
         video = VideoFileClip(str(file_path))
         width = int(video.w) if video.w else None
         height = int(video.h) if video.h else None
@@ -570,7 +586,10 @@ def extract_video_metadata(file_path: str, video_id: int, filename: str):
             (width, height, duration, video_id)
         )
         conn.commit()
-        logger.info(f"동영상 메타데이터 업데이트 완료: {filename} (ID: {video_id})")
+        logger.info(f"동영상 메타데이터 업데이트 완료: {filename} (ID: {video_id}), 해상도: {width}x{height}, 길이: {duration:.1f}s")
     except Exception as e:
         logger.warning(f"동영상 메타데이터 추출 실패: {e}")
+    finally:
+        _metadata_extraction_semaphore.release()
+        logger.info(f"메타데이터 추출 완료, 대기 중인 작업: {len(_metadata_extraction_queue)}")
 

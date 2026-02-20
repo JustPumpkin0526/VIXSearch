@@ -44,7 +44,7 @@ export function getApiBaseUrl() {
 
 /**
  * VIA 서버 URL을 가져옵니다.
- * 환경 변수가 설정되어 있으면 사용하고, 없으면 기본값을 사용합니다.
+ * 환경 변수가 설정되어 있으면 사용하고, 없으면 현재 호스트를 기반으로 생성합니다.
  * @returns {string} VIA 서버 URL
  */
 export function getViaServerUrl() {
@@ -53,8 +53,12 @@ export function getViaServerUrl() {
     return import.meta.env.VITE_VIA_SERVER_URL;
   }
   
-  // 기본값: 설정 파일의 기본값과 동일하게
-  return 'http://172.16.7.64:8101';
+  // 현재 접속한 호스트를 기반으로 VIA 서버 URL 생성
+  const host = window.location.hostname;
+  const protocol = window.location.protocol; // http: 또는 https:
+  
+  // 기본값: 현재 호스트의 8101 포트 (VIA 서버의 기본 포트)
+  return `${protocol}//${host}:8101`;
 }
 
 /**

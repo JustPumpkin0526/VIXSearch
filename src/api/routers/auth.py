@@ -5,8 +5,9 @@ import logging
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
-from database.connection import conn, cursor, ensure_db_connection
+from database.connection import get_db_connection
 from utils.validators import validate_email
+from exceptions import NotFoundException, ValidationException, DatabaseException
 from services.email_service import (
     email_verification_codes, reset_password_codes,
     generate_verification_code, send_verification_email,
@@ -55,46 +56,50 @@ class ResetPasswordRequest(BaseModel):
 @router.post("/login")
 def login(data: LoginRequest = Body(...)):
     """로그인"""
-    ensure_db_connection()
-    cursor.execute(
-        "SELECT PW, ROLE, APPROVED FROM vss_user WHERE ID = ?",
-        (data.username,)
-    )
-    row = cursor.fetchone()
-    if row is None:
-        return {"success": False, "message": "계정이 없습니다."}
-    db_pw = row[0]
-    role = row[1] if len(row) > 1 else "USER"
-    approved = bool(row[2]) if len(row) > 2 else True
-    
-    # 해시화된 비밀번호와 입력된 비밀번호 비교
-    password_correct = False
     try:
-        # bcrypt 해시로 저장된 경우
-        if bcrypt.checkpw(data.password.encode('utf-8'), db_pw.encode('utf-8')):
-            password_correct = True
-    except (ValueError, AttributeError):
-        # bcrypt 해시가 아닌 경우 (기존 평문 비밀번호 호환성 유지)
-        if db_pw == data.password:
-            password_correct = True
-            # 기존 평문 비밀번호를 해시화하여 업데이트 (마이그레이션)
+        with get_db_connection() as cursor:
+            cursor.execute(
+                "SELECT PW, ROLE, APPROVED FROM vss_user WHERE ID = ?",
+                (data.username,)
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return {"success": False, "message": "계정이 없습니다."}
+            db_pw = row[0]
+            role = row[1] if len(row) > 1 else "USER"
+            approved = bool(row[2]) if len(row) > 2 else True
+            
+            # 해시화된 비밀번호와 입력된 비밀번호 비교
+            password_correct = False
             try:
-                hashed_password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt())
-                cursor.execute(
-                    "UPDATE vss_user SET PW = ? WHERE ID = ?",
-                    (hashed_password.decode('utf-8'), data.username)
-                )
-                conn.commit()
-                logger.info(f"비밀번호를 해시화하여 업데이트했습니다: {data.username}")
-            except Exception as e:
-                logger.warning(f"비밀번호 해시화 업데이트 실패: {e}")
-    
-    if password_correct:
-        if role != "ADMIN" and not approved:
-            return {"success": False, "message": "관리자 승인 대기 중입니다. 승인 후 로그인할 수 있습니다."}
-        return {"success": True, "role": role, "approved": True}
-    else:
-        return {"success": False, "message": "비밀번호가 틀렸습니다."}
+                # bcrypt 해시로 저장된 경우
+                if bcrypt.checkpw(data.password.encode('utf-8'), db_pw.encode('utf-8')):
+                    password_correct = True
+            except (ValueError, AttributeError):
+                # bcrypt 해시가 아닌 경우 (기존 평문 비밀번호 호환성 유지)
+                if db_pw == data.password:
+                    password_correct = True
+                    # 기존 평문 비밀번호를 해시화하여 업데이트 (마이그레이션)
+                    try:
+                        hashed_password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt())
+                        cursor.execute(
+                            "UPDATE vss_user SET PW = ? WHERE ID = ?",
+                            (hashed_password.decode('utf-8'), data.username)
+                        )
+                        # autocommit이 활성화되어 있으므로 명시적 커밋 불필요
+                        logger.info(f"비밀번호를 해시화하여 업데이트했습니다: {data.username}")
+                    except Exception as e:
+                        logger.warning(f"비밀번호 해시화 업데이트 실패: {e}")
+            
+            if password_correct:
+                if role != "ADMIN" and not approved:
+                    return {"success": False, "message": "관리자 승인 대기 중입니다. 승인 후 로그인할 수 있습니다."}
+                return {"success": True, "role": role, "approved": True}
+            else:
+                return {"success": False, "message": "비밀번호가 틀렸습니다."}
+    except Exception as e:
+        logger.error(f"로그인 처리 중 오류: {e}")
+        raise DatabaseException(f"로그인 처리 중 오류가 발생했습니다: {str(e)}")
 
 @router.get("/debug/email-check/{email}")
 def debug_email_check(email: str):
@@ -102,10 +107,10 @@ def debug_email_check(email: str):
     email_lower = validate_email(email)
     is_valid_format = True  # validate_email에서 이미 검증됨
     
-    ensure_db_connection()
-    cursor.execute("SELECT ID FROM vss_user WHERE EMAIL = ?", (email_lower,))
-    existing_user = cursor.fetchone()
-    is_existing = existing_user is not None
+    with get_db_connection() as cursor:
+        cursor.execute("SELECT ID FROM vss_user WHERE EMAIL = ?", (email_lower,))
+        existing_user = cursor.fetchone()
+        is_existing = existing_user is not None
     
     return {
         "email": email_lower,
@@ -126,17 +131,17 @@ def send_verification_code(request: SendVerificationCodeRequest):
         
         # 기존 사용자 이메일 중복 확인
         try:
-            ensure_db_connection()
-            cursor.execute("SELECT ID FROM vss_user WHERE EMAIL = ?", (email,))
-            existing_user = cursor.fetchone()
-            if existing_user:
-                logger.warning(f"이미 사용 중인 이메일: {email}")
-                raise HTTPException(status_code=400, detail="이미 사용 중인 이메일입니다.")
-        except HTTPException:
+            with get_db_connection() as cursor:
+                cursor.execute("SELECT ID FROM vss_user WHERE EMAIL = ?", (email,))
+                existing_user = cursor.fetchone()
+                if existing_user:
+                    logger.warning(f"이미 사용 중인 이메일: {email}")
+                    raise ValidationException("이미 사용 중인 이메일입니다.")
+        except ValidationException:
             raise
         except Exception as db_error:
             logger.error(f"데이터베이스 조회 오류: {db_error}")
-            raise HTTPException(status_code=500, detail="데이터베이스 오류가 발생했습니다.")
+            raise DatabaseException(f"데이터베이스 오류가 발생했습니다: {str(db_error)}")
         
         # 만료된 코드 정리
         cleanup_expired_codes()
@@ -225,12 +230,12 @@ def register(user: User):
         hashed_password = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt())
         hashed_password_str = hashed_password.decode('utf-8')
         
-        ensure_db_connection()
-        cursor.execute(
-            "INSERT INTO vss_user (ID, PW, EMAIL, ROLE, APPROVED) VALUES (?, ?, ?, ?, ?)",
-            (user.username, hashed_password_str, email, "USER", 0)
-        )
-        conn.commit()
+        with get_db_connection() as cursor:
+            cursor.execute(
+                "INSERT INTO vss_user (ID, PW, EMAIL, ROLE, APPROVED) VALUES (?, ?, ?, ?, ?)",
+                (user.username, hashed_password_str, email, "USER", 0)
+            )
+            # autocommit이 활성화되어 있으므로 명시적 커밋 불필요
         
         # 회원가입 성공 후 인증 코드 삭제
         del email_verification_codes[email]
@@ -258,15 +263,15 @@ def send_reset_password_code(request: SendResetPasswordCodeRequest):
         email = validate_email(request.email)
         
         # 사용자 ID와 이메일 일치 확인
-        ensure_db_connection()
-        cursor.execute("SELECT ID, EMAIL FROM vss_user WHERE ID = ?", (username,))
-        user = cursor.fetchone()
-        if not user:
-            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+        with get_db_connection() as cursor:
+            cursor.execute("SELECT ID, EMAIL FROM vss_user WHERE ID = ?", (username,))
+            user = cursor.fetchone()
+            if not user:
+                raise NotFoundException("사용자", username)
         
-        db_email = user[1].strip().lower() if user[1] else ""
-        if db_email != email:
-            raise HTTPException(status_code=400, detail="등록된 이메일과 일치하지 않습니다.")
+            db_email = user[1].strip().lower() if user[1] else ""
+            if db_email != email:
+                raise ValidationException("등록된 이메일과 일치하지 않습니다.")
         
         # 만료된 코드 정리
         cleanup_expired_reset_codes()
@@ -371,12 +376,12 @@ def reset_password(request: ResetPasswordRequest):
         hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
         hashed_password_str = hashed_password.decode('utf-8')
         
-        ensure_db_connection()
-        cursor.execute(
-            "UPDATE vss_user SET PW = ? WHERE ID = ? AND EMAIL = ?",
-            (hashed_password_str, username, email)
-        )
-        conn.commit()
+        with get_db_connection() as cursor:
+            cursor.execute(
+                "UPDATE vss_user SET PW = ? WHERE ID = ? AND EMAIL = ?",
+                (hashed_password_str, username, email)
+            )
+            # autocommit이 활성화되어 있으므로 명시적 커밋 불필요
         
         # 비밀번호 재설정 성공 후 인증 코드 삭제
         del reset_password_codes[email]
