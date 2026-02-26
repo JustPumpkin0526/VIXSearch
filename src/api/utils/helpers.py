@@ -181,8 +181,7 @@ async def build_query_prompt(prompt: str) -> str:
     """
     try:
         # Ollama API 호출을 위한 프롬프트 구성
-        ollama_prompt = f"""{prompt}
-        위 문장을 영어로 번역하세요."""
+        ollama_prompt = f"Translate the following text to Korean. Output ONLY the translation without any explanation:\n\n{prompt}\n\n翻译结果:"
         
         # Ollama API 호출 (aiohttp 사용) - 번역 전용 모델 사용
         session = await get_session()
@@ -194,7 +193,7 @@ async def build_query_prompt(prompt: str) -> str:
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a translator. Translate the user's text to English. Output ONLY the translated text without any labels such as 'Translation:' or '번역:'. Do not include any explanations, instructions, or additional content. Do not add quotation marks or any other formatting to the output."
+                    "content": "You are a translation machine. Your ONLY output must be the translated text. Never include phrases like 'Sure,', 'Here is the translation', 'Translation:', or any explanations. Never add quotation marks. Output the translation directly without any preamble or postamble."
                 },
                 {
                     "role": "user",
@@ -218,12 +217,18 @@ async def build_query_prompt(prompt: str) -> str:
                 translated_prompt = ollama_data.get("message", {}).get("content", "")
                 if translated_prompt:
                     translated_prompt = translated_prompt.strip()
-                    # 따옴표/라벨 제거 (정규식으로 앞뒤 따옴표 및 Translation 라벨 제거)
+                    # 혹시 모를 경우를 대비한 최소한의 정리 (system prompt가 강화되었으므로 대부분 불필요하지만 안전장치)
                     import re
                     # 앞뒤 따옴표 제거 (큰따옴표, 작은따옴표, 유니코드 따옴표 등)
                     translated_prompt = re.sub(r'^["\'"\u201C\u201D\u2018\u2019]+|["\'"\u201C\u201D\u2018\u2019]+$', '', translated_prompt)
-                    translated_prompt = re.sub(r'^\s*(translation|번역)\s*:\s*', '', translated_prompt, flags=re.IGNORECASE)
-                    translated_prompt = translated_prompt.strip()  # 제거 후 다시 trim
+                    # 혹시 설명이 포함된 경우 첫 줄 제거 (줄바꿈이 있는 경우)
+                    lines = translated_prompt.split('\n')
+                    if len(lines) > 1:
+                        first_line_lower = lines[0].lower().strip()
+                        # 설명 패턴이 첫 줄에 있으면 제거
+                        if any(keyword in first_line_lower for keyword in ['sure', 'here is', 'translation', '번역']):
+                            translated_prompt = '\n'.join(lines[1:]).strip()
+                    translated_prompt = translated_prompt.strip()
                     logger.info(f"Ollama를 사용하여 프롬프트 영어 번역 성공")
                     return f"{translated_prompt}"
                 else:
@@ -255,8 +260,7 @@ async def translate_to_korean(text: str) -> str:
     try:
         logger.info(f"번역할 문장: {text}")
         # Ollama API 호출을 위한 프롬프트 구성
-        ollama_prompt = f"""{text}
-        translate to Korean"""
+        ollama_prompt = f"Translate the following text to Korean. Output ONLY the translation without any explanation:\n\n{text}\n\n翻译结果:"
         
         # Ollama API 호출 (aiohttp 사용) - 번역 전용 모델 사용
         session = await get_session()
@@ -268,7 +272,7 @@ async def translate_to_korean(text: str) -> str:
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a translator. Your only task is to translate the text to Korean. don't add any explanation or anything else."
+                    "content": "You are a translation machine. Your ONLY output must be the translated text. Never include phrases like 'Sure,', 'Here is the translation', 'Translation:', or any explanations. Never add quotation marks. Output the translation directly without any preamble or postamble."
                 },
                 {
                     "role": "user",
@@ -292,11 +296,18 @@ async def translate_to_korean(text: str) -> str:
                 translated_text = ollama_data.get("message", {}).get("content", "")
                 if translated_text:
                     translated_text = translated_text.strip()
-                    # 따옴표 제거 (정규식으로 앞뒤 따옴표 제거 - 모든 종류의 따옴표 처리)
+                    # 혹시 모를 경우를 대비한 최소한의 정리 (system prompt가 강화되었으므로 대부분 불필요하지만 안전장치)
                     import re
                     # 앞뒤 따옴표 제거 (큰따옴표, 작은따옴표, 유니코드 따옴표 등)
                     translated_text = re.sub(r'^["\'"\u201C\u201D\u2018\u2019]+|["\'"\u201C\u201D\u2018\u2019]+$', '', translated_text)
-                    translated_text = translated_text.strip()  # 제거 후 다시 trim
+                    # 혹시 설명이 포함된 경우 첫 줄 제거 (줄바꿈이 있는 경우)
+                    lines = translated_text.split('\n')
+                    if len(lines) > 1:
+                        first_line_lower = lines[0].lower().strip()
+                        # 설명 패턴이 첫 줄에 있으면 제거
+                        if any(keyword in first_line_lower for keyword in ['sure', 'here is', 'translation', '번역']):
+                            translated_text = '\n'.join(lines[1:]).strip()
+                    translated_text = translated_text.strip()
                     logger.info(f"Ollama를 사용하여 한국어 번역 성공 {translated_text}")
                     return translated_text
                 else:

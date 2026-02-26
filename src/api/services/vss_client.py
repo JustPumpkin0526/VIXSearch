@@ -318,7 +318,7 @@ class VSS:
         logger.info(
             "[CA-RAG DEBUG] video_id: %s, query: %s",
             video_id,
-            query[:100] + "..." if len(query) > 100 else query
+            query
         )
         logger.info(
             "[CA-RAG DEBUG] 이전에 summarize_video가 호출되었는지 확인 필요"

@@ -157,7 +157,7 @@ app.add_middleware(
 )
 
 # 라우터 등록
-from routers import auth, users, summarize, reports, search, videos
+from routers import auth, users, summarize, reports, search, videos, management
 
 app.include_router(auth.router, tags=["auth"])
 app.include_router(users.router, tags=["users"])
@@ -165,6 +165,7 @@ app.include_router(summarize.router, tags=["summarize"])
 app.include_router(reports.router, prefix="/reports", tags=["reports"])
 app.include_router(search.router, tags=["search"])
 app.include_router(videos.router, prefix="/videos", tags=["videos"])
+app.include_router(management.router, tags=["management"])
 # upload-video와 convert-video는 별도 경로로도 등록 (하위 호환성)
 from routers.videos import upload_video, convert_video
 app.add_api_route("/upload-video", upload_video, methods=["POST"], tags=["videos"])

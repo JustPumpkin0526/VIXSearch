@@ -39,7 +39,19 @@ OLLAMA_TRANSLATION_MODEL = os.getenv("OLLAMA_TRANSLATION_MODEL", "hy-mt15-transl
 OLLAMA_TIMEOUT = 60  # Ollama API 타임아웃 (초)
 
 # ==================== CV Event Detector API 설정 ====================
-CV_EVENT_DETECTOR_API_URL = os.getenv("CV_EVENT_DETECTOR_API_URL", "http://172.16.7.64:7862")
+CV_EVENT_DETECTOR_API_URL = os.getenv("CV_EVENT_DETECTOR_API_URL", "http://172.16.7.64:23491")
+
+# ==================== VST 및 AlertBridge 설정 ====================
+# VST (Video Storage) 설정
+ENABLE_VST = os.getenv("NV_ENABLE_VST", "false").lower() == "true"
+VST_API_URL = os.getenv("VST_API_URL", "http://api-gateway:80/api/vst")
+
+# AlertBridge 설정
+ENABLE_ALERTBRIDGE = os.getenv("NV_ENABLE_ALERTBRIDGE", "false").lower() == "true"
+ALERTBRIDGE_API_BASE = os.getenv("NV_ALERTBRIDGE_API_BASE", "http://api-gateway:80/api/alertbridge")
+
+# 클립 후처리 설정
+FILTERED_CLIP_PATH = os.getenv("FILTERED_CLIP_PATH", "/tmp/alert-media-dir")
 
 # ==================== 파일 설정 ====================
 ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'}

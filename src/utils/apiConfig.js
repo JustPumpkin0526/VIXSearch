@@ -77,7 +77,7 @@ export function getCVEventDetectorApiUrl() {
   const protocol = window.location.protocol; // http: 또는 https:
   
   // 기본값: 현재 호스트의 7862 포트 (cv_event_detector.py의 기본 포트)
-  return `${protocol}//${host}:7862`;
+  return `${protocol}//${host}:23491`;
 }
 
 // 기본 export

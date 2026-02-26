@@ -1425,7 +1425,7 @@ watch(() => summaryVideoStore.videos, async (newVideos, oldVideos) => {
   }
 }, { deep: true });
 
-// 컴포넌트가 활성화될 때마다 실행 (Search.vue에서 다른 동영상 선택 후 돌아올 때)
+// 컴포넌트가 활성화될 때마다 실행 (Storage.vue에서 다른 동영상 선택 후 돌아올 때)
 onActivated(async () => {
   const userId = localStorage.getItem("vss_user_id");
   if (!userId) {
@@ -1646,141 +1646,7 @@ async function onDrop(e) {
   isDragging.value = false;
   const files = filterVideoFiles(e.dataTransfer.files);
   if (files.length === 0) return;
-
-  // 사용자 ID 확인
-  const userId = localStorage.getItem("vss_user_id");
-  if (!userId) {
-    alert('로그인이 필요합니다.');
-    return;
-  }
-
-  // DB에서 중복 파일명 체크
-  if (await checkDuplicateFiles(files, userId)) {
-    return;
-  }
-
-  // 업로드 진행률 초기화
-  uploadProgress.value = files.map((file, index) => ({
-    id: Date.now() + index,
-    fileName: file.name,
-    progress: 0,
-    status: '대기 중...',
-    uploaded: 0,
-    total: file.size
-  }));
-
-  // 업로드 모달 표시
-  showUploadModal.value = true;
-
-  // 서버에 동영상 업로드 (각 동영상이 완료되는 대로 즉시 표시)
-  files.forEach(async (file, index) => {
-    const uploadId = uploadProgress.value[index].id;
-    try {
-      const data = await uploadVideoWithProgress(file, userId, uploadId);
-      
-      const newVideo = createVideoObject({
-        id: data.video_id,
-        video_id: data.video_id,
-        originUrl: data.file_url,
-        url: data.file_url
-      }, file);
-      newVideo.name = file.name;
-      newVideo.fileSize = file.size;
-
-      // 업로드 완료된 동영상을 즉시 목록에 추가
-      videoFiles.value.push(newVideo);
-      
-      // 지원하지 않는 형식인 경우 MP4로 변환 요청 (비동기로 실행)
-      if (isUnsupportedFormat(file.name)) {
-        convertVideoToMp4(data.video_id, userId, newVideo).then(convertedUrl => {
-          if (convertedUrl) {
-            console.log('동영상 변환 완료, 미리보기 업데이트:', file.name);
-          }
-        }).catch(error => {
-          console.error('동영상 변환 실패:', error);
-        });
-      }
-      
-      // 지원하지 않는 형식인 경우 MP4로 변환 요청 (비동기로 실행)
-      if (isUnsupportedFormat(file.name)) {
-        convertVideoToMp4(data.video_id, userId, newVideo).then(convertedUrl => {
-          if (convertedUrl) {
-            console.log('동영상 변환 완료, 미리보기 업데이트:', file.name);
-          }
-        }).catch(error => {
-          console.error('동영상 변환 실패:', error);
-        });
-      }
-      
-      // 업로드 완료된 항목을 즉시 제거
-      const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
-      if (uploadItemIndex !== -1) {
-        uploadProgress.value.splice(uploadItemIndex, 1);
-      }
-      
-      // 모든 업로드가 완료되면 모달 닫기
-      if (uploadProgress.value.length === 0) {
-        showUploadModal.value = false;
-      }
-      
-      // Search.vue에 이벤트 전달하여 동영상 목록 새로고침
-      window.dispatchEvent(new CustomEvent('search-videos-updated'));
-      
-      // summaryVideoStore 업데이트
-      const storeVideos = videoFiles.value.map(v => ({
-        id: v.id,
-        title: v.name,
-        name: v.name,
-        url: v.originUrl || v.displayUrl,
-        originUrl: v.originUrl,
-        displayUrl: v.displayUrl,
-        objectUrl: v.summaryObjectUrl,
-        date: v.date,
-        file: v.file,
-        summary: v.summary || '',
-        dbId: v.dbId
-      }));
-      summaryVideoStore.setVideos(storeVideos);
-      
-      // 동영상 업로드 시 streaming을 true로 설정
-      streaming.value = true;
-      
-      // 동영상이 DOM에 추가된 후 길이를 가져와서 추천 chunk_size 계산
-      nextTick(() => {
-        setTimeout(() => {
-          updateRecommendedChunkSize(newVideo.id);
-        }, UPLOAD_PROCESSING_DELAY);
-      });
-    } catch (error) {
-      // 업로드 취소는 정상적인 동작이므로 에러로 처리하지 않음
-      if (error.message === '업로드 취소됨') {
-        // 취소된 항목도 제거
-        const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
-        if (uploadItemIndex !== -1) {
-          uploadProgress.value.splice(uploadItemIndex, 1);
-        }
-        // 모든 업로드가 완료되면 모달 닫기
-        if (uploadProgress.value.length === 0) {
-          showUploadModal.value = false;
-        }
-        return; // 조용히 종료
-      }
-      console.error('동영상 업로드 실패:', error);
-      // 실패한 항목도 제거
-      const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
-      if (uploadItemIndex !== -1) {
-        uploadProgress.value.splice(uploadItemIndex, 1);
-      }
-      // 모든 업로드가 완료되면 모달 닫기
-      if (uploadProgress.value.length === 0) {
-        showUploadModal.value = false;
-      }
-    }
-  });
-
-  if (videoFiles.value.length > 0 && selectedIndexes.value.length === 0) {
-    selectedIndexes.value = videoFiles.value.map(v => v.id);
-  }
+  await processUploadFiles(files, { insertAtTop: false });
 }
 
 function onVideoAreaClick() {
@@ -2022,7 +1888,12 @@ function seekZoomVideo(event) {
 async function onUpload(e) {
   const files = filterVideoFiles(e.target.files ?? []);
   if (!files.length) return;
+  await processUploadFiles(files, { insertAtTop: true });
+  if (fileInputRef.value) fileInputRef.value.value = '';
+}
 
+// 공통 업로드 처리 함수 (Summarize 메뉴)
+async function processUploadFiles(files, { insertAtTop = false } = {}) {
   // 사용자 ID 확인
   const userId = localStorage.getItem("vss_user_id");
   if (!userId) {
@@ -2032,8 +1903,7 @@ async function onUpload(e) {
 
   // DB에서 중복 파일명 체크
   if (await checkDuplicateFiles(files, userId)) {
-          if (fileInputRef.value) fileInputRef.value.value = '';
-          return;
+    return;
   }
 
   // 업로드 진행률 초기화
@@ -2049,12 +1919,21 @@ async function onUpload(e) {
   // 업로드 모달 표시
   showUploadModal.value = true;
 
-  // 서버에 동영상 업로드 (각 동영상이 완료되는 대로 즉시 표시)
-  files.forEach(async (file, index) => {
-    const uploadId = uploadProgress.value[index].id;
+  // 동시 업로드 수 제한 (브라우저 연결 한계/서버 병목 완화)
+  const MAX_CONCURRENT_UPLOADS = Math.min(6, Math.max(2, navigator.hardwareConcurrency || 4));
+  let activeUploadsCount = 0;
+  let uploadQueue = files.map((file, idx) => ({ file, idx, retries: 0 }));
+  const MAX_RETRIES = 2;
+
+  async function uploadSingleFile(queueItem) {
+    const { file, idx } = queueItem;
+    const uploadId = uploadProgress.value[idx]?.id;
+    if (!uploadId) return;
     try {
+      const uploadItem = uploadProgress.value.find(u => u.id === uploadId);
+      if (uploadItem) uploadItem.status = '업로드 대기 중...';
       const data = await uploadVideoWithProgress(file, userId, uploadId);
-      
+
       const newVideo = createVideoObject({
         id: data.video_id,
         video_id: data.video_id,
@@ -2065,8 +1944,12 @@ async function onUpload(e) {
       newVideo.fileSize = file.size;
 
       // 업로드 완료된 동영상을 즉시 목록에 추가
-      videoFiles.value.unshift(newVideo);
-      
+      if (insertAtTop) {
+        videoFiles.value.unshift(newVideo);
+      } else {
+        videoFiles.value.push(newVideo);
+      }
+
       // 지원하지 않는 형식인 경우 MP4로 변환 요청 (비동기로 실행)
       if (isUnsupportedFormat(file.name)) {
         convertVideoToMp4(data.video_id, userId, newVideo).then(convertedUrl => {
@@ -2077,21 +1960,23 @@ async function onUpload(e) {
           console.error('동영상 변환 실패:', error);
         });
       }
-      
-      // 업로드 완료된 항목을 즉시 제거
+
+      // 완료 표시 후 제거
       const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
       if (uploadItemIndex !== -1) {
-        uploadProgress.value.splice(uploadItemIndex, 1);
+        uploadProgress.value[uploadItemIndex].progress = 100;
+        uploadProgress.value[uploadItemIndex].status = '완료';
+        setTimeout(() => {
+          uploadProgress.value.splice(uploadItemIndex, 1);
+          if (uploadProgress.value.length === 0) {
+            showUploadModal.value = false;
+          }
+        }, 300);
       }
-      
-      // 모든 업로드가 완료되면 모달 닫기
-      if (uploadProgress.value.length === 0) {
-        showUploadModal.value = false;
-      }
-      
-      // Search.vue에 이벤트 전달하여 동영상 목록 새로고침
+
+      // Storage.vue에 이벤트 전달하여 동영상 목록 새로고침
       window.dispatchEvent(new CustomEvent('search-videos-updated'));
-      
+
       // summaryVideoStore 업데이트
       const storeVideos = videoFiles.value.map(v => ({
         id: v.id,
@@ -2107,7 +1992,7 @@ async function onUpload(e) {
         dbId: v.dbId
       }));
       summaryVideoStore.setVideos(storeVideos);
-      
+
       // 동영상 업로드 시 streaming을 true로 설정
       streaming.value = true;
 
@@ -2118,34 +2003,57 @@ async function onUpload(e) {
         }, UPLOAD_PROCESSING_DELAY);
       });
     } catch (error) {
-      // 업로드 취소는 정상적인 동작이므로 에러로 처리하지 않음
       if (error.message === '업로드 취소됨') {
-        // 취소된 항목도 제거
         const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
         if (uploadItemIndex !== -1) {
           uploadProgress.value.splice(uploadItemIndex, 1);
         }
-        // 모든 업로드가 완료되면 모달 닫기
-        if (uploadProgress.value.length === 0) {
-          showUploadModal.value = false;
+        return;
+      }
+
+      queueItem.retries++;
+      if (queueItem.retries <= MAX_RETRIES) {
+        await uploadSingleFile(queueItem);
+      } else {
+        console.error('동영상 업로드 실패:', error);
+        const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+        if (uploadItemIndex !== -1) {
+          uploadProgress.value[uploadItemIndex].status = '실패';
+          setTimeout(() => {
+            uploadProgress.value.splice(uploadItemIndex, 1);
+            if (uploadProgress.value.length === 0) {
+              showUploadModal.value = false;
+            }
+          }, 1000);
         }
-        return; // 조용히 종료
-      }
-      console.error('동영상 업로드 실패:', error);
-      // 실패한 항목도 제거
-      const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
-      if (uploadItemIndex !== -1) {
-        uploadProgress.value.splice(uploadItemIndex, 1);
-      }
-      // 모든 업로드가 완료되면 모달 닫기
-      if (uploadProgress.value.length === 0) {
-        showUploadModal.value = false;
       }
     }
-  });
+  }
 
-  // input[type=file] value 초기화
-  if (fileInputRef.value) fileInputRef.value.value = '';
+  async function uploadManager() {
+    while (uploadQueue.length > 0) {
+      if (activeUploadsCount < MAX_CONCURRENT_UPLOADS) {
+        const queueItem = uploadQueue.shift();
+        activeUploadsCount++;
+        uploadSingleFile(queueItem).finally(() => {
+          activeUploadsCount--;
+        });
+      } else {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+
+    // 모든 업로드가 끝나면 모달 닫기 (안전장치)
+    const checkDone = setInterval(() => {
+      if (uploadProgress.value.length === 0) {
+        showUploadModal.value = false;
+        clearInterval(checkDone);
+      }
+    }, 200);
+  }
+
+  uploadManager();
+
   if (videoFiles.value.length > 0 && selectedIndexes.value.length === 0) {
     selectedIndexes.value = videoFiles.value.map(v => v.id);
   }
@@ -2846,7 +2754,7 @@ async function removeSingleVideo() {
   if (videoFiles.value.length === 1) {
     const target = videoFiles.value[0];
 
-    // 매핑에서 제거 (미디어 삭제는 Search.vue에서 처리)
+    // 매핑에서 제거 (미디어 삭제는 Storage.vue에서 처리)
     if (summarizedVideoMap.value[target.id]) {
       delete summarizedVideoMap.value[target.id];
     }
@@ -2903,7 +2811,7 @@ function confirmWarning() {
 async function batchRemoveSelectedVideos() {
   const videosToRemove = videoFiles.value.filter(v => selectedIndexes.value.includes(v.id));
 
-  // 매핑에서 제거 (미디어 삭제는 Search.vue에서 처리)
+  // 매핑에서 제거 (미디어 삭제는 Storage.vue에서 처리)
   videosToRemove.forEach(v => {
     if (summarizedVideoMap.value[v.id]) {
       delete summarizedVideoMap.value[v.id];

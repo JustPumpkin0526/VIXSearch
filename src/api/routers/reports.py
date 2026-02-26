@@ -8,6 +8,7 @@ import base64
 import time
 import glob
 import re
+from datetime import datetime
 from typing import Optional, List
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
@@ -22,7 +23,7 @@ from PIL import Image
 import requests
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from config.settings import CLIPS_DIR, VIDEOS_DIR, CONVERTED_VIDEOS_DIR, REPORTS_DIR
-from database.connection import get_db_connection
+from database.connection import get_db_connection, verify_user_exists
 from dependencies import verify_user_dependency
 from exceptions import NotFoundException, ValidationException, DatabaseException
 from fastapi import Depends
@@ -166,19 +167,17 @@ async def create_report(request: CreateReportRequest):
         
         verify_user_exists(user_id)
         
-        ensure_db_connection()
-        
         # 보고서 저장
         video_ids_json = json.dumps(video_ids) if video_ids else None
         video_titles_json = json.dumps(video_titles) if video_titles else None
         
-        cursor.execute("""
-            INSERT INTO vss_reports (USER_ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, title, description, content, word_count, video_ids_json, video_titles_json))
-        conn.commit()
-        
-        report_id = cursor.lastrowid
+        with get_db_connection() as cursor:
+            cursor.execute("""
+                INSERT INTO vss_reports (USER_ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, title, description, content, word_count, video_ids_json, video_titles_json))
+            
+            report_id = cursor.lastrowid
         
         logger.info(f"보고서 생성 완료: USER_ID={user_id}, REPORT_ID={report_id}, TITLE={title}")
         
@@ -211,57 +210,210 @@ async def create_word_report(request: CreateWordReportRequest):
             raise HTTPException(status_code=400, detail="클립 데이터가 필요합니다.")
         
         verify_user_exists(user_id)
-        ensure_db_connection()
         
         # 워드 문서 생성
         doc = Document()
         
-        # 제목 추가
-        title_paragraph = doc.add_heading(title, 0)
-        title_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        # ==================== 표지 페이지 ====================
+        # 빈 줄 추가 (상단 여백)
+        doc.add_paragraph()
+        doc.add_paragraph()
         
-        # 설명 추가
-        if description:
-            desc_paragraph = doc.add_paragraph(description)
-            desc_paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        # 제목 추가 (큰 글씨, 중앙 정렬)
+        title_heading = doc.add_heading(title, 0)
+        title_heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title_run = title_heading.runs[0]
+        title_run.font.size = Pt(24)
+        title_run.bold = True
         
-        # 작성자 정보 추가
-        author_para = doc.add_paragraph(f"작성자: {user_id}")
-        author_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        # 빈 줄 추가
+        doc.add_paragraph()
+        doc.add_paragraph()
         
-        # 구분선 추가 (Word에서 --- 입력 후 엔터와 동일한 효과)
-        separator_para = doc.add_paragraph()
-        add_horizontal_line(separator_para)
+        # 작성 정보 표 생성
+        info_table = doc.add_table(rows=3, cols=2)
+        info_table.style = 'Light Grid Accent 1'
         
-        # 쿼리 섹션 추가
+        # 작성자 정보
+        info_table.rows[0].cells[0].text = "작성자"
+        info_table.rows[0].cells[1].text = user_id
+        info_table.rows[0].cells[0].paragraphs[0].runs[0].bold = True
+        info_table.rows[0].cells[1].paragraphs[0].runs[0].bold = True
+        
+        # 작성일
+        current_date = datetime.now().strftime("%Y년 %m월 %d일")
+        info_table.rows[1].cells[0].text = "작성일"
+        info_table.rows[1].cells[1].text = current_date
+        info_table.rows[1].cells[0].paragraphs[0].runs[0].bold = True
+        
+        # 검색 결과 수
+        info_table.rows[2].cells[0].text = "검색 결과 수"
+        info_table.rows[2].cells[1].text = f"{len(clips)}개"
+        info_table.rows[2].cells[0].paragraphs[0].runs[0].bold = True
+        
+        # 표 중앙 정렬
+        for row in info_table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # 페이지 나누기 (표지와 본문 분리)
+        doc.add_page_break()
+        
+        # ==================== 목차 ====================
+        toc_heading = doc.add_heading("목차", level=1)
+        toc_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        
+        toc_items = [
+            ("1. 요약", 1),
+            ("2. 검색 쿼리", 2),
+            ("3. 검색 결과", 3),
+            ("4. 상세 결과", 4),
+        ]
+        
+        for item_text, page_num in toc_items:
+            toc_para = doc.add_paragraph()
+            toc_para.style = 'List Bullet'
+            toc_run = toc_para.add_run(f"{item_text} ................... {page_num}")
+            toc_run.font.size = Pt(11)
+        
+        # 페이지 나누기
+        doc.add_page_break()
+        
+        # ==================== 1. 요약 ====================
+        summary_heading = doc.add_heading("1. 요약", level=1)
+        
+        # 요약 정보 표
+        summary_table = doc.add_table(rows=4, cols=2)
+        summary_table.style = 'Light Grid Accent 1'
+        
+        summary_table.rows[0].cells[0].text = "보고서 제목"
+        summary_table.rows[0].cells[1].text = title
+        summary_table.rows[0].cells[0].paragraphs[0].runs[0].bold = True
+        
+        summary_table.rows[1].cells[0].text = "검색 쿼리"
+        summary_table.rows[1].cells[1].text = query if query else "없음"
+        summary_table.rows[1].cells[0].paragraphs[0].runs[0].bold = True
+        
+        summary_table.rows[2].cells[0].text = "검색 결과 수"
+        summary_table.rows[2].cells[1].text = f"{len(clips)}개"
+        summary_table.rows[2].cells[0].paragraphs[0].runs[0].bold = True
+        
+        summary_table.rows[3].cells[0].text = "보고서 설명"
+        summary_table.rows[3].cells[1].text = description if description else "없음"
+        summary_table.rows[3].cells[0].paragraphs[0].runs[0].bold = True
+        
+        # 표 너비 조정
+        for row in summary_table.rows:
+            row.cells[0].width = Inches(2.0)
+            row.cells[1].width = Inches(4.5)
+        
+        doc.add_paragraph()  # 빈 줄
+        
+        # ==================== 2. 검색 쿼리 ====================
+        query_heading = doc.add_heading("2. 검색 쿼리", level=1)
+        
         if query:
-            query_heading = doc.add_heading("질문", level=1)
             query_para = doc.add_paragraph(query)
-            query_para.style = 'Normal'
-            
-            # 구분선 추가
-            separator_para = doc.add_paragraph()
-            add_horizontal_line(separator_para)
+            query_para.style = 'Intense Quote'
+            query_run = query_para.runs[0]
+            query_run.font.size = Pt(12)
+        else:
+            no_query_para = doc.add_paragraph("검색 쿼리가 제공되지 않았습니다.")
+            no_query_para.style = 'Normal'
         
-        # 결과 섹션 제목 추가
-        result_heading = doc.add_heading("검색 결과", level=1)
+        doc.add_paragraph()  # 빈 줄
+        
+        # ==================== 3. 검색 결과 요약 ====================
+        result_summary_heading = doc.add_heading("3. 검색 결과", level=1)
+        
+        # 결과 요약 표 생성
+        result_table = doc.add_table(rows=len(clips) + 1, cols=5)
+        result_table.style = 'Light Grid Accent 1'
+        
+        # 표 헤더
+        header_cells = result_table.rows[0].cells
+        header_cells[0].text = "번호"
+        header_cells[1].text = "제목"
+        header_cells[2].text = "시간 범위"
+        header_cells[3].text = "소스 비디오"
+        header_cells[4].text = "장면 설명"
+        
+        # 헤더 스타일 적용
+        for cell in header_cells:
+            cell.paragraphs[0].runs[0].bold = True
+            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # 표 데이터 채우기
+        for idx, clip in enumerate(clips, 1):
+            row_cells = result_table.rows[idx].cells
+            row_cells[0].text = str(idx)
+            row_cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            row_cells[1].text = clip.title or "제목 없음"
+            
+            if clip.start_time is not None and clip.end_time is not None:
+                time_str = f"{format_time(clip.start_time)} - {format_time(clip.end_time)}"
+            else:
+                time_str = "시간 정보 없음"
+            row_cells[2].text = time_str
+            row_cells[2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            row_cells[3].text = clip.sourceVideo or "소스 정보 없음"
+            
+            # 장면 설명 (최대 100자로 제한)
+            sentence = clip.sentence or "설명 없음"
+            if len(sentence) > 100:
+                sentence = sentence[:100] + "..."
+            row_cells[4].text = sentence
+        
+        # 표 열 너비 조정
+        result_table.columns[0].width = Inches(0.5)  # 번호
+        result_table.columns[1].width = Inches(1.5)  # 제목
+        result_table.columns[2].width = Inches(1.2)  # 시간 범위
+        result_table.columns[3].width = Inches(1.5)  # 소스 비디오
+        result_table.columns[4].width = Inches(2.3)  # 장면 설명
+        
+        doc.add_page_break()  # 페이지 나누기
+        
+        # ==================== 4. 상세 결과 ====================
+        detail_heading = doc.add_heading("4. 상세 결과", level=1)
         
         # 클립 정보 추가 (이미지 데이터를 저장하기 위한 리스트)
         clip_images = []  # 각 클립의 이미지 데이터를 저장
         
         for idx, clip in enumerate(clips, 1):
             # 클립 번호 및 제목
-            clip_heading = doc.add_heading(f"{idx}. {clip.title}", level=1)
+            clip_heading = doc.add_heading(f"4.{idx} {clip.title}", level=2)
+            
+            # 클립 정보 표 생성
+            clip_info_table = doc.add_table(rows=3, cols=2)
+            clip_info_table.style = 'Light Grid Accent 1'
             
             # 시간 정보
+            clip_info_table.rows[0].cells[0].text = "시간 범위"
             if clip.start_time is not None and clip.end_time is not None:
-                time_para = doc.add_paragraph(f"시간: {format_time(clip.start_time)} - {format_time(clip.end_time)}")
-                time_para.style = 'List Bullet'
+                time_str = f"{format_time(clip.start_time)} - {format_time(clip.end_time)}"
+            else:
+                time_str = "시간 정보 없음"
+            clip_info_table.rows[0].cells[1].text = time_str
+            clip_info_table.rows[0].cells[0].paragraphs[0].runs[0].bold = True
             
             # 소스 비디오 정보
-            if clip.sourceVideo:
-                source_para = doc.add_paragraph(f"소스: {clip.sourceVideo}")
-                source_para.style = 'List Bullet'
+            clip_info_table.rows[1].cells[0].text = "소스 비디오"
+            clip_info_table.rows[1].cells[1].text = clip.sourceVideo or "소스 정보 없음"
+            clip_info_table.rows[1].cells[0].paragraphs[0].runs[0].bold = True
+            
+            # 클립 ID
+            clip_info_table.rows[2].cells[0].text = "클립 ID"
+            clip_info_table.rows[2].cells[1].text = str(clip.id) if clip.id else "ID 없음"
+            clip_info_table.rows[2].cells[0].paragraphs[0].runs[0].bold = True
+            
+            # 표 열 너비 조정
+            clip_info_table.columns[0].width = Inches(1.5)
+            clip_info_table.columns[1].width = Inches(4.5)
+            
+            doc.add_paragraph()  # 빈 줄
             
             # 썸네일 이미지 추가 시도
             image_data = None
@@ -312,48 +464,84 @@ async def create_word_report(request: CreateWordReportRequest):
             
             # 장면 설명 추가
             if clip.sentence:
-                sentence_para = doc.add_paragraph("장면 설명:")
-                sentence_para.style = 'Heading 3'
+                sentence_heading = doc.add_heading("장면 설명", level=3)
                 desc_para = doc.add_paragraph(clip.sentence)
                 desc_para.style = 'Normal'
+                desc_run = desc_para.runs[0]
+                desc_run.font.size = Pt(11)
             
-            # 구분선 추가 (Word에서 --- 입력 후 엔터와 동일한 효과)
+            # 페이지 나누기 (마지막 클립이 아닌 경우)
             if idx < len(clips):
-                separator_para = doc.add_paragraph()
-                add_horizontal_line(separator_para)
+                doc.add_page_break()
         
         # 보고서 내용을 텍스트로 변환 (데이터베이스 저장용) - 이미지 포함
         report_content = f"# {title}\n\n"
-        report_content += f"**작성자:** {user_id}\n\n"
-        if description:
-            report_content += f"{description}\n\n"
+        report_content += f"**작성자:** {user_id}  \n"
+        report_content += f"**작성일:** {current_date}  \n"
+        report_content += f"**검색 결과 수:** {len(clips)}개\n\n"
+        report_content += "=" * 50 + "\n\n"
+        
+        # 요약 섹션
+        report_content += "## 1. 요약\n\n"
+        report_content += f"**보고서 제목:** {title}\n\n"
+        report_content += f"**검색 쿼리:** {query if query else '없음'}\n\n"
+        report_content += f"**검색 결과 수:** {len(clips)}개\n\n"
+        report_content += f"**보고서 설명:** {description if description else '없음'}\n\n"
         report_content += "=" * 50 + "\n\n"
         
         # 쿼리 섹션 추가
+        report_content += "## 2. 검색 쿼리\n\n"
         if query:
-            report_content += "## 질문\n\n"
             report_content += f"{query}\n\n"
-            report_content += "=" * 50 + "\n\n"
+        else:
+            report_content += "검색 쿼리가 제공되지 않았습니다.\n\n"
+        report_content += "=" * 50 + "\n\n"
         
-        # 결과 섹션 제목 추가
-        report_content += "## 검색 결과\n\n"
+        # 결과 요약 섹션
+        report_content += "## 3. 검색 결과 요약\n\n"
+        report_content += "| 번호 | 제목 | 시간 범위 | 소스 비디오 | 장면 설명 |\n"
+        report_content += "|------|------|-----------|------------|----------|\n"
         
         for idx, clip in enumerate(clips, 1):
-            report_content += f"## {idx}. {clip.title}\n\n"
+            title_text = clip.title or "제목 없음"
             if clip.start_time is not None and clip.end_time is not None:
-                report_content += f"- 시간: {format_time(clip.start_time)} - {format_time(clip.end_time)}\n"
-            if clip.sourceVideo:
-                report_content += f"- 소스: {clip.sourceVideo}\n"
+                time_str = f"{format_time(clip.start_time)} - {format_time(clip.end_time)}"
+            else:
+                time_str = "시간 정보 없음"
+            source_text = clip.sourceVideo or "소스 정보 없음"
+            sentence = clip.sentence or "설명 없음"
+            if len(sentence) > 100:
+                sentence = sentence[:100] + "..."
+            
+            # 마크다운 표 형식으로 추가
+            report_content += f"| {idx} | {title_text} | {time_str} | {source_text} | {sentence} |\n"
+        
+        report_content += "\n" + "=" * 50 + "\n\n"
+        
+        # 상세 결과 섹션
+        report_content += "## 4. 상세 결과\n\n"
+        
+        for idx, clip in enumerate(clips, 1):
+            report_content += f"### 4.{idx} {clip.title}\n\n"
+            report_content += "**시간 범위:** "
+            if clip.start_time is not None and clip.end_time is not None:
+                report_content += f"{format_time(clip.start_time)} - {format_time(clip.end_time)}\n\n"
+            else:
+                report_content += "시간 정보 없음\n\n"
+            
+            report_content += f"**소스 비디오:** {clip.sourceVideo or '소스 정보 없음'}\n\n"
+            report_content += f"**클립 ID:** {clip.id if clip.id else 'ID 없음'}\n\n"
             
             # 이미지가 있는 경우 base64로 인코딩된 이미지를 마크다운 형식으로 포함
             if idx <= len(clip_images) and clip_images[idx - 1]:
-                report_content += f"\n![썸네일 {idx}](data:image/png;base64,{clip_images[idx - 1]})\n\n"
+                report_content += f"![썸네일 {idx}](data:image/png;base64,{clip_images[idx - 1]})\n\n"
             elif clip.url:
                 # 이미지를 가져올 수 없는 경우에만 URL 표시
-                report_content += f"- 비디오 URL: {clip.url}\n"
+                report_content += f"**비디오 URL:** {clip.url}\n\n"
             
             if clip.sentence:
-                report_content += f"\n### 장면 설명:\n{clip.sentence}\n\n"
+                report_content += f"**장면 설명:**\n{clip.sentence}\n\n"
+            
             report_content += "=" * 50 + "\n\n"
         
         # 단어 수 계산
@@ -392,13 +580,13 @@ async def create_word_report(request: CreateWordReportRequest):
         file_url = f"/reports-files/{filename}"
         
         # 데이터베이스에 보고서 저장 (Word 파일 경로 포함)
-        cursor.execute("""
-            INSERT INTO vss_reports (USER_ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, title, description, report_content, word_count, video_ids_json, video_titles_json))
-        conn.commit()
-        
-        report_id = cursor.lastrowid
+        with get_db_connection() as cursor:
+            cursor.execute("""
+                INSERT INTO vss_reports (USER_ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, title, description, report_content, word_count, video_ids_json, video_titles_json))
+            
+            report_id = cursor.lastrowid
         
         # 보고서 ID를 사용하여 파일명 재생성 및 파일명 변경
         final_filename = f"report_{report_id}_{timestamp}.docx"
@@ -434,42 +622,42 @@ async def get_reports(
         
         verify_user_exists(user_id)
         
-        ensure_db_connection()
-        
-        # vss_reports 테이블이 없으면 빈 목록 반환
-        try:
+        with get_db_connection() as cursor:
+            # vss_reports 테이블이 없으면 빈 목록 반환
+            try:
+                cursor.execute("SELECT COUNT(*) FROM vss_reports WHERE USER_ID = ?", (user_id,))
+            except Exception as e:
+                # 테이블이 없으면 빈 목록 반환
+                logger.warning(f"vss_reports 테이블이 없습니다: {e}")
+                return {
+                    "success": True,
+                    "reports": [],
+                    "total": 0,
+                    "page": page,
+                    "page_size": page_size,
+                    "pages": 0
+                }
+            
+            # 전체 개수 조회
             cursor.execute("SELECT COUNT(*) FROM vss_reports WHERE USER_ID = ?", (user_id,))
-        except Exception as e:
-            # 테이블이 없으면 빈 목록 반환
-            logger.warning(f"vss_reports 테이블이 없습니다: {e}")
-            return {
-                "success": True,
-                "reports": [],
-                "total": 0,
-                "page": page,
-                "page_size": page_size,
-                "pages": 0
-            }
+            total = cursor.fetchone()[0]
+            
+            # 페이지네이션 계산
+            offset = (page - 1) * page_size
+            pages = max(1, (total + page_size - 1) // page_size)
+            
+            # 보고서 목록 조회 (최신순)
+            cursor.execute("""
+                SELECT ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES, CREATED_AT, UPDATED_AT
+                FROM vss_reports
+                WHERE USER_ID = ?
+                ORDER BY CREATED_AT DESC
+                LIMIT ? OFFSET ?
+            """, (user_id, page_size, offset))
+            
+            rows = cursor.fetchall()
         
-        # 전체 개수 조회
-        cursor.execute("SELECT COUNT(*) FROM vss_reports WHERE USER_ID = ?", (user_id,))
-        total = cursor.fetchone()[0]
-        
-        # 페이지네이션 계산
-        offset = (page - 1) * page_size
-        pages = max(1, (total + page_size - 1) // page_size)
-        
-        # 보고서 목록 조회 (최신순)
-        cursor.execute("""
-            SELECT ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES, CREATED_AT, UPDATED_AT
-            FROM vss_reports
-            WHERE USER_ID = ?
-            ORDER BY CREATED_AT DESC
-            LIMIT ? OFFSET ?
-        """, (user_id, page_size, offset))
-        
-        rows = cursor.fetchall()
-        
+        # context manager 밖에서 데이터 처리
         reports = []
         for row in rows:
             report_id, title, description, content, word_count, video_ids_json, video_titles_json, created_at, updated_at = row
@@ -532,16 +720,15 @@ async def get_report(
         
         verify_user_exists(user_id)
         
-        ensure_db_connection()
-        
-        # 보고서 조회
-        cursor.execute("""
-            SELECT ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES, CREATED_AT, UPDATED_AT
-            FROM vss_reports
-            WHERE ID = ? AND USER_ID = ?
-        """, (report_id, user_id))
-        
-        row = cursor.fetchone()
+        with get_db_connection() as cursor:
+            # 보고서 조회
+            cursor.execute("""
+                SELECT ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES, CREATED_AT, UPDATED_AT
+                FROM vss_reports
+                WHERE ID = ? AND USER_ID = ?
+            """, (report_id, user_id))
+            
+            row = cursor.fetchone()
         
         if not row:
             raise HTTPException(status_code=404, detail="보고서를 찾을 수 없습니다.")
@@ -596,18 +783,17 @@ async def delete_report(
         
         verify_user_exists(user_id)
         
-        ensure_db_connection()
-        
-        # 먼저 보고서 존재 여부 및 소유권 확인
-        cursor.execute("""
-            SELECT ID FROM vss_reports
-            WHERE ID = ? AND USER_ID = ?
-        """, (report_id, user_id))
-        
-        existing_report = cursor.fetchone()
-        
-        if not existing_report:
-            raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
+        with get_db_connection() as cursor:
+            # 먼저 보고서 존재 여부 및 소유권 확인
+            cursor.execute("""
+                SELECT ID FROM vss_reports
+                WHERE ID = ? AND USER_ID = ?
+            """, (report_id, user_id))
+            
+            existing_report = cursor.fetchone()
+            
+            if not existing_report:
+                raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
         
         # Word 파일 삭제 시도
         pattern = str(REPORTS_DIR / f"report_{report_id}_*.docx")
@@ -621,13 +807,13 @@ async def delete_report(
                 logger.warning(f"Word 파일 삭제 실패 ({file_path}): {e}")
         
         # 보고서 삭제
-        cursor.execute("""
-            DELETE FROM vss_reports
-            WHERE ID = ? AND USER_ID = ?
-        """, (report_id, user_id))
-        conn.commit()
-        
-        deleted_count = cursor.rowcount
+        with get_db_connection() as cursor:
+            cursor.execute("""
+                DELETE FROM vss_reports
+                WHERE ID = ? AND USER_ID = ?
+            """, (report_id, user_id))
+            
+            deleted_count = cursor.rowcount
         
         if deleted_count == 0:
             # 이미 삭제되었을 수 있음
@@ -665,20 +851,20 @@ async def add_clips_to_report(
             raise HTTPException(status_code=400, detail="클립 데이터가 필요합니다.")
         
         verify_user_exists(user_id)
-        ensure_db_connection()
         
-        # 기존 보고서 확인
-        cursor.execute("""
-            SELECT ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES
-            FROM vss_reports
-            WHERE ID = ? AND USER_ID = ?
-        """, (report_id, user_id))
-        
-        row = cursor.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
-        
-        report_id_db, title, description, existing_content, word_count, video_ids_json, video_titles_json = row
+        with get_db_connection() as cursor:
+            # 기존 보고서 확인
+            cursor.execute("""
+                SELECT ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES
+                FROM vss_reports
+                WHERE ID = ? AND USER_ID = ?
+            """, (report_id, user_id))
+            
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
+            
+            report_id_db, title, description, existing_content, word_count, video_ids_json, video_titles_json = row
         
         # 기존 클립 개수 계산 (콘텐츠에서 ## 숫자. 패턴으로 찾기)
         existing_clip_count = len(re.findall(r'## \d+\.', existing_content))
@@ -920,12 +1106,12 @@ async def add_clips_to_report(
         doc.save(str(word_file_path))
         
         # 데이터베이스 업데이트 (description 포함)
-        cursor.execute("""
-            UPDATE vss_reports
-            SET CONTENT = ?, DESCRIPTION = ?, WORD_COUNT = ?, VIDEO_IDS = ?, VIDEO_TITLES = ?, UPDATED_AT = CURRENT_TIMESTAMP
-            WHERE ID = ? AND USER_ID = ?
-        """, (new_content, updated_description, word_count, video_ids_json, video_titles_json, report_id, user_id))
-        conn.commit()
+        with get_db_connection() as cursor:
+            cursor.execute("""
+                UPDATE vss_reports
+                SET CONTENT = ?, DESCRIPTION = ?, WORD_COUNT = ?, VIDEO_IDS = ?, VIDEO_TITLES = ?, UPDATED_AT = CURRENT_TIMESTAMP
+                WHERE ID = ? AND USER_ID = ?
+            """, (new_content, updated_description, word_count, video_ids_json, video_titles_json, report_id, user_id))
         
         logger.info(f"보고서에 클립 추가 완료: USER_ID={user_id}, REPORT_ID={report_id}, 추가된 클립 수={len(clips)}")
         
@@ -956,20 +1142,20 @@ async def update_report(
             raise HTTPException(status_code=400, detail="사용자 ID가 필요합니다.")
         
         verify_user_exists(user_id)
-        ensure_db_connection()
         
-        # 기존 보고서 확인
-        cursor.execute("""
-            SELECT ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT
-            FROM vss_reports
-            WHERE ID = ? AND USER_ID = ?
-        """, (report_id, user_id))
-        
-        row = cursor.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
-        
-        report_id_db, existing_title, existing_description, existing_content, existing_word_count = row
+        with get_db_connection() as cursor:
+            # 기존 보고서 확인
+            cursor.execute("""
+                SELECT ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT
+                FROM vss_reports
+                WHERE ID = ? AND USER_ID = ?
+            """, (report_id, user_id))
+            
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
+            
+            report_id_db, existing_title, existing_description, existing_content, existing_word_count = row
         
         # 업데이트할 필드 준비
         title = request.title if request.title is not None else existing_title
@@ -1090,12 +1276,12 @@ async def update_report(
                 # Word 파일 재생성 실패해도 DB 업데이트는 계속 진행
         
         # 데이터베이스 업데이트
-        cursor.execute("""
-            UPDATE vss_reports
-            SET TITLE = ?, DESCRIPTION = ?, CONTENT = ?, WORD_COUNT = ?, UPDATED_AT = CURRENT_TIMESTAMP
-            WHERE ID = ? AND USER_ID = ?
-        """, (title, description, content, word_count, report_id, user_id))
-        conn.commit()
+        with get_db_connection() as cursor:
+            cursor.execute("""
+                UPDATE vss_reports
+                SET TITLE = ?, DESCRIPTION = ?, CONTENT = ?, WORD_COUNT = ?, UPDATED_AT = CURRENT_TIMESTAMP
+                WHERE ID = ? AND USER_ID = ?
+            """, (title, description, content, word_count, report_id, user_id))
         
         logger.info(f"보고서 수정 완료: USER_ID={user_id}, REPORT_ID={report_id}")
         
@@ -1274,20 +1460,20 @@ async def get_report_pdf(
             raise HTTPException(status_code=503, detail="PDF 변환 기능을 사용할 수 없습니다. 서버에 docx2pdf가 설치되어 있는지 확인하세요.")
         
         verify_user_exists(user_id)
-        ensure_db_connection()
         
-        # 보고서 확인
-        cursor.execute("""
-            SELECT ID, TITLE, FILE_URL
-            FROM vss_reports
-            WHERE ID = ? AND USER_ID = ?
-        """, (report_id, user_id))
-        
-        row = cursor.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
-        
-        report_id_db, title, file_url = row
+        with get_db_connection() as cursor:
+            # 보고서 확인
+            cursor.execute("""
+                SELECT ID, TITLE, FILE_URL
+                FROM vss_reports
+                WHERE ID = ? AND USER_ID = ?
+            """, (report_id, user_id))
+            
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
+            
+            report_id_db, title, file_url = row
         
         # Word 파일 경로 찾기
         pattern = str(REPORTS_DIR / f"report_{report_id_db}_*.docx")
@@ -1341,20 +1527,20 @@ async def regenerate_report_pdf(
             raise HTTPException(status_code=503, detail="PDF 변환 기능을 사용할 수 없습니다.")
         
         verify_user_exists(user_id)
-        ensure_db_connection()
         
-        # 보고서 확인
-        cursor.execute("""
-            SELECT ID, TITLE
-            FROM vss_reports
-            WHERE ID = ? AND USER_ID = ?
-        """, (report_id, user_id))
-        
-        row = cursor.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
-        
-        report_id_db, title = row
+        with get_db_connection() as cursor:
+            # 보고서 확인
+            cursor.execute("""
+                SELECT ID, TITLE
+                FROM vss_reports
+                WHERE ID = ? AND USER_ID = ?
+            """, (report_id, user_id))
+            
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
+            
+            report_id_db, title = row
         
         # Word 파일 경로 찾기
         pattern = str(REPORTS_DIR / f"report_{report_id_db}_*.docx")

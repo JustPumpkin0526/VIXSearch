@@ -8,16 +8,31 @@
 
     <nav class="flex flex-col flex-1 gap-2">
       <RouterLink
+        to="/management"
+        :class="[
+          'flex items-center rounded-md py-3 relative overflow-hidden transform transition-all duration-200 group hover:shadow hover:bg-white dark:hover:bg-gray-800 active:scale-[0.97]',
+          collapsed ? 'justify-center' : 'px-4',
+          isActive('/management')
+        ]">
+        <img
+          :src="storageIcon"
+          alt="Management"
+          :class="['w-6 h-6 object-contain', collapsed ? '' : 'flex-shrink-0', 'dark:brightness-0 dark:invert']"
+        />
+        <span v-if="!collapsed" class="ml-3 transition-opacity duration-200 text-lg text-gray-700 dark:text-white overflow-hidden whitespace-nowrap">{{ tSidebar.management }}</span>
+      </RouterLink>
+      <RouterLink
         to="/search"
         :class="[
           'flex items-center rounded-md py-3 relative overflow-hidden transform transition-all duration-200 group hover:shadow hover:bg-white dark:hover:bg-gray-800 active:scale-[0.97]',
           collapsed ? 'justify-center' : 'px-4',
           isActive('/search')
         ]">
-        <svg viewBox="0 0 24 24" :class="['w-6 h-6 icon-base text-gray-700 dark:text-white', collapsed ? '' : 'flex-shrink-0']">
-          <circle cx="11" cy="11" r="7" stroke="currentColor" fill="none" />
-          <line x1="21" y1="21" x2="16.65" y2="16.65" stroke="currentColor" />
-        </svg>
+        <img
+          :src="searchIcon"
+          alt="Search"
+          :class="['w-6 h-6 object-contain', collapsed ? '' : 'flex-shrink-0', 'dark:brightness-0 dark:invert']"
+        />
         <span v-if="!collapsed" class="ml-3 transition-opacity duration-200 text-lg text-gray-700 dark:text-white overflow-hidden whitespace-nowrap">{{ tSidebar.search }}</span>
       </RouterLink>
       <RouterLink
@@ -50,7 +65,8 @@
         </svg>
         <span v-if="!collapsed" class="ml-3 transition-opacity duration-200 text-lg text-gray-700 dark:text-white overflow-hidden whitespace-nowrap">{{ tSidebar.report }}</span>
       </RouterLink>
-      <RouterLink
+      <!-- Event Reviewer 메뉴 (비활성화) -->
+      <!-- <RouterLink
         to="/event-reviewer"
         :class="[
           'flex items-center rounded-md py-3 relative overflow-hidden transform transition-all duration-200 group hover:shadow hover:bg-white dark:hover:bg-gray-800 active:scale-[0.97]',
@@ -61,8 +77,9 @@
           <path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" stroke="currentColor" fill="none" />
         </svg>
         <span v-if="!collapsed" class="ml-3 transition-opacity duration-200 text-lg text-gray-700 dark:text-white overflow-hidden whitespace-nowrap">{{ tSidebar.eventReviewer }}</span>
-      </RouterLink>
-      <RouterLink
+      </RouterLink> -->
+      <!-- CV Event Detector 메뉴 (비활성화) -->
+      <!-- <RouterLink
         to="/cv-event-detector"
         :class="[
           'flex items-center rounded-md py-3 relative overflow-hidden transform transition-all duration-200 group hover:shadow hover:bg-white dark:hover:bg-gray-800 active:scale-[0.97]',
@@ -75,21 +92,7 @@
           <polyline points="21 15 16 10 5 21" stroke="currentColor" fill="none" />
         </svg>
         <span v-if="!collapsed" class="ml-3 transition-opacity duration-200 text-lg text-gray-700 dark:text-white overflow-hidden whitespace-nowrap">{{ tSidebar.cvEventDetector }}</span>
-      </RouterLink>
-      <RouterLink
-        v-if="isAdmin"
-        to="/admin-approvals"
-        :class="[
-          'flex items-center rounded-md py-3 relative overflow-hidden transform transition-all duration-200 group hover:shadow hover:bg-white dark:hover:bg-gray-800 active:scale-[0.97]',
-          collapsed ? 'justify-center' : 'px-4',
-          isActive('/admin-approvals')
-        ]">
-        <svg viewBox="0 0 24 24" :class="['w-6 h-6 icon-base text-gray-700 dark:text-white', collapsed ? '' : 'flex-shrink-0']">
-          <path d="M12 3l7 4v5c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V7l7-4z" stroke="currentColor" fill="none" />
-          <path d="M9 12l2 2 4-4" stroke="currentColor" fill="none" />
-        </svg>
-        <span v-if="!collapsed" class="ml-3 transition-opacity duration-200 text-lg text-gray-700 dark:text-white overflow-hidden whitespace-nowrap">{{ tSidebar.adminApproval }}</span>
-      </RouterLink>
+      </RouterLink> -->
 
       <div :class="['absolute left-6 right-6 bottom-[1vh] flex flex-col space-y-3', collapsed ? 'items-center' : 'items-start']">
         <!-- Collapse button positioned with the bottom group -->
@@ -214,6 +217,18 @@
                 <img src="@/assets/icons/help.png" alt="Help" class="w-4 h-4 object-contain dark:brightness-0 dark:invert flex-shrink-0" />
                 <span class="overflow-hidden whitespace-nowrap">{{ tSidebar.help }}</span>
               </button>
+              <div v-if="isAdmin" class="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+              <button 
+                v-if="isAdmin"
+                class="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 transition-colors overflow-hidden"
+                @click="handleAdminApproval"
+              >
+                <svg viewBox="0 0 24 24" class="w-4 h-4 text-gray-700 dark:text-white flex-shrink-0">
+                  <path d="M12 3l7 4v5c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V7l7-4z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                  <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                </svg>
+                <span class="overflow-hidden whitespace-nowrap">{{ tSidebar.adminApproval }}</span>
+              </button>
               <div class="border-t border-gray-200 dark:border-gray-700 my-1"></div>
               <button 
                 class="w-full px-4 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 flex items-center gap-2 transition-colors overflow-hidden"
@@ -337,7 +352,12 @@
               @mousedown="(e) => handleModalBackgroundClick(e, closeSettingModal)"
               @mouseup="(e) => handleModalBackgroundClick(e, closeSettingModal)"
             >
-                <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+                <div 
+                  class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden flex flex-col"
+                  @click.stop
+                  @mousedown.stop
+                  @mouseup.stop
+                >
                   <div class="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
                     <h2 class="text-xl font-bold text-gray-800 dark:text-gray-200 overflow-hidden whitespace-nowrap">{{ tSidebar.setting }}</h2>
                   <button 
@@ -534,6 +554,8 @@ import { useRoute, useRouter } from "vue-router";
 import { useSettingStore } from '@/stores/settingStore';
 import { getApiBaseUrl } from '@/utils/apiConfig';
 import logoUrl from '@/assets/icons/Intellivix_logo.png';
+import storageIcon from '@/assets/icons/storage.png';
+import searchIcon from '@/assets/icons/search.svg';
 
 const route = useRoute();
 const router = useRouter();
@@ -557,9 +579,10 @@ const isUploadingImage = ref(false);
 // ==================== 다국어 지원 ====================
 const sidebarTranslations = {
   ko: {
-    search: "검색",
+    search: "장면 검색",
+    management: "동영상 관리",
     summarize: "동영상 요약",
-    report: "요약 보고서",
+    report: "보고서 관리",
     eventReviewer: "이벤트 검토",
     cvEventDetector: "CV 이벤트 감지",
     adminApproval: "관리자 승인",
@@ -603,9 +626,10 @@ const sidebarTranslations = {
     collapseSidebar: "사이드바 접기"
   },
   en: {
-    search: "Search",
+    search: "Scene Search",
+    management: "VideoManagement",
     summarize: "Summarize",
-    report: "Report",
+    report: "Report Management",
     eventReviewer: "Event Reviewer",
     cvEventDetector: "CV Event Detector",
     adminApproval: "Admin Approval",
@@ -691,7 +715,7 @@ function logout() {
 }
 
 function goToVideoList() {
-  router.push("/search");
+  router.push("/management");
 }
 
 function getUserInitial(userId) {
@@ -720,8 +744,8 @@ function toggleProfileMenu(event) {
     
     const profileRect = profileBlockRef.value.getBoundingClientRect();
     const menuWidth = 160; // min-w-[160px]
-    // 메뉴 항목: 프로필 설정, Setting, Help, 로그아웃 (각 약 40px) + 구분선 + 패딩
-    const menuHeight = 170; // 실제 메뉴 높이를 더 크게 설정
+    // 메뉴 항목: 프로필 설정, Setting, Help, 관리자 승인(관리자만), 로그아웃 (각 약 40px) + 구분선 + 패딩
+    const menuHeight = 170; // 실제 메뉴 높이를 더 크게 설정 (관리자 승인 메뉴 포함)
     
     // 프로필 블록 위쪽에 메뉴 표시 (간격을 더 크게)
     const x = profileRect.left + (profileRect.width / 2) - (menuWidth / 2);
@@ -750,6 +774,12 @@ function toggleProfileMenu(event) {
 // 팝업 배경 클릭 핸들러 (드래그 방지)
 let modalMouseDownPos = null;
 function handleModalBackgroundClick(event, closeFunction) {
+  // 모달 내용 영역을 클릭한 경우 무시
+  const modalContent = event.target.closest('.bg-white, .dark\\:bg-gray-800');
+  if (modalContent && modalContent !== event.currentTarget) {
+    return;
+  }
+  
   // mousedown 위치 저장
   if (event.type === 'mousedown') {
     modalMouseDownPos = { x: event.clientX, y: event.clientY };
@@ -885,6 +915,11 @@ function handleHelp() {
   console.log('Help 클릭');
 }
 
+function handleAdminApproval() {
+  router.push("/admin-approvals");
+  closeContextMenu();
+}
+
 function triggerImageUpload() {
   if (profileImageInputRef.value) {
     profileImageInputRef.value.click();
@@ -969,7 +1004,7 @@ onMounted(() => {
   if (userId.value) {
     loadUserInfo();
   }
-  window.addEventListener("storage", checkLogin);
+  window.addEventListener("management", checkLogin);
   window.addEventListener("vss-login", () => {
     checkLogin();
     if (userId.value) {
