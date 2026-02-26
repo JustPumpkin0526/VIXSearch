@@ -53,19 +53,21 @@
                 Management 메뉴에서 동영상을 선택하고 검색 버튼을 클릭하세요.
             </div>
             </div>
-            <div v-else class="grid gap-4" :style="{ gridTemplateColumns: `repeat(${videoListColumns}, minmax(0, 1fr))` }">
-              <div v-for="video in paginatedVideoListItems" :key="video.id"
+            <div v-else class="grid gap-4" :key="`video-list-${videoListKey}`" :style="{ gridTemplateColumns: `repeat(${videoListColumns}, minmax(0, 1fr))` }">
+              <div v-for="video in paginatedVideoListItems" :key="`video-${video.id || video.dbId || Math.random()}`"
                 class="flex items-center gap-3 p-3 rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all cursor-pointer"
                 :class="{ 'ring-2 ring-blue-400 dark:ring-blue-500 bg-blue-50 dark:bg-blue-900/30': selectedIds.includes(video.id) }"
                 @click="toggleVideoSelection(video.id)">
-                <!-- 이미지 파일인 경우 -->
+                <!-- 이미지 파일인 경우 (최적화: 지연 로딩) -->
                 <img 
                   v-if="isImageFile(video) && video.displayUrl"
-                  :src="video.displayUrl"
+                  :src="`${video.displayUrl}${video.displayUrl.includes('?') ? '&' : '?'}t=${video.dbId || video.id || Date.now()}`"
                   class="w-24 h-16 object-cover rounded flex-shrink-0"
                   crossorigin="anonymous"
+                  loading="lazy"
                   draggable="false"
                   alt=""
+                  @error="(e) => { console.warn('이미지 로드 실패:', video.title, video.displayUrl); e.target.style.display = 'none'; }"
                 />
                 <!-- 지원하지 않는 형식이고 변환 중이거나 변환되지 않은 경우 -->
                 <div v-else-if="!isImageFile(video) && isUnsupportedFormat(video.title || '') && (video._isConverting || !video.displayUrl?.includes('converted-videos'))"
@@ -75,15 +77,16 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                   </svg>
                 </div>
-                <!-- 동영상인 경우 -->
+                <!-- 동영상인 경우 (최적화: metadata만 로드) -->
                 <video 
                   v-else-if="video.displayUrl && !isImageFile(video) && (!isUnsupportedFormat(video.title || '') || video.displayUrl?.includes('converted-videos'))" 
-                  :src="video.displayUrl" 
+                  :src="`${video.displayUrl}${video.displayUrl.includes('?') ? '&' : '?'}t=${video.dbId || video.id || Date.now()}`" 
                   class="w-24 h-16 object-cover rounded flex-shrink-0"
                   crossorigin="anonymous"
                   preload="metadata"
                   draggable="false"
                   @loadedmetadata="(e) => { if (e.target && isFinite(e.target.duration) && e.target.duration > 0) video.duration = e.target.duration; }"
+                  @error="(e) => { console.warn('비디오 로드 실패:', video.title, video.displayUrl); e.target.style.display = 'none'; }"
                 ></video>
                 <div v-else class="w-24 h-16 bg-gray-200 dark:bg-gray-600 rounded flex-shrink-0 flex items-center justify-center">
                   <svg class="w-8 h-8 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -299,6 +302,7 @@
                         v-if="video.displayUrl && isImageFile(video)"
                         :src="video.displayUrl" 
                         class="w-32 h-20 object-cover rounded flex-shrink-0"
+                        loading="lazy"
                         @error="(e) => handleChatVideoError(video, e)"
                         crossorigin="anonymous"
                         draggable="false"
@@ -312,7 +316,7 @@
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                         </svg>
                       </div>
-                      <!-- 동영상인 경우 -->
+                      <!-- 동영상인 경우 (최적화: metadata만 로드) -->
                       <video 
                         v-else-if="video.displayUrl && !isImageFile(video) && (!isUnsupportedFormat(video.title || '') || video.displayUrl?.includes('converted-videos'))" 
                         :src="video.displayUrl" 
@@ -342,7 +346,7 @@
                     </p>
                     <div v-for="clip in message.clips" :key="clip.id"
                       :class="message.role === 'assistant' ? 'flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded-xl transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-600' : 'flex items-center gap-3 p-3 bg-green-600/80 rounded-xl transition-all duration-200 hover:bg-green-600'">
-                      <video :src="clip.url" class="w-32 h-20 object-cover rounded cursor-pointer flex-shrink-0" preload="metadata"
+                      <video :src="clip.url" class="w-32 h-20 object-cover rounded cursor-pointer flex-shrink-0" preload="none"
                         @click.stop="zoomClip(clip)"
                         @error="(e) => console.warn('clip thumbnail error', e, clip.url)"
                         crossorigin="anonymous"></video>
@@ -747,12 +751,13 @@
                   class="flex items-center gap-3 p-3 rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all cursor-pointer"
                   :class="{ 'ring-2 ring-green-400 dark:ring-green-500 bg-green-50 dark:bg-green-900/30': selectedVideoIds.includes(video.id) }"
                   @click="toggleVideoSelectionInModal(video.id)">
-                  <!-- 이미지 파일인 경우 -->
+                  <!-- 이미지 파일인 경우 (최적화: 지연 로딩) -->
                   <img 
                     v-if="isImageFile(video) && video.displayUrl"
                     :src="video.displayUrl"
                     class="w-24 h-16 object-cover rounded flex-shrink-0"
                     crossorigin="anonymous"
+                    loading="lazy"
                     draggable="false"
                     alt=""
                   />
@@ -764,7 +769,7 @@
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                     </svg>
                   </div>
-                  <!-- 동영상인 경우 -->
+                  <!-- 동영상인 경우 (최적화: metadata만 로드) -->
                   <video 
                     v-else-if="video.displayUrl && !isImageFile(video) && (!isUnsupportedFormat(video.title || '') || video.displayUrl?.includes('converted-videos'))" 
                     :src="video.displayUrl" 
@@ -1638,6 +1643,9 @@ import { useRoute } from 'vue-router';
 import { useSettingStore } from '@/stores/settingStore';
 import { getApiBaseUrl } from '@/utils/apiConfig';
 import { marked } from 'marked';
+import { formatTime, getCurrentTime } from '@/utils/formatUtils';
+import { isImageFile, isUnsupportedFormat, getVideoFileExtension, isVideoDeleted } from '@/utils/videoUtils';
+import { useVideoSync } from '@/composables/useVideoSync';
 import settingIcon from '@/assets/icons/setting.png';
 import videoIcon from '@/assets/icons/video.png';
 import timeIcon from '@/assets/icons/time.png';
@@ -1740,6 +1748,7 @@ const videoListColumns = computed(() => {
 
 // 페이지네이션 관련
 const videoListCurrentPage = ref(1);
+const videoListKey = ref(0); // 리스트 강제 리렌더링을 위한 키
 const VIDEO_LIST_ROWS_PER_PAGE = 8; // 페이지당 8줄
 
 // 페이지당 아이템 수 계산 (8줄 × 열 수)
@@ -1797,16 +1806,24 @@ function startResize(e) {
   document.addEventListener('mouseup', handleMouseUp);
 }
 
-// 모든 동영상의 duration을 미리 로드하는 함수
-function preloadAllVideoDurations() {
-  items.value.forEach(video => {
+// 동영상 duration을 지연 로딩으로 미리 로드하는 함수 (최적화: 배치 처리)
+let durationLoadQueue = [];
+let isProcessingDurationQueue = false;
+const DURATION_BATCH_SIZE = 5; // 한 번에 처리할 동영상 수
+const DURATION_BATCH_DELAY = 200; // 배치 간 지연 시간 (ms)
+
+function processDurationQueue() {
+  if (isProcessingDurationQueue || durationLoadQueue.length === 0) return;
+  
+  isProcessingDurationQueue = true;
+  const batch = durationLoadQueue.splice(0, DURATION_BATCH_SIZE);
+  
+  batch.forEach(video => {
     // 이미지 파일이면 스킵
     if (isImageFile(video)) return;
     
-    // 백엔드 API에서 받은 duration이 있으면 먼저 사용 (원본 파일에서 추출한 정보)
-    // .avi 파일의 경우 변환 전 원본 파일에서 추출한 duration을 사용
+    // 백엔드 API에서 받은 duration이 있으면 먼저 사용
     if (video.duration && isFinite(video.duration) && video.duration > 0) {
-      // video.duration은 이미 설정되어 있으므로 그대로 사용
       return;
     }
     
@@ -1824,16 +1841,42 @@ function preloadAllVideoDurations() {
       if (duration && isFinite(duration) && duration > 0) {
         video.duration = duration;
       }
-      document.body.removeChild(videoElement);
+      if (videoElement.parentNode) {
+        document.body.removeChild(videoElement);
+      }
     }, { once: true });
     
     videoElement.addEventListener('error', () => {
-      document.body.removeChild(videoElement);
+      if (videoElement.parentNode) {
+        document.body.removeChild(videoElement);
+      }
     }, { once: true });
     
     videoElement.src = video.displayUrl;
     document.body.appendChild(videoElement);
   });
+  
+  isProcessingDurationQueue = false;
+  
+  // 다음 배치 처리
+  if (durationLoadQueue.length > 0) {
+    setTimeout(processDurationQueue, DURATION_BATCH_DELAY);
+  }
+}
+
+function preloadAllVideoDurations() {
+  // 큐에 추가
+  durationLoadQueue = items.value.filter(video => {
+    if (isImageFile(video)) return false;
+    if (video.duration && isFinite(video.duration) && video.duration > 0) return false;
+    if (!video.displayUrl) return false;
+    return true;
+  });
+  
+  // 첫 배치 시작
+  if (durationLoadQueue.length > 0) {
+    setTimeout(processDurationQueue, 100);
+  }
 }
 
 // ==================== 예시 이미지 촬영용 고정값 (비활성화하려면 ENABLE_DEMO_MODE를 false로 설정) ====================
@@ -1982,14 +2025,7 @@ const currentChatMessages = computed(() => {
   });
 });
 
-// 유틸리티 함수
-function formatTime(sec) {
-  if (!sec || isNaN(sec)) return '00:00';
-  const m = Math.floor(sec / 60).toString().padStart(2, '0');
-  const s = Math.floor(sec % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
-}
-
+// formatDuration은 settingStore.language를 사용하는 커스텀 버전 필요
 function formatDuration(sec) {
   if (!sec || isNaN(sec) || sec === 0) {
     return settingStore.language === 'ko' ? '0초' : '0sec';
@@ -2012,35 +2048,6 @@ function formatDuration(sec) {
   }
   
   return parts.join(' ');
-}
-
-function getCurrentTime() {
-  const now = new Date();
-  return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-}
-
-function getVideoFileExtension(filename) {
-  return filename.toLowerCase().split('.').pop();
-}
-
-const UNSUPPORTED_VIDEO_FORMATS = ['avi', 'mkv', 'flv', 'wmv']; // 브라우저가 직접 재생하지 못하는 형식
-
-function isUnsupportedFormat(filename) {
-  return UNSUPPORTED_VIDEO_FORMATS.includes(getVideoFileExtension(filename));
-}
-
-function isImageFile(video) {
-  if (!video) return false;
-  // file 객체가 있으면 type으로 확인
-  if (video.file && video.file.type) {
-    return video.file.type.startsWith('image/');
-  }
-  // 파일명으로 확인
-  const filename = video.title || video.name || '';
-  if (!filename) return false;
-  const ext = getVideoFileExtension(filename);
-  const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'tif'];
-  return imageExtensions.includes(ext.toLowerCase());
 }
 
 function constrainContextMenuPosition(x, y) {
@@ -4642,9 +4649,6 @@ onMounted(async () => {
   window.addEventListener('video-context-menu-opened', closeChatMessageContextMenu);
   window.addEventListener('chat-message-context-menu-opened', closeChatMessageContextMenu);
   
-  // Management 메뉴에서 동영상 삭제 시 동기화
-  window.addEventListener('videos-deleted-from-management', handleVideosDeletedFromManagement);
-  
   // 컨텍스트 메뉴 밖 클릭 시 닫기
   document.addEventListener('click', handleClickOutsideContextMenu);
   
@@ -4660,6 +4664,72 @@ onMounted(async () => {
       preloadAllVideoDurations();
     }
   });
+});
+
+// Management 메뉴에서 동영상 삭제 시 동기화 (useVideoSync 사용)
+// composable은 setup 스크립트 최상위에서 호출해야 함
+useVideoSync(items, selectedIds, chatSessions, {
+  updateVideoList: () => {
+    // 리스트 강제 리렌더링
+    videoListKey.value += 1;
+    nextTick(() => {
+      if (items.value.length > 0) {
+        items.value = [...items.value.map(v => ({ ...v }))];
+      }
+      videoListKey.value += 1;
+    });
+  },
+  updateChatSessions: (deletedIds, deletedDbIds) => {
+    // 채팅 세션에서 삭제된 비디오 제거
+    chatSessions.value.forEach(chat => {
+      if (chat.videoList && Array.isArray(chat.videoList)) {
+        chat.videoList = chat.videoList.filter(video => {
+          const videoId = video.id;
+          const videoDbId = video.dbId;
+          return !isVideoDeleted(videoId, videoDbId, deletedIds, deletedDbIds);
+        });
+      }
+      
+      if (chat.selectedVideoIds && Array.isArray(chat.selectedVideoIds)) {
+        chat.selectedVideoIds = chat.selectedVideoIds.filter(id => {
+          if (id == null) return true;
+          const idStr = String(id);
+          const idNum = !isNaN(Number(id)) ? Number(id) : null;
+          return !deletedIds.has(id) && 
+                 !deletedIds.has(idStr) && 
+                 !deletedIds.has(idNum) &&
+                 !deletedDbIds.has(id) && 
+                 !deletedDbIds.has(idStr) && 
+                 !deletedDbIds.has(idNum);
+        });
+      }
+      
+      if (chat.messages && Array.isArray(chat.messages)) {
+        chat.messages.forEach(message => {
+          if (message.selectedVideos && Array.isArray(message.selectedVideos)) {
+            message.selectedVideos = message.selectedVideos.filter(video => {
+              const videoId = video.id;
+              const videoDbId = video.dbId;
+              return !isVideoDeleted(videoId, videoDbId, deletedIds, deletedDbIds);
+            });
+          }
+        });
+      }
+    });
+    updateCurrentChatVideoList();
+  },
+  onVideoDeleted: (deletedIds, deletedDbIds) => {
+    // 페이지네이션 조정
+    nextTick(() => {
+      if (videoListTotalPages.value > 0 && videoListCurrentPage.value > videoListTotalPages.value) {
+        videoListCurrentPage.value = videoListTotalPages.value;
+      }
+      if (paginatedVideoListItems.value.length === 0 && videoListCurrentPage.value > 1) {
+        videoListCurrentPage.value = Math.max(1, videoListCurrentPage.value - 1);
+      }
+      autoSaveSearchState();
+    });
+  }
 });
 
 // 상태 변경 감지하여 자동 저장
@@ -4708,68 +4778,231 @@ watch([items, videoListItemsPerPage, videoListTotalPages], () => {
 
 // Management 메뉴에서 동영상 삭제 시 처리
 function handleVideosDeletedFromManagement(event) {
-  const { ids, dbIds } = event.detail;
+  console.log('[Search] videos-deleted-from-management 이벤트 수신됨', event);
+  const { ids, dbIds } = event.detail || {};
   
-  if (!ids || !dbIds || (ids.length === 0 && dbIds.length === 0)) {
+  // ids와 dbIds가 모두 없거나 둘 다 빈 배열이면 처리하지 않음
+  const idsArray = Array.isArray(ids) ? ids : [];
+  const dbIdsArray = Array.isArray(dbIds) ? dbIds : [];
+  
+  if (idsArray.length === 0 && dbIdsArray.length === 0) {
+    console.log('[Search] Management에서 삭제 이벤트 수신했으나 삭제할 동영상이 없음');
     return;
   }
   
-  // 삭제된 동영상 ID와 dbId를 Set으로 변환 (빠른 조회를 위해)
-  const deletedIds = new Set(ids);
-  const deletedDbIds = new Set(dbIds);
+  // 삭제된 동영상 ID와 dbId를 Set으로 변환 (타입 통일: 문자열과 숫자 모두 포함)
+  // ID 비교 시 타입 불일치 문제를 해결하기 위해 문자열과 숫자 모두 저장
+  const deletedIds = new Set();
+  const deletedDbIds = new Set();
   
-  // items.value에서 삭제된 동영상 제거
+  // idsArray의 모든 값을 문자열과 숫자로 변환하여 추가
+  idsArray.forEach(id => {
+    if (id != null && id !== undefined) {
+      deletedIds.add(id);
+      deletedIds.add(String(id));
+      if (typeof id === 'string' && !isNaN(Number(id))) {
+        deletedIds.add(Number(id));
+      }
+      if (typeof id === 'number') {
+        deletedIds.add(String(id));
+      }
+    }
+  });
+  
+  // dbIdsArray의 모든 값을 문자열과 숫자로 변환하여 추가
+  dbIdsArray.forEach(dbId => {
+    if (dbId != null && dbId !== undefined) {
+      deletedDbIds.add(dbId);
+      deletedDbIds.add(String(dbId));
+      if (typeof dbId === 'string' && !isNaN(Number(dbId))) {
+        deletedDbIds.add(Number(dbId));
+      }
+      if (typeof dbId === 'number') {
+        deletedDbIds.add(String(dbId));
+      }
+    }
+  });
+  
+  console.log(`[Search] Management에서 삭제 이벤트 수신: ids=${idsArray.length}개, dbIds=${dbIdsArray.length}개`);
+  console.log(`[Search] 삭제할 IDs:`, idsArray);
+  console.log(`[Search] 삭제할 DB IDs:`, dbIdsArray);
+  console.log(`[Search] 현재 items 개수:`, items.value.length);
+  console.log(`[Search] 현재 items의 ID들:`, items.value.map(v => ({ id: v.id, dbId: v.dbId })));
+  
+  // ID 비교 헬퍼 함수 (타입 안전한 비교)
+  const isVideoDeleted = (videoId, videoDbId) => {
+    if (videoId == null && videoDbId == null) return false;
+    
+    // 모든 가능한 ID 조합 확인 (타입 변환 포함)
+    const idStr = videoId != null ? String(videoId) : null;
+    const idNum = videoId != null && !isNaN(Number(videoId)) ? Number(videoId) : null;
+    const dbIdStr = videoDbId != null ? String(videoDbId) : null;
+    const dbIdNum = videoDbId != null && !isNaN(Number(videoDbId)) ? Number(videoDbId) : null;
+    
+    return deletedIds.has(videoId) || 
+           deletedIds.has(idStr) || 
+           deletedIds.has(idNum) ||
+           deletedDbIds.has(videoDbId) ||
+           deletedDbIds.has(dbIdStr) ||
+           deletedDbIds.has(dbIdNum) ||
+           (videoId != null && deletedDbIds.has(videoId)) ||
+           (videoId != null && deletedDbIds.has(idStr)) ||
+           (videoId != null && deletedDbIds.has(idNum)) ||
+           (videoDbId != null && deletedIds.has(videoDbId)) ||
+           (videoDbId != null && deletedIds.has(dbIdStr)) ||
+           (videoDbId != null && deletedIds.has(dbIdNum));
+  };
+  
+  // items.value에서 삭제된 동영상 제거 (새 배열 생성하여 Vue 반응성 보장)
   const beforeCount = items.value.length;
-  items.value = items.value.filter(video => {
+  const removedVideos = [];
+  const newItems = [];
+  
+  items.value.forEach(video => {
     const videoId = video.id;
-    const videoDbId = video.dbId || video.id;
+    const videoDbId = video.dbId;
     
-    // id 또는 dbId가 삭제 목록에 있으면 제거
-    const shouldRemove = deletedIds.has(videoId) || 
-                        deletedDbIds.has(videoDbId) ||
-                        (videoId && deletedDbIds.has(videoId)) ||
-                        (videoDbId && deletedIds.has(videoDbId));
+    // ID 비교 함수 사용
+    const shouldRemove = isVideoDeleted(videoId, videoDbId);
     
-    return !shouldRemove;
+    if (shouldRemove) {
+      removedVideos.push({ id: videoId, dbId: videoDbId, title: video.title });
+      // objectUrl이 있으면 해제
+      if (video.objectUrl) {
+        try {
+          URL.revokeObjectURL(video.objectUrl);
+        } catch (error) {
+          console.error("Failed to revoke object URL:", error);
+        }
+      }
+    } else {
+      newItems.push(video);
+    }
   });
   
-  // selectedIds에서도 삭제된 동영상 제거
+  // 새 배열로 교체하여 Vue 반응성 보장
+  // 배열을 완전히 새로 생성하여 Vue 반응성 강제
+  // 빈 배열로 먼저 설정한 후 새 배열로 교체하여 Vue가 변경을 확실히 감지하도록 함
+  if (newItems.length === 0) {
+    items.value = [];
+  } else {
+    items.value = newItems.map(v => ({ ...v }));
+  }
+  
+  if (removedVideos.length > 0) {
+    console.log(`[Search] items에서 제거된 동영상:`, removedVideos);
+  }
+  
+  // 리스트 강제 리렌더링 (즉시 실행)
+  videoListKey.value += 1;
+  
+  // Vue 반응성 강제 업데이트를 위한 추가 처리
+  nextTick(() => {
+    // 배열 참조를 완전히 새로 만들어 Vue가 변경을 확실히 감지하도록 함
+    if (items.value.length > 0) {
+      items.value = [...items.value.map(v => ({ ...v }))];
+    }
+    videoListKey.value += 1;
+  });
+  
+  // selectedIds에서도 삭제된 동영상 제거 (타입 변환 포함)
   selectedIds.value = selectedIds.value.filter(id => {
-    return !deletedIds.has(id) && !deletedDbIds.has(id);
+    if (id == null) return true;
+    const idStr = String(id);
+    const idNum = !isNaN(Number(id)) ? Number(id) : null;
+    return !deletedIds.has(id) && 
+           !deletedIds.has(idStr) && 
+           !deletedIds.has(idNum) &&
+           !deletedDbIds.has(id) && 
+           !deletedDbIds.has(idStr) && 
+           !deletedDbIds.has(idNum);
   });
   
-  // 모든 채팅 세션의 videoList에서도 삭제된 동영상 제거
+  // 모든 채팅 세션의 videoList에서도 삭제된 동영상 제거 (새 배열 생성)
   chatSessions.value.forEach(chat => {
     if (chat.videoList && Array.isArray(chat.videoList)) {
-      chat.videoList = chat.videoList.filter(video => {
+      const newVideoList = [];
+      chat.videoList.forEach(video => {
         const videoId = video.id;
-        const videoDbId = video.dbId || video.id;
+        const videoDbId = video.dbId;
         
-        const shouldRemove = deletedIds.has(videoId) || 
-                            deletedDbIds.has(videoDbId) ||
-                            (videoId && deletedDbIds.has(videoId)) ||
-                            (videoDbId && deletedIds.has(videoDbId));
+        const shouldRemove = isVideoDeleted(videoId, videoDbId);
         
-        return !shouldRemove;
+        if (!shouldRemove) {
+          newVideoList.push(video);
+        }
+      });
+      chat.videoList = newVideoList;
+    }
+    
+    // selectedVideoIds에서도 삭제된 동영상 제거 (타입 변환 포함)
+    if (chat.selectedVideoIds && Array.isArray(chat.selectedVideoIds)) {
+      chat.selectedVideoIds = chat.selectedVideoIds.filter(id => {
+        if (id == null) return true;
+        const idStr = String(id);
+        const idNum = !isNaN(Number(id)) ? Number(id) : null;
+        return !deletedIds.has(id) && 
+               !deletedIds.has(idStr) && 
+               !deletedIds.has(idNum) &&
+               !deletedDbIds.has(id) && 
+               !deletedDbIds.has(idStr) && 
+               !deletedDbIds.has(idNum);
       });
     }
     
-    // selectedVideoIds에서도 삭제된 동영상 제거
-    if (chat.selectedVideoIds && Array.isArray(chat.selectedVideoIds)) {
-      chat.selectedVideoIds = chat.selectedVideoIds.filter(id => {
-        return !deletedIds.has(id) && !deletedDbIds.has(id);
+    // messages의 selectedVideos에서도 삭제된 동영상 제거 (새 배열 생성)
+    if (chat.messages && Array.isArray(chat.messages)) {
+      chat.messages.forEach(message => {
+        if (message.selectedVideos && Array.isArray(message.selectedVideos)) {
+          const newSelectedVideos = [];
+          message.selectedVideos.forEach(video => {
+            const videoId = video.id;
+            const videoDbId = video.dbId;
+            
+            const shouldRemove = isVideoDeleted(videoId, videoDbId);
+            
+            if (!shouldRemove) {
+              newSelectedVideos.push(video);
+            }
+          });
+          message.selectedVideos = newSelectedVideos;
+        }
       });
     }
   });
   
   // 상태 저장
   updateCurrentChatVideoList();
-  autoSaveSearchState();
   
-  const afterCount = items.value.length;
-  if (beforeCount !== afterCount) {
-    console.log(`[Search] Management 메뉴에서 삭제된 동영상 동기화: ${beforeCount - afterCount}개 동영상 제거됨`);
-  }
+    // 페이지네이션 조정: 삭제 후 현재 페이지가 유효한지 확인
+    nextTick(() => {
+      const afterCount = items.value.length;
+      const deletedCount = beforeCount - afterCount;
+      
+      // 페이지네이션 조정: 현재 페이지가 총 페이지 수를 초과하면 마지막 페이지로 이동
+      if (videoListTotalPages.value > 0 && videoListCurrentPage.value > videoListTotalPages.value) {
+        videoListCurrentPage.value = videoListTotalPages.value;
+      }
+      
+      // 삭제된 동영상이 현재 페이지에 있었고, 현재 페이지가 비어있으면 이전 페이지로 이동
+      if (paginatedVideoListItems.value.length === 0 && videoListCurrentPage.value > 1) {
+        videoListCurrentPage.value = Math.max(1, videoListCurrentPage.value - 1);
+      }
+      
+      // 추가 리렌더링 강제 (이중 nextTick으로 DOM 업데이트 보장)
+      nextTick(() => {
+        videoListKey.value += 1;
+      });
+      
+      // 상태 저장
+      autoSaveSearchState();
+      
+      if (deletedCount > 0) {
+        console.log(`[Search] Management 메뉴에서 삭제된 동영상 동기화 완료: ${deletedCount}개 동영상 제거됨`);
+      } else {
+        console.log(`[Search] Management 메뉴에서 삭제 이벤트 처리 완료 (제거된 동영상 없음)`);
+      }
+    });
 }
 
 // 컴포넌트 언마운트 전 상태 저장

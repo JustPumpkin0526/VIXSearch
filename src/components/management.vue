@@ -114,12 +114,13 @@
               <div
                 class="w-[100%] h-[100%] flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-600 rounded-xl mb-2 overflow-hidden relative group-hover:from-gray-200 group-hover:to-gray-300 dark:group-hover:from-gray-600 dark:group-hover:to-gray-500 transition-all duration-300 aspect-video"
                 @mouseenter="hoveredVideoId = video.id" @mouseleave="hoveredVideoId = null">
-                <!-- 이미지 파일인 경우 -->
+                <!-- 이미지 파일인 경우 (최적화: 지연 로딩) -->
                 <img 
                   v-if="isImageFile(video) && video.displayUrl"
                   :src="video.displayUrl"
                   class="object-contain w-full h-full rounded-xl transition-transform duration-300 group-hover:scale-105"
                   :crossorigin="video.displayUrl && !video.displayUrl.startsWith('blob:') ? 'anonymous' : null"
+                  loading="lazy"
                   @error="(e) => handleImageError(video.id, e)"
                   draggable="false"
                   alt=""
@@ -138,13 +139,13 @@
                     }}
                   </span>
                 </div>
-                <!-- 비디오 엘리먼트 표시 (변환된 MP4 또는 지원하는 형식) -->
+                <!-- 비디오 엘리먼트 표시 (변환된 MP4 또는 지원하는 형식) (최적화: metadata만 로드) -->
                 <video 
                   v-else-if="!isImageFile(video) && video.displayUrl && (!isUnsupportedFormat(video.title || video.name || '') || video.displayUrl?.includes('converted-videos'))"
                   :ref="el => (videoRefs[video.id] = el)" 
                   :src="video.displayUrl"
                   class="object-cover rounded-xl transition-transform duration-300 group-hover:scale-105"
-                  preload="metadata" 
+                  preload="metadata"
                   :crossorigin="video.displayUrl && !video.displayUrl.startsWith('blob:') ? 'anonymous' : null"
                   playsinline
                   @timeupdate="updateProgress(video.id, $event)"
@@ -1340,6 +1341,9 @@ import { useSummaryVideoStore } from '@/stores/summaryVideoStore';
 import { useSettingStore } from '@/stores/settingStore';
 import { getApiBaseUrl } from '@/utils/apiConfig';
 import { marked } from 'marked';
+import { formatTime, formatFileSize, getCurrentTime } from '@/utils/formatUtils';
+import { isImageFile, isUnsupportedFormat, getVideoFileExtension, createVideoObject } from '@/utils/videoUtils';
+import { emitVideoDeletedEvent } from '@/composables/useVideoSync';
 import settingIcon from '@/assets/icons/setting.png';
 import videoIcon from '@/assets/icons/video.png';
 import timeIcon from '@/assets/icons/time.png';
@@ -1700,13 +1704,8 @@ function handleModalBackgroundClick(event, closeFunction) {
     modalMouseDownPos = null;
   }
 }
-function formatTime(sec) {
-  if (!sec || isNaN(sec)) return '00:00';
-  const m = Math.floor(sec / 60).toString().padStart(2, '0');
-  const s = Math.floor(sec % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
-}
-
+// formatTime, getCurrentTime은 @/utils/formatUtils에서 import됨
+// formatDuration은 settingStore.language를 사용하는 커스텀 버전 필요
 function formatDuration(sec) {
   if (!sec || isNaN(sec) || sec === 0) {
     return settingStore.language === 'ko' ? '0초' : '0sec';
@@ -1731,20 +1730,8 @@ function formatDuration(sec) {
   return parts.join(' ');
 }
 
-function formatFileSize(bytes) {
-  if (!bytes || bytes === 0 || isNaN(bytes)) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  const sizeIndex = Math.min(i, sizes.length - 1);
-  return Math.round((bytes / Math.pow(k, sizeIndex)) * 100) / 100 + ' ' + sizes[sizeIndex];
-}
-
-function getCurrentTime() {
-  const now = new Date();
-  return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-}
-
+// formatFileSize는 @/utils/formatUtils에서 import됨
+// filterVideoFiles는 alert를 포함하는 커스텀 버전 필요
 function filterVideoFiles(files) {
   return Array.from(files).filter((file) => {
     if (!file.type.startsWith('video/') && !file.type.startsWith('image/')) {
@@ -1755,68 +1742,7 @@ function filterVideoFiles(files) {
   });
 }
 
-function createVideoObject(videoData, options = {}) {
-  const {
-    id,
-    title,
-    originUrl,
-    displayUrl,
-    date,
-    fileSize = null,
-    width = null,
-    height = null,
-    duration = null,
-    dbId = null,
-    videoId = null,
-    file = null,
-    objectUrl = null
-  } = videoData;
-
-  return {
-    id,
-    title,
-    originUrl: originUrl || displayUrl || '',
-    displayUrl: displayUrl || originUrl || '',
-    objectUrl: objectUrl || (displayUrl?.startsWith('blob:') ? displayUrl : null),
-    date: date || new Date().toISOString().slice(0, 10),
-    file,
-    url: originUrl || displayUrl || '',
-    fileSize,
-    width,
-    height,
-    duration,
-    progress: 0,
-    dbId,
-    videoId,
-    _errorRetryCount: 0,
-    _triedUrls: new Set(),
-    _isConverting: false, // 변환 중 상태 추적
-    ...options
-  };
-}
-
-function getVideoFileExtension(filename) {
-  return filename.toLowerCase().split('.').pop();
-}
-
-function isUnsupportedFormat(filename) {
-  return UNSUPPORTED_VIDEO_FORMATS.includes(getVideoFileExtension(filename));
-}
-
-// 이미지 파일인지 확인하는 함수
-function isImageFile(video) {
-  if (!video) return false;
-  // file 객체가 있으면 type으로 확인
-  if (video.file && video.file.type) {
-    return video.file.type.startsWith('image/');
-  }
-  // 파일명으로 확인
-  const filename = video.title || video.name || '';
-  if (!filename) return false;
-  const ext = getVideoFileExtension(filename);
-  const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'tif'];
-  return imageExtensions.includes(ext.toLowerCase());
-}
+// createVideoObject, getVideoFileExtension, isUnsupportedFormat, isImageFile은 @/utils/videoUtils에서 import됨
 
 function constrainContextMenuPosition(x, y) {
   const { width, height, margin } = CONTEXT_MENU_SIZE;
@@ -3837,11 +3763,31 @@ async function confirmDelete() {
   const deletedVideoIds = new Set();
   const deletedVideoDbIds = new Set();
   videosToDelete.forEach(video => {
-    if (video.id) deletedVideoIds.add(video.id);
-    if (video.dbId) deletedVideoDbIds.add(video.dbId);
-    // id와 dbId가 다른 경우도 고려
-    if (video.id && typeof video.id === 'number') deletedVideoDbIds.add(video.id);
+    // id 추가
+    if (video.id != null) {
+      deletedVideoIds.add(video.id);
+      // id가 숫자면 dbIds에도 추가 (id와 dbId가 같은 경우 대비)
+      if (typeof video.id === 'number') {
+        deletedVideoDbIds.add(video.id);
+      }
+    }
+    // dbId 추가
+    if (video.dbId != null) {
+      deletedVideoDbIds.add(video.dbId);
+      // dbId가 숫자면 ids에도 추가 (id와 dbId가 같은 경우 대비)
+      if (typeof video.dbId === 'number') {
+        deletedVideoIds.add(video.dbId);
+      }
+    }
+    // id와 dbId가 모두 없으면 id를 기본값으로 사용
+    if (video.id == null && video.dbId == null && video.id != undefined) {
+      deletedVideoIds.add(video.id);
+    }
   });
+  
+  console.log(`[Management] 삭제할 동영상 ID 수집 완료: ids=${deletedVideoIds.size}개, dbIds=${deletedVideoDbIds.size}개`);
+  console.log(`[Management] 삭제할 IDs:`, Array.from(deletedVideoIds));
+  console.log(`[Management] 삭제할 DB IDs:`, Array.from(deletedVideoDbIds));
 
   // 삭제된 동영상과 연관된 채팅 탭 찾기 및 닫기
   const tabsToClose = [];
@@ -3967,14 +3913,8 @@ async function confirmDelete() {
   // localStorage 업데이트
   persistToStorage();
 
-  // Search 메뉴에 동영상 삭제 알림 (커스텀 이벤트 발생)
-  const deletedVideoInfo = {
-    ids: Array.from(deletedVideoIds),
-    dbIds: Array.from(deletedVideoDbIds)
-  };
-  window.dispatchEvent(new CustomEvent('videos-deleted-from-management', {
-    detail: deletedVideoInfo
-  }));
+  // Search 메뉴에 동영상 삭제 알림 (useVideoSync의 emitVideoDeletedEvent 사용)
+  emitVideoDeletedEvent(deletedVideoIds, deletedVideoDbIds);
 
   // 선택된 ID 초기화
   selectedIds.value = [];
@@ -4907,15 +4847,25 @@ function onVideoMetadataLoaded(videoId, event) {
   }
 }
 
-// 모든 동영상의 duration을 미리 로드하는 함수
-function preloadAllVideoDurations() {
-  items.value.forEach(video => {
+// 동영상 duration을 지연 로딩으로 미리 로드하는 함수 (최적화: 배치 처리)
+let durationLoadQueue = [];
+let isProcessingDurationQueue = false;
+const DURATION_BATCH_SIZE = 5; // 한 번에 처리할 동영상 수
+const DURATION_BATCH_DELAY = 200; // 배치 간 지연 시간 (ms)
+
+function processDurationQueue() {
+  if (isProcessingDurationQueue || durationLoadQueue.length === 0) return;
+  
+  isProcessingDurationQueue = true;
+  const batch = durationLoadQueue.splice(0, DURATION_BATCH_SIZE);
+  
+  batch.forEach(video => {
     // 이미 duration이 있으면 스킵
     if (durationMap.value[video.id]) return;
     // 이미지 파일이면 스킵
     if (isImageFile(video)) return;
     
-    // 백엔드 API에서 받은 duration이 있으면 먼저 사용 (원본 파일에서 추출한 정보)
+    // 백엔드 API에서 받은 duration이 있으면 먼저 사용
     if (video.duration && isFinite(video.duration) && video.duration > 0) {
       durationMap.value[video.id] = video.duration;
       return;
@@ -4935,16 +4885,46 @@ function preloadAllVideoDurations() {
       if (duration && isFinite(duration) && duration > 0) {
         durationMap.value[video.id] = duration;
       }
-      document.body.removeChild(videoElement);
+      if (videoElement.parentNode) {
+        document.body.removeChild(videoElement);
+      }
     }, { once: true });
     
     videoElement.addEventListener('error', () => {
-      document.body.removeChild(videoElement);
+      if (videoElement.parentNode) {
+        document.body.removeChild(videoElement);
+      }
     }, { once: true });
     
     videoElement.src = video.displayUrl;
     document.body.appendChild(videoElement);
   });
+  
+  isProcessingDurationQueue = false;
+  
+  // 다음 배치 처리
+  if (durationLoadQueue.length > 0) {
+    setTimeout(processDurationQueue, DURATION_BATCH_DELAY);
+  }
+}
+
+function preloadAllVideoDurations() {
+  // 큐에 추가
+  durationLoadQueue = items.value.filter(video => {
+    if (durationMap.value[video.id]) return false;
+    if (isImageFile(video)) return false;
+    if (video.duration && isFinite(video.duration) && video.duration > 0) {
+      durationMap.value[video.id] = video.duration;
+      return false;
+    }
+    if (!video.displayUrl) return false;
+    return true;
+  });
+  
+  // 첫 배치 시작
+  if (durationLoadQueue.length > 0) {
+    setTimeout(processDurationQueue, 100);
+  }
 }
 
 // ==================== 비디오 에러 처리 ====================

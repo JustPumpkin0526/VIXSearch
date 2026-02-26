@@ -866,6 +866,41 @@ watch(formattedEditingContent, async () => {
   }
 });
 
+// 편집 모드 종료 시 읽기 모드로 전환할 때 마크다운 스타일 다시 적용
+watch(isEditing, async (newValue, oldValue) => {
+  // 편집 모드에서 읽기 모드로 전환할 때만 실행
+  if (oldValue === true && newValue === false) {
+    // Word 파일이 없고, report 내용이 있을 때 마크다운 스타일 적용
+    if (!selectedReport.value?.file_url && report.value) {
+      // 이전 타이머 취소
+      if (markdownStyleTimeout.value) {
+        clearTimeout(markdownStyleTimeout.value);
+      }
+      
+      // DOM이 완전히 업데이트될 때까지 여러 번 nextTick을 기다림
+      await nextTick();
+      await nextTick();
+      
+      // 즉시 한 번 적용
+      applyMarkdownStyles();
+      
+      markdownStyleTimeout.value = setTimeout(() => {
+        applyMarkdownStyles();
+      }, 100);
+      
+      // 추가로 한 번 더 적용 (이미지 로드 등을 고려)
+      setTimeout(() => {
+        applyMarkdownStyles();
+      }, 300);
+      
+      // 최종 확인 (더 긴 지연)
+      setTimeout(() => {
+        applyMarkdownStyles();
+      }, 600);
+    }
+  }
+});
+
 // 페이지가 변경될 때마다 스타일 다시 적용
 watch(currentPage, async () => {
   if (selectedReport.value?.file_url && wordPages.value.length > 0) {
@@ -1239,9 +1274,22 @@ function toggleEditMode() {
   });
 }
 
-function cancelEdit() {
+async function cancelEdit() {
   isEditing.value = false;
   editingContent.value = selectedReport.value?.content || report.value || "";
+  
+  // 편집 모드 종료 후 읽기 모드로 전환 시 마크다운 스타일 다시 적용
+  await nextTick();
+  if (!selectedReport.value?.file_url && report.value) {
+    // Word 파일이 없으면 마크다운 스타일 적용
+    setTimeout(() => {
+      applyMarkdownStyles();
+    }, 200);
+    // 추가로 한 번 더 적용 (이미지 로드 등을 고려)
+    setTimeout(() => {
+      applyMarkdownStyles();
+    }, 500);
+  }
 }
 
 // 보고서 업데이트
@@ -1310,6 +1358,10 @@ async function saveReport() {
     
     // 로컬 상태 업데이트
     selectedReport.value.content = editingContent.value;
+    // report.value를 강제로 업데이트하여 formattedReport가 다시 계산되도록 함
+    // 임시로 값을 변경했다가 다시 설정하여 Vue의 반응성을 확실히 트리거
+    report.value = '';
+    await nextTick();
     report.value = editingContent.value;
     selectedReport.value.wordCount = editingContent.value.split(/\s+/).length;
     
@@ -1336,6 +1388,32 @@ async function saveReport() {
     currentPage.value = 1;
     
     isEditing.value = false;
+    
+    // 편집 모드 종료 후 읽기 모드로 전환 시 마크다운 스타일 다시 적용
+    // DOM이 완전히 업데이트될 때까지 여러 번 nextTick을 기다림
+    await nextTick();
+    await nextTick(); // 추가 nextTick으로 DOM 업데이트 보장
+    
+    if (!data.file_url && report.value) {
+      // Word 파일이 없으면 마크다운 스타일 적용
+      // 즉시 한 번 적용
+      applyMarkdownStyles();
+      
+      // DOM 업데이트 후 다시 적용
+      setTimeout(() => {
+        applyMarkdownStyles();
+      }, 100);
+      
+      // 추가로 한 번 더 적용 (이미지 로드 등을 고려)
+      setTimeout(() => {
+        applyMarkdownStyles();
+      }, 300);
+      
+      // 최종 확인 (더 긴 지연)
+      setTimeout(() => {
+        applyMarkdownStyles();
+      }, 600);
+    }
     
     alert(settingStore.language === 'ko' 
       ? '보고서가 성공적으로 수정되었습니다.' 
