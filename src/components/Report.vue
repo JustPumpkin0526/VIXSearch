@@ -1009,15 +1009,28 @@ function placeImageElement(child, childHeight, pageContentHeight, currentPageCon
 
 // 텍스트 요소를 페이지에 배치
 function placeTextElement(child, childHeight, pageContentHeight, currentPageContent, currentPageHeight, pages) {
-  if (currentPageHeight + childHeight > pageContentHeight && currentPageContent.length > 0) {
-    // 현재 페이지 저장
+  // 텍스트가 잘리지 않도록 여유 공간을 두되, 너무 보수적이지 않게
+  //const SAFETY_MARGIN = 5; // 5px 여유 공간 (줄임)
+  
+  // 현재 페이지에 남은 공간
+  const availableSpace = pageContentHeight - currentPageHeight;
+  
+  // 텍스트 요소가 현재 페이지에 완전히 들어갈 수 있는지 확인
+  // availableSpace가 childHeight보다 충분히 크면 현재 페이지에 추가
+  if (availableSpace >= childHeight) { // + SAFETY_MARGIN) {
+    // 현재 페이지에 텍스트 요소 추가 가능
+    currentPageContent.push(child.cloneNode(true));
+    return { currentPageContent, currentPageHeight: currentPageHeight + childHeight };
+  } else if (currentPageContent.length > 0) {
+    // 현재 페이지에 공간이 부족하면 다음 페이지로 이동
     const pageDiv = createPageDiv(currentPageContent, false);
     pages.push(pageDiv.outerHTML);
     // 새 페이지 시작
     return { currentPageContent: [child.cloneNode(true)], currentPageHeight: childHeight };
   } else {
+    // 현재 페이지가 비어있으면 무조건 추가 (첫 요소)
     currentPageContent.push(child.cloneNode(true));
-    return { currentPageContent, currentPageHeight: currentPageHeight + childHeight };
+    return { currentPageContent, currentPageHeight: childHeight };
   }
 }
 
@@ -1069,7 +1082,22 @@ async function splitWordIntoPages() {
   
   for (const child of children) {
     const isImageElement = containsImage(child);
-    const childHeight = isImageElement ? getImageElementHeight(child) : (child.offsetHeight || child.scrollHeight || 0);
+    
+    // 텍스트 요소의 높이를 더 정확하게 측정
+    let childHeight;
+    if (isImageElement) {
+      childHeight = getImageElementHeight(child);
+    } else {
+      // 텍스트 요소의 실제 높이 측정
+      // offsetHeight는 padding을 포함하지만 margin은 포함하지 않음
+      const computedStyle = window.getComputedStyle(child);
+      const marginTop = parseFloat(computedStyle.marginTop) || 0;
+      const marginBottom = parseFloat(computedStyle.marginBottom) || 0;
+      // offsetHeight는 이미 padding을 포함하므로 padding은 추가하지 않음
+      const elementHeight = child.offsetHeight || child.scrollHeight || 0;
+      // margin만 추가 (offsetHeight에 padding은 이미 포함됨)
+      childHeight = elementHeight + marginTop + marginBottom;
+    }
     
     if (isImageElement) {
       // 큰 이미지 처리
@@ -1111,6 +1139,11 @@ async function splitWordIntoPages() {
     applyWordStyles();
   }, 200);
 }
+
+// 페이지 오버플로우 조정 함수 제거
+// adjustPageOverflow 함수는 너무 공격적으로 페이지를 재분할하여
+// 과도하게 많은 텍스트를 다음 페이지로 넘기는 문제가 있었습니다.
+// 대신 placeTextElement에서 더 정확한 높이 측정을 사용합니다.
 
 // ==================== API 호출 유틸리티 ====================
 

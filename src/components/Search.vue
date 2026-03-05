@@ -46,17 +46,29 @@
               <img :src="settingIcon" alt="설정" class="w-5 h-5 object-contain dark:brightness-0 dark:invert" />
             </button>
           </div>
-          <div class="flex-1 overflow-y-auto p-5">
+          <div 
+            ref="videoListContainerRef"
+            class="flex-1 overflow-y-auto p-5 relative">
             <div v-if="items.length === 0" class="flex items-center justify-center h-full">
               <div class="text-sm text-gray-500 dark:text-gray-400 text-center">
                 동영상이 없습니다.<br />
                 Management 메뉴에서 동영상을 선택하고 검색 버튼을 클릭하세요.
             </div>
             </div>
-            <div v-else class="grid gap-4" :key="`video-list-${videoListKey}`" :style="{ gridTemplateColumns: `repeat(${videoListColumns}, minmax(0, 1fr))` }">
+            <div v-else 
+              ref="videoListGridRef"
+              class="grid gap-4 relative"
+              :key="`video-list-${videoListKey}`" 
+              :style="{ gridTemplateColumns: `repeat(${videoListColumns}, minmax(0, 1fr))` }">
+              <!-- 드래그 선택 영역 표시 -->
+              <div 
+                v-if="isDragSelecting && dragSelectBox"
+                class="fixed border-2 border-blue-500 bg-blue-500/20 pointer-events-none z-50"
+                :style="dragSelectBox"></div>
               <div v-for="video in paginatedVideoListItems" :key="`video-${video.id || video.dbId || Math.random()}`"
                 class="flex items-center gap-3 p-3 rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all cursor-pointer"
                 :class="{ 'ring-2 ring-blue-400 dark:ring-blue-500 bg-blue-50 dark:bg-blue-900/30': selectedIds.includes(video.id) }"
+                :ref="el => { if (el) videoCardRefs[video.id] = el }"
                 @click="toggleVideoSelection(video.id)">
                 <!-- 이미지 파일인 경우 (최적화: 지연 로딩) -->
                 <img 
@@ -346,9 +358,10 @@
                     </p>
                     <div v-for="clip in message.clips" :key="clip.id"
                       :class="message.role === 'assistant' ? 'flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded-xl transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-600' : 'flex items-center gap-3 p-3 bg-green-600/80 rounded-xl transition-all duration-200 hover:bg-green-600'">
-                      <video :src="clip.url" class="w-32 h-20 object-cover rounded cursor-pointer flex-shrink-0" preload="none"
+                      <video :src="getClipUrl(clip.url)" class="w-32 h-20 object-cover rounded cursor-pointer flex-shrink-0" preload="metadata"
                         @click.stop="zoomClip(clip)"
                         @error="(e) => console.warn('clip thumbnail error', e, clip.url)"
+                        @loadedmetadata="(e) => { if (e.target) e.target.currentTime = 0.1; }"
                         crossorigin="anonymous"></video>
                       <div class="flex-1 min-w-0">
                         <p
@@ -1548,83 +1561,6 @@
                             </div>
                           </section>
                         </div>
-                        
-                        <!-- Clip Duration 설정 -->
-                        <div class="grid lg:grid-cols-2 gap-4 mt-4">
-                          <!-- Min Clip Duration -->
-                          <section class="rounded-lg border border-blue-200 dark:border-blue-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
-                            <div class="flex items-center justify-between mb-2">
-                              <div>
-                                <h2 class="font-semibold text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Min Clip Duration' : 'Min Clip Duration' }}</h2>
-                                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ settingStore.language === 'ko' ? '최소 클립 길이 (초)' : 'Minimum clip duration (seconds)' }}</p>
-                              </div>
-                              <div class="flex items-center gap-2">
-                                <input 
-                                  v-model.number="minClipDuration" 
-                                  type="number" 
-                                  min="0.1" 
-                                  max="60" 
-                                  step="0.1"
-                                  @input="clampMinClipDuration"
-                                  class="border-2 border-blue-300 dark:border-blue-600 w-20 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" 
-                                />
-                                <button 
-                                  class="border-2 border-blue-300 dark:border-blue-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center" 
-                                  @click="resetMinClipDuration"
-                                >↺</button>
-                              </div>
-                            </div>
-                            <div class="flex items-center gap-2 h-8 mt-3">
-                              <span class="text-xs text-gray-400 w-8 text-center">0.1</span>
-                              <input 
-                                v-model.number="minClipDuration" 
-                                type="range" 
-                                min="0.1" 
-                                max="60" 
-                                step="0.1"
-                                class="flex-1 border-blue-300 dark:border-blue-600" 
-                              />
-                              <span class="text-xs text-gray-400 w-12 text-center">60</span>
-                            </div>
-                          </section>
-                          
-                          <!-- Max Clip Duration -->
-                          <section class="rounded-lg border border-blue-200 dark:border-blue-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
-                            <div class="flex items-center justify-between mb-2">
-                              <div>
-                                <h2 class="font-semibold text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Max Clip Duration' : 'Max Clip Duration' }}</h2>
-                                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ settingStore.language === 'ko' ? '최대 클립 길이 (초)' : 'Maximum clip duration (seconds)' }}</p>
-                              </div>
-                              <div class="flex items-center gap-2">
-                                <input 
-                                  v-model.number="maxClipDuration" 
-                                  type="number" 
-                                  min="1" 
-                                  max="300" 
-                                  step="1"
-                                  @input="clampMaxClipDuration"
-                                  class="border-2 border-blue-300 dark:border-blue-600 w-20 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" 
-                                />
-                                <button 
-                                  class="border-2 border-blue-300 dark:border-blue-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center" 
-                                  @click="resetMaxClipDuration"
-                                >↺</button>
-                              </div>
-                            </div>
-                            <div class="flex items-center gap-2 h-8 mt-3">
-                              <span class="text-xs text-gray-400 w-8 text-center">1</span>
-                              <input 
-                                v-model.number="maxClipDuration" 
-                                type="range" 
-                                min="1" 
-                                max="300" 
-                                step="1"
-                                class="flex-1 border-blue-300 dark:border-blue-600" 
-                              />
-                              <span class="text-xs text-gray-400 w-12 text-center">300</span>
-                            </div>
-                          </section>
-                        </div>
                       </div>
                     </div>
                   </Transition>
@@ -1638,7 +1574,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed, nextTick, watch } from "vue";
+import { ref, onMounted, onBeforeUnmount, onActivated, computed, nextTick, watch } from "vue";
 import { useRoute } from 'vue-router';
 import { useSettingStore } from '@/stores/settingStore';
 import { getApiBaseUrl } from '@/utils/apiConfig';
@@ -1650,11 +1586,16 @@ import settingIcon from '@/assets/icons/setting.png';
 import videoIcon from '@/assets/icons/video.png';
 import timeIcon from '@/assets/icons/time.png';
 
+// ==================== 상수 정의 ====================
 const API_BASE_URL = getApiBaseUrl();
+const STORAGE_KEY = 'vss_search_state';
+const VIDEO_LIST_ROWS_PER_PAGE = 8;
+
+// ==================== 스토어 및 라우터 ====================
 const settingStore = useSettingStore();
 const route = useRoute();
 
-// 번역
+// ==================== 다국어 지원 ====================
 const translations = {
   ko: {
     workspace: "Video Search Workspace",
@@ -1728,9 +1669,6 @@ const translations = {
 
 const t = computed(() => translations[settingStore.language] || translations.ko);
 
-// localStorage 키
-const STORAGE_KEY = 'vss_search_state';
-
 // 비디오 리스트 관련 (나중에 추가될 수 있음)
 const items = ref([]);
 const selectedIds = ref([]);
@@ -1749,7 +1687,15 @@ const videoListColumns = computed(() => {
 // 페이지네이션 관련
 const videoListCurrentPage = ref(1);
 const videoListKey = ref(0); // 리스트 강제 리렌더링을 위한 키
-const VIDEO_LIST_ROWS_PER_PAGE = 8; // 페이지당 8줄
+// 드래그 선택 관련
+const videoListContainerRef = ref(null);
+const videoListGridRef = ref(null);
+const videoCardRefs = ref({});
+const isDragSelecting = ref(false);
+const dragSelectStart = ref({ x: 0, y: 0 });
+const dragSelectEnd = ref({ x: 0, y: 0 });
+const dragSelectBox = ref(null);
+const dragSelectInitialSelection = ref([]); // 드래그 시작 시점의 선택 상태 저장
 
 // 페이지당 아이템 수 계산 (8줄 × 열 수)
 const videoListItemsPerPage = computed(() => VIDEO_LIST_ROWS_PER_PAGE * videoListColumns.value);
@@ -1880,7 +1826,7 @@ function preloadAllVideoDurations() {
 }
 
 // ==================== 예시 이미지 촬영용 고정값 (비활성화하려면 ENABLE_DEMO_MODE를 false로 설정) ====================
-const ENABLE_DEMO_MODE = true; // 예시 이미지 촬영 모드 활성화/비활성화 플래그
+const ENABLE_DEMO_MODE = false; // 예시 이미지 촬영 모드 활성화/비활성화 플래그
 
 // 동영상 리스트 통계
 // const videoListCount = computed(() => items.value.length);
@@ -1923,9 +1869,40 @@ const chatContainer = ref(null);
 const editingChatIndex = ref(null);
 const editingChatName = ref('');
 const chatNameInput = ref(null);
+// ==================== AbortController 관리 ====================
 const abortControllers = ref([]);
 
-// 컨텍스트 메뉴 상태
+/**
+ * AbortController를 생성하고 추적 목록에 추가
+ * @returns {AbortController} 생성된 AbortController
+ */
+function createAbortController() {
+  const abortController = new AbortController();
+  abortControllers.value.push(abortController);
+  return abortController;
+}
+
+/**
+ * AbortController를 추적 목록에서 제거
+ * @param {AbortController} abortController - 제거할 AbortController
+ */
+function removeAbortController(abortController) {
+  const index = abortControllers.value.indexOf(abortController);
+  if (index > -1) {
+    abortControllers.value.splice(index, 1);
+  }
+}
+
+/**
+ * AbortError인지 확인
+ * @param {Error} error - 확인할 에러
+ * @returns {boolean} AbortError 여부
+ */
+function isAbortError(error) {
+  return error.name === 'AbortError';
+}
+
+// ==================== 컨텍스트 메뉴 상태 ====================
 const chatMessageContextMenu = ref({ visible: false, messageIndex: null, x: 0, y: 0 });
 const chatTabContextMenu = ref({ visible: false, chatIndex: null, x: 0, y: 0 });
 // 보고서 생성 서브메뉴 상태
@@ -1956,8 +1933,6 @@ const searchObject = ref('person');
 const boxThreshold = ref(0.5);
 const frameSkip = ref(5);
 const objectDetectionThreshold = ref(1);
-const minClipDuration = ref(1.0);
-const maxClipDuration = ref(30.0);
 // 이미지 업로드 관련
 const uploadedImage = ref(null);
 const uploadedImagePreview = ref(null);
@@ -2112,9 +2087,7 @@ async function convertVideoToMp4(videoId, userId, videoObject) {
     videoObject._isConverting = true;
   }
   
-  // AbortController 생성 및 추적
-  const abortController = new AbortController();
-  abortControllers.value.push(abortController);
+  const abortController = createAbortController();
   
   try {
     const response = await fetch(`${API_BASE_URL}/convert-video/${videoId}?user_id=${userId}`, {
@@ -2129,7 +2102,6 @@ async function convertVideoToMp4(videoId, userId, videoObject) {
     }
     const data = await response.json();
     if (data.success && data.converted_url) {
-      // 변환된 MP4 URL을 displayUrl로 업데이트
       videoObject.displayUrl = data.converted_url;
       videoObject.originUrl = data.converted_url;
       videoObject._isConverting = false;
@@ -2144,8 +2116,7 @@ async function convertVideoToMp4(videoId, userId, videoObject) {
     }
     return null;
   } catch (error) {
-    // AbortError는 정상적인 취소이므로 무시
-    if (error.name === 'AbortError') {
+    if (isAbortError(error)) {
       if (videoObject) {
         videoObject._isConverting = false;
       }
@@ -2157,11 +2128,7 @@ async function convertVideoToMp4(videoId, userId, videoObject) {
     }
     return null;
   } finally {
-    // 완료된 AbortController 제거
-    const index = abortControllers.value.indexOf(abortController);
-    if (index > -1) {
-      abortControllers.value.splice(index, 1);
-    }
+    removeAbortController(abortController);
   }
 }
 
@@ -3131,39 +3098,6 @@ function resetObjectDetectionThreshold() {
   objectDetectionThreshold.value = 1;
 }
 
-// Min Clip Duration 값 범위 제한 함수
-function clampMinClipDuration() {
-  if (minClipDuration.value > 60) {
-    minClipDuration.value = 60;
-  } else if (minClipDuration.value < 0.1) {
-    minClipDuration.value = 0.1;
-  }
-  // max_clip_duration보다 크면 조정
-  if (minClipDuration.value > maxClipDuration.value) {
-    minClipDuration.value = maxClipDuration.value;
-  }
-}
-
-function resetMinClipDuration() {
-  minClipDuration.value = 1.0;
-}
-
-// Max Clip Duration 값 범위 제한 함수
-function clampMaxClipDuration() {
-  if (maxClipDuration.value > 300) {
-    maxClipDuration.value = 300;
-  } else if (maxClipDuration.value < 1) {
-    maxClipDuration.value = 1;
-  }
-  // min_clip_duration보다 작으면 조정
-  if (maxClipDuration.value < minClipDuration.value) {
-    maxClipDuration.value = minClipDuration.value;
-  }
-}
-
-function resetMaxClipDuration() {
-  maxClipDuration.value = 30.0;
-}
 
 // Summarize 파라미터 값 범위 제한 함수
 function clampSummarizeValue(paramName, maxValue, minValue = null) {
@@ -3267,14 +3201,19 @@ function removeUploadedImage() {
 }
 
 // 동영상 파일 수집 함수
+// ==================== 파일 관리 ====================
+
+/**
+ * 비디오 URL에서 File 객체 생성
+ * @param {Object} video - 비디오 객체
+ * @returns {Promise<File|null>} File 객체 또는 null
+ */
 async function ensureVideoFile(video) {
   if (!video || !video.displayUrl) {
     return null;
   }
 
-  // AbortController 생성 및 추적
-  const abortController = new AbortController();
-  abortControllers.value.push(abortController);
+  const abortController = createAbortController();
   
   try {
     const response = await fetch(video.displayUrl, {
@@ -3289,21 +3228,20 @@ async function ensureVideoFile(video) {
     video.file = file;
     return file;
   } catch (error) {
-    // AbortError는 정상적인 취소이므로 무시
-    if (error.name === 'AbortError') {
+    if (isAbortError(error)) {
       return null;
     }
     console.error('Failed to reconstruct File from video URL:', error);
     return null;
   } finally {
-    // 완료된 AbortController 제거
-    const index = abortControllers.value.indexOf(abortController);
-    if (index > -1) {
-      abortControllers.value.splice(index, 1);
-    }
+    removeAbortController(abortController);
   }
 }
 
+/**
+ * 선택된 비디오들의 File 객체 수집
+ * @returns {Promise<Array>} { file, video } 배열
+ */
 async function collectSelectedFiles() {
   const results = [];
   for (const video of selectedVideos.value) {
@@ -3315,7 +3253,11 @@ async function collectSelectedFiles() {
   return results;
 }
 
-// 검색 함수
+// ==================== 검색 기능 ====================
+
+/**
+ * 검색 실행
+ */
 async function handleSearch() {
   // 고속 검색이 아닐 때만 query 체크
   if (searchType.value !== 'fast') {
@@ -3382,37 +3324,24 @@ async function handleSearch() {
 
     const userId = localStorage.getItem("vss_user_id");
 
-    // AbortController 생성 및 추적
-    const abortController = new AbortController();
-    abortControllers.value.push(abortController);
+    const abortController = createAbortController();
 
-    // 상세 검색: 검색어에 "찾아"가 있으면 generate-clips, 없으면 vss-query 사용
+    // 상세 검색: 항상 generate-clips 사용 (클립 생성)
     if (searchType.value === 'detailed') {
       // 저장된 검색어 사용 (searchInput.value는 이미 비워졌을 수 있음)
       const query = savedQuery || searchInput.value.trim();
       
-      // 검색어에 "찾아"가 있는지 확인 (대소문자 구분 없이)
-      const hasFindKeyword = query.includes('찾아') || query.toLowerCase().includes('찾아');
+      console.log('[Search] 상세 검색: generate-clips 엔드포인트 사용');
       
-      console.log('[Search] 상세 검색 조건 확인:', {
-        query: query,
-        savedQuery: savedQuery,
-        searchInputValue: searchInput.value,
-        hasFindKeyword: hasFindKeyword,
-        searchType: searchType.value
+      // 파일명과 video_id 매핑 생성
+      const videoIdMap = {};
+      fileEntries.forEach(({ file, video }) => {
+        const dbId = video.dbId || video.id;
+        if (dbId) {
+          videoIdMap[file.name] = dbId;
+        }
       });
       
-      // "찾아"가 있으면 기존 상세 검색 (generate-clips) 사용
-      if (hasFindKeyword) {
-        console.log('[Search] generate-clips 엔드포인트 사용');
-        // 파일명과 video_id 매핑 생성
-        const videoIdMap = {};
-        fileEntries.forEach(({ file, video }) => {
-          const dbId = video.dbId || video.id;
-          if (dbId) {
-            videoIdMap[file.name] = dbId;
-          }
-        });
       const formData = new FormData();
       fileEntries.forEach(({ file }) => {
         formData.append('files', file, file.name);
@@ -3471,6 +3400,7 @@ async function handleSearch() {
       formData.append('summarize_notification_temperature', safeNum(settingStore.summarizeNotificationTemperature, 0.2));
       formData.append('summarize_notification_max_tokens', safeNum(settingStore.summarizeNotificationMaxTokens, 2048));
       formData.append('summarize_enable_audio', settingStore.summarizeEnableAudio ? 'true' : 'false');
+      
       const response = await fetch(`${API_BASE_URL}/generate-clips`, {
         method: 'POST',
         body: formData,
@@ -3528,105 +3458,6 @@ async function handleSearch() {
         groupedClips: groupedClipItems,
         timestamp: getCurrentTime()
       });
-      } 
-      // "찾아"가 없으면 VSS query 기능 사용
-      else {
-        console.log('[Search] vss-query 엔드포인트 사용 (검색어에 "찾아" 없음)');
-        // NaN 방지 헬퍼
-        const safeNum = (val, fallback) => {
-          const n = Number(val);
-          return Number.isFinite(n) ? n : fallback;
-        };
-
-        // 첫 번째 선택된 동영상 사용
-        const firstVideo = fileEntries[0]?.video;
-        if (!firstVideo) {
-          currentChat.messages.push({
-            role: 'assistant',
-            content: settingStore.language === 'ko' 
-              ? '동영상을 선택해주세요.' 
-              : 'Please select a video.',
-            timestamp: getCurrentTime()
-          });
-          return;
-        }
-
-        // DB에서 VIA 서버의 video_id 조회
-        let serverVideoIdForQuery = null;
-        if (userId && firstVideo.dbId) {
-          try {
-            const videosResponse = await fetch(`${API_BASE_URL}/videos?user_id=${userId}`);
-            if (videosResponse.ok) {
-              const videosData = await videosResponse.json();
-              if (videosData.success && videosData.videos) {
-                const video = videosData.videos.find(v => v.id === firstVideo.dbId);
-                if (video && video.video_id) {
-                  serverVideoIdForQuery = video.video_id; // VIA 서버의 video_id
-                }
-              }
-            }
-          } catch (error) {
-            console.warn('VIA video_id 조회 실패:', error);
-          }
-        }
-
-        // query용 FormData 생성
-        const queryFormData = new FormData();
-        
-        if (serverVideoIdForQuery) {
-          queryFormData.append('video_id', serverVideoIdForQuery);
-        } else {
-          // video_id가 없으면 첫 번째 파일 사용
-          const firstFile = fileEntries[0]?.file;
-          if (!firstFile) {
-            currentChat.messages.push({
-              role: 'assistant',
-              content: settingStore.language === 'ko' 
-                ? '동영상 파일을 찾을 수 없습니다. 다시 업로드해주세요.' 
-                : 'Video file not found. Please upload again.',
-              timestamp: getCurrentTime()
-            });
-            return;
-          }
-          queryFormData.append('file', firstFile);
-        }
-
-        queryFormData.append('query', query);
-        // 상세 검색 설정의 파라미터 사용
-        queryFormData.append('chunk_size', safeNum(settingStore.summarizeChunk, 10));
-        queryFormData.append('top_k', safeNum(settingStore.summarizeTopk, 80));
-        queryFormData.append('top_p', safeNum(settingStore.summarizeTopp, 1.0));
-        queryFormData.append('temperature', safeNum(settingStore.summarizeTemp, 0.4));
-        queryFormData.append('max_new_tokens', safeNum(settingStore.summarizeMaxTokens, 512));
-        queryFormData.append('seed', safeNum(settingStore.summarizeSeed, 1));
-        
-        // 이미지가 업로드된 경우 FormData에 추가
-        if (uploadedImage.value) {
-          queryFormData.append('image', uploadedImage.value, uploadedImage.value.name);
-          // 검색 후 이미지 초기화
-          removeUploadedImage();
-        }
-
-        const response = await fetch(`${API_BASE_URL}/vss-query`, {
-          method: 'POST',
-          body: queryFormData,
-          signal: abortController.signal
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP error ${response.status}`);
-        }
-
-        const data = await response.json();
-        const markedanswer = marked.parse(data.summary || '');
-        const answerHtml = `<div class='font-semibold'>✅ ${settingStore.language === 'ko' ? '질의 응답' : 'Query Answered'}</div><br>${markedanswer}`;
-        
-        currentChat.messages.push({
-          role: 'assistant',
-          content: answerHtml,
-          timestamp: getCurrentTime()
-        });
-      }
     } 
     // 고속 검색: CV Event Detector를 사용한 객체 검출
     else if (searchType.value === 'fast') {
@@ -3691,8 +3522,8 @@ async function handleSearch() {
         video_ids: videoIds,
         detection_classes: searchObject.value.trim(),
         box_threshold: safeNum(boxThreshold.value, 0.5),
-        min_clip_duration: safeNum(minClipDuration.value, 1.0),
-        max_clip_duration: safeNum(maxClipDuration.value, 30.0),
+        min_clip_duration: 1.0, // 기본값 사용
+        max_clip_duration: 30.0, // 기본값 사용
         frame_skip_interval: safeNum(frameSkip.value, 5),
         minimum_detection_threshold: safeNum(objectDetectionThreshold.value, 1),
         gdino_rois: [[]] // ROI 기본값
@@ -3874,23 +3705,34 @@ async function handleSearch() {
   } finally {
     isSearching.value = false;
     scrollToBottom();
-    // 완료된 AbortController 제거
     if (typeof abortController !== 'undefined') {
-      const index = abortControllers.value.indexOf(abortController);
-      if (index > -1) {
-        abortControllers.value.splice(index, 1);
-      }
+      removeAbortController(abortController);
     }
   }
 }
 
 // 채팅 클립 확대용(그리드 비디오와 구분되는 최소 필드 구성)
+// 클립 URL을 정규화하는 함수 (상대 경로인 경우 API_BASE_URL 추가)
+function getClipUrl(url) {
+  if (!url) return '';
+  // 이미 전체 URL인 경우 (http:// 또는 https://로 시작)
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  // 상대 경로인 경우 API_BASE_URL 추가
+  if (url.startsWith('/')) {
+    return `${API_BASE_URL}${url}`;
+  }
+  // 그 외의 경우 그대로 반환
+  return url;
+}
+
 function zoomClip(clip) {
   // clip 객체를 확대 모달이 사용하는 형태로 매핑
   zoomedVideo.value = {
     id: `clip-${clip.id}`,
     title: clip.title || '클립',
-    displayUrl: clip.url,
+    displayUrl: getClipUrl(clip.url),
     progress: 0
   };
   // 클립 정보 저장 (sentence 포함)
@@ -4083,6 +3925,9 @@ function seekVideo(videoId, event) {
 
 // 동영상 선택 토글 함수
 function toggleVideoSelection(videoId) {
+  // 드래그 선택 중이면 클릭 무시
+  if (isDragSelecting.value) return;
+  
   const index = selectedIds.value.indexOf(videoId);
   if (index > -1) {
     selectedIds.value.splice(index, 1);
@@ -4092,6 +3937,172 @@ function toggleVideoSelection(videoId) {
   
   // 현재 채팅 세션 업데이트 및 상태 저장
   updateCurrentChatVideoList();
+}
+
+// ==================== 드래그 선택 ====================
+function startDragSelect(event) {
+  // 우클릭이면 무시
+  if (event.button !== 0) return;
+  
+  // 특정 요소에서 시작된 드래그는 무시 (버튼, 링크, 입력 필드, 비디오 컨트롤 등)
+  const target = event.target;
+  if (
+    target.closest('button') || 
+    target.closest('a') || 
+    target.closest('input') || 
+    target.closest('textarea') || 
+    target.closest('select') ||
+    target.closest('.flex.items-center') && target.closest('video') ||
+    target.closest('[role="button"]') ||
+    target.closest('.cursor-pointer') && target.closest('.flex.items-center')
+  ) {
+    return;
+  }
+  
+  isDragSelecting.value = true;
+  // 드래그 시작 시점의 선택 상태 저장 (파일 탐색기처럼)
+  dragSelectInitialSelection.value = [...selectedIds.value];
+  
+  // 화면 기준 좌표 사용 (fixed positioning)
+  dragSelectStart.value = {
+    x: event.clientX,
+    y: event.clientY
+  };
+  dragSelectEnd.value = { ...dragSelectStart.value };
+  updateDragSelectBox();
+  
+  // document 레벨 이벤트 리스너 추가
+  document.addEventListener('mousemove', handleDragSelectMove);
+  document.addEventListener('mouseup', handleDragSelectEnd);
+  
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function handleDragSelectMove(event) {
+  if (!isDragSelecting.value) return;
+  
+  // 화면 기준 좌표 사용 (fixed positioning)
+  dragSelectEnd.value = {
+    x: event.clientX,
+    y: event.clientY
+  };
+  updateDragSelectBox();
+  // 드래그 중에는 선택 영역만 표시 (실제 선택은 하지 않음)
+  
+  event.preventDefault();
+}
+
+function handleDragSelectEnd(event) {
+  if (!isDragSelecting.value) return;
+  
+  // document 레벨 이벤트 리스너 제거
+  document.removeEventListener('mousemove', handleDragSelectMove);
+  document.removeEventListener('mouseup', handleDragSelectEnd);
+  
+  // 드래그가 충분히 움직였는지 확인 (클릭과 구분)
+  const moved = Math.abs(dragSelectEnd.value.x - dragSelectStart.value.x) > 3 || 
+                Math.abs(dragSelectEnd.value.y - dragSelectStart.value.y) > 3;
+  
+  if (moved && dragSelectBox.value) {
+    // 드래그 종료 시에만 선택 적용 (파일 탐색기처럼)
+    applyDragSelection(event);
+  }
+  
+  isDragSelecting.value = false;
+  dragSelectBox.value = null;
+  dragSelectInitialSelection.value = [];
+  
+  // 현재 채팅 세션 업데이트 및 상태 저장
+  updateCurrentChatVideoList();
+  
+  event.preventDefault();
+}
+
+// 드래그 선택 적용 (토글 방식)
+function applyDragSelection(event) {
+  if (!dragSelectBox.value || !videoListGridRef.value) return;
+  
+  // 화면 기준 선택 박스
+  const box = {
+    left: parseFloat(dragSelectBox.value.left),
+    top: parseFloat(dragSelectBox.value.top),
+    right: parseFloat(dragSelectBox.value.left) + parseFloat(dragSelectBox.value.width),
+    bottom: parseFloat(dragSelectBox.value.top) + parseFloat(dragSelectBox.value.height)
+  };
+  
+  // 선택 박스와 교차하는 동영상 찾기
+  paginatedVideoListItems.value.forEach(video => {
+    const cardEl = videoCardRefs.value[video.id];
+    if (!cardEl) return;
+    
+    const cardRect = cardEl.getBoundingClientRect();
+    const cardBox = {
+      left: cardRect.left,
+      top: cardRect.top,
+      right: cardRect.right,
+      bottom: cardRect.bottom
+    };
+    
+    // 카드가 선택 박스와 교차하는지 확인
+    const isIntersecting = !(
+      box.right < cardBox.left ||
+      box.left > cardBox.right ||
+      box.bottom < cardBox.top ||
+      box.top > cardBox.bottom
+    );
+    
+    // 드래그 범위에 들어간 동영상만 토글
+    if (isIntersecting) {
+      const index = selectedIds.value.indexOf(video.id);
+      if (index > -1) {
+        // 이미 선택된 동영상 → 선택 해제
+        selectedIds.value.splice(index, 1);
+      } else {
+        // 선택되지 않은 동영상 → 선택
+        selectedIds.value.push(video.id);
+      }
+    }
+    // 드래그 범위에 들어가지 않은 동영상은 변화 없음
+  });
+}
+
+function updateDragSelect(event) {
+  // 이 함수는 더 이상 사용하지 않지만 호환성을 위해 유지
+  handleDragSelectMove(event);
+}
+
+function endDragSelect() {
+  // 이 함수는 더 이상 사용하지 않지만 호환성을 위해 유지
+  handleDragSelectEnd(new MouseEvent('mouseup'));
+}
+
+function updateDragSelectBox() {
+  const start = dragSelectStart.value;
+  const end = dragSelectEnd.value;
+  
+  const left = Math.min(start.x, end.x);
+  const top = Math.min(start.y, end.y);
+  const width = Math.abs(end.x - start.x);
+  const height = Math.abs(end.y - start.y);
+  
+  if (width < 5 || height < 5) {
+    dragSelectBox.value = null;
+    return;
+  }
+  
+  dragSelectBox.value = {
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${width}px`,
+    height: `${height}px`
+  };
+}
+
+// 이 함수는 더 이상 사용하지 않지만 호환성을 위해 유지
+function updateSelectedVideosInBox() {
+  // 파일 탐색기 방식으로 변경되어 드래그 중에는 선택하지 않음
+  // 실제 선택은 handleDragSelectEnd에서 applyDragSelection으로 처리
 }
 
 // 동영상 추가 버튼 핸들러
@@ -4549,15 +4560,22 @@ function handleVisibilityChange() {
   }
 }
 
-onMounted(async () => {
-  // 먼저 DB에서 상태 복원 시도
-  const dbStateRestored = await loadSearchStateFromDB();
-  
-  // DB에서 복원되지 않았으면 localStorage에서 복원 시도
-  const stateRestored = dbStateRestored || loadSearchState();
+// history.state에서 선택된 동영상 처리 함수
+async function processSelectedVideosFromHistory(ignoreIfStateRestored = false) {
+  console.log('[Search] processSelectedVideosFromHistory 호출, history.state:', history.state);
   
   // 라우터 state에서 선택된 동영상 데이터 받기 (우선순위 최고)
+  // ignoreIfStateRestored가 true이고 상태가 복원된 경우에는 새로고침으로 인한 중복 생성을 방지하기 위해 무시
+  // 하지만 management.vue에서 검색 버튼을 클릭한 경우에는 항상 처리해야 함
   if (history.state && history.state.selectedVideos && Array.isArray(history.state.selectedVideos) && history.state.selectedVideos.length > 0) {
+    console.log('[Search] history.state.selectedVideos 발견:', history.state.selectedVideos.length, '개 동영상');
+    // ignoreIfStateRestored가 true이고 상태가 복원된 경우 스킵
+    if (ignoreIfStateRestored) {
+      const stateRestored = loadSearchState();
+      if (stateRestored) {
+        return false;
+      }
+    }
     const receivedVideos = history.state.selectedVideos;
     const mappedVideos = receivedVideos.map(video => ({
       ...video,
@@ -4586,14 +4604,36 @@ onMounted(async () => {
       // items와 selectedIds 업데이트 (기본적으로 선택 해제 상태)
       items.value = mappedVideos;
       selectedIds.value = [];
+      console.log('[Search] 동영상 리스트 업데이트 완료:', items.value.length, '개');
       
       // 상태 저장
       await nextTick();
       saveSearchState();
     } else {
-      // 빈 채팅창이 없으면 새 채팅 생성 (현재 채팅창에는 추가하지 않음)
+      // 빈 채팅창이 없으면 동일한 동영상 리스트를 가진 채팅이 있는지 확인
       const selectionSignature = getSelectionSignature(mappedVideos);
-      createNewChat(mappedVideos, selectionSignature);
+      const existingChatIndex = chatSessions.value.findIndex(chat => 
+        chat.selectionSignature === selectionSignature
+      );
+      
+      if (existingChatIndex !== -1) {
+        // 동일한 동영상 리스트를 가진 채팅이 있으면 해당 채팅으로 전환
+        currentChatIndex.value = existingChatIndex;
+        const existingChat = chatSessions.value[existingChatIndex];
+        if (existingChat.videoList && Array.isArray(existingChat.videoList)) {
+          items.value = [...existingChat.videoList];
+        } else {
+          items.value = mappedVideos;
+        }
+        if (existingChat.selectedVideoIds && Array.isArray(existingChat.selectedVideoIds)) {
+          selectedIds.value = [...existingChat.selectedVideoIds];
+        } else {
+          selectedIds.value = [];
+        }
+      } else {
+        // 동일한 동영상 리스트를 가진 채팅이 없으면 새 채팅 생성
+        createNewChat(mappedVideos, selectionSignature);
+      }
     }
     
     // 지원하지 않는 형식의 동영상 변환 체크
@@ -4618,27 +4658,81 @@ onMounted(async () => {
         setTimeout(checkUnsupportedVideos, 500);
       }
     }
-  } else if (!stateRestored) {
-    // 상태가 복원되지 않았고 라우터 state도 없으면 초기 채팅 세션 생성
-    if (chatSessions.value.length === 0) {
-      if (items.value.length > 0) {
-        const selectionSignature = getSelectionSignature(items.value);
-        createNewChat(items.value, selectionSignature);
-      } else {
-        createNewChat([], 'none');
-      }
-    } else {
-      const currentChat = chatSessions.value[currentChatIndex.value];
-      if (currentChat) {
-        if (currentChat.videoList && Array.isArray(currentChat.videoList)) {
-          items.value = [...currentChat.videoList];
+    
+    // history.state에서 selectedVideos 제거 (중복 처리 방지)
+    const currentState = history.state || {};
+    if (currentState.selectedVideos) {
+      const newState = { ...currentState };
+      delete newState.selectedVideos;
+      history.replaceState(newState, '');
+    }
+    
+    return true; // 동영상이 처리되었음을 반환
+  }
+  return false; // 동영상이 처리되지 않았음을 반환
+}
+
+onMounted(async () => {
+  console.log('[Search] onMounted 호출, history.state:', history.state);
+  
+  // 전체 화면에서 드래그 선택 시작 가능하도록 document 레벨 이벤트 리스너 추가
+  document.addEventListener('mousedown', startDragSelect);
+  
+  // history.state.selectedVideos 확인 함수
+  const checkHistoryState = async () => {
+    const hasHistoryVideos = history.state && history.state.selectedVideos && Array.isArray(history.state.selectedVideos) && history.state.selectedVideos.length > 0;
+    console.log('[Search] checkHistoryState - hasHistoryVideos:', hasHistoryVideos);
+    return hasHistoryVideos;
+  };
+  
+  // 먼저 즉시 확인
+  let hasHistoryVideos = await checkHistoryState();
+  
+  // state가 아직 설정되지 않았을 수 있으므로 약간의 지연 후 다시 확인
+  if (!hasHistoryVideos) {
+    await new Promise(resolve => setTimeout(resolve, 300));
+    hasHistoryVideos = await checkHistoryState();
+  }
+  
+  let videosProcessed = false;
+  if (hasHistoryVideos) {
+    // history.state.selectedVideos가 있으면 먼저 처리 (DB 상태 복원 전)
+    console.log('[Search] history.state.selectedVideos 처리 시작');
+    videosProcessed = await processSelectedVideosFromHistory(false);
+    console.log('[Search] videosProcessed:', videosProcessed);
+  } else {
+    console.log('[Search] history.state.selectedVideos가 없습니다');
+  }
+  
+  // history.state.selectedVideos가 없거나 처리되지 않은 경우에만 DB에서 상태 복원 시도
+  if (!videosProcessed) {
+    const dbStateRestored = await loadSearchStateFromDB();
+    
+    // DB에서 복원되지 않았으면 localStorage에서 복원 시도
+    const stateRestored = dbStateRestored || loadSearchState();
+    
+    if (!stateRestored) {
+      // 상태가 복원되지 않았고 라우터 state도 없으면 초기 채팅 세션 생성
+      if (chatSessions.value.length === 0) {
+        if (items.value.length > 0) {
+          const selectionSignature = getSelectionSignature(items.value);
+          createNewChat(items.value, selectionSignature);
         } else {
-          items.value = [];
+          createNewChat([], 'none');
         }
-        if (currentChat.selectedVideoIds && Array.isArray(currentChat.selectedVideoIds)) {
-          selectedIds.value = [...currentChat.selectedVideoIds];
-        } else {
-          selectedIds.value = [];
+      } else {
+        const currentChat = chatSessions.value[currentChatIndex.value];
+        if (currentChat) {
+          if (currentChat.videoList && Array.isArray(currentChat.videoList)) {
+            items.value = [...currentChat.videoList];
+          } else {
+            items.value = [];
+          }
+          if (currentChat.selectedVideoIds && Array.isArray(currentChat.selectedVideoIds)) {
+            selectedIds.value = [...currentChat.selectedVideoIds];
+          } else {
+            selectedIds.value = [];
+          }
         }
       }
     }
@@ -4664,6 +4758,14 @@ onMounted(async () => {
       preloadAllVideoDurations();
     }
   });
+});
+
+// 컴포넌트가 활성화될 때마다 history.state.selectedVideos 확인
+onActivated(async () => {
+  console.log('[Search] onActivated 호출, history.state:', history.state);
+  // history.state.selectedVideos가 있으면 항상 처리 (management.vue에서 검색 버튼 클릭 시)
+  // ignoreIfStateRestored를 false로 설정하여 상태 복원 여부와 관계없이 처리
+  await processSelectedVideosFromHistory(false);
 });
 
 // Management 메뉴에서 동영상 삭제 시 동기화 (useVideoSync 사용)
@@ -5014,6 +5116,11 @@ onBeforeUnmount(() => {
   window.removeEventListener('visibilitychange', handleVisibilityChange);
   window.removeEventListener('videos-deleted-from-management', handleVideosDeletedFromManagement);
   document.removeEventListener('click', handleClickOutsideContextMenu);
+  
+  // document 레벨 이벤트 리스너 제거
+  document.removeEventListener('mousedown', startDragSelect);
+  document.removeEventListener('mousemove', handleDragSelectMove);
+  document.removeEventListener('mouseup', handleDragSelectEnd);
   
   updateCurrentChatVideoList();
   saveSearchState();

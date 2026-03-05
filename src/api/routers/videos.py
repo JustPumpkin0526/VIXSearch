@@ -6,7 +6,7 @@ import time
 import aiofiles
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, File, UploadFile, Form, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, File, UploadFile, Form, BackgroundTasks, Request
 from database.connection import get_db_connection
 from config.settings import VIDEOS_DIR, CONVERTED_VIDEOS_DIR
 from utils.helpers import build_file_url
@@ -33,7 +33,7 @@ ALLOWED_FILE_EXTENSIONS = ALLOWED_VIDEO_EXTENSIONS | ALLOWED_IMAGE_EXTENSIONS
 FILE_BUFFER_SIZE = 8192  # 8KB 청크
 
 @router.get("")
-async def get_videos(user_id: str = Query(...)):
+async def get_videos(request: Request, user_id: str = Query(...)):
     """사용자의 동영상 목록 조회 (파일 존재 여부 확인 및 유효한 URL 반환) - 최적화 버전"""
     try:
         with get_db_connection() as local_cursor:
@@ -73,7 +73,7 @@ async def get_videos(user_id: str = Query(...)):
                 # 파일 존재 확인 (asyncio.to_thread를 사용하여 비동기로 처리)
                 if await asyncio.to_thread(original_file_path.exists):
                     # 원본 파일이 존재하면 원본 URL 사용
-                    valid_file_url = build_file_url(file_url)
+                    valid_file_url = build_file_url(file_url, request)
                 else:
                     # 원본 파일이 없으면 변환된 MP4 확인
                     base_name = Path(original_filename).stem
@@ -83,10 +83,10 @@ async def get_videos(user_id: str = Query(...)):
                     if await asyncio.to_thread(converted_file_path.exists):
                         # 변환된 MP4가 존재하면 변환된 URL 사용
                         converted_url = f"/converted-videos/{converted_filename}"
-                        valid_file_url = build_file_url(converted_url)
+                        valid_file_url = build_file_url(converted_url, request)
                     else:
                         # 둘 다 없으면 원본 URL 사용 (나중에 404 처리)
-                        valid_file_url = build_file_url(file_url)
+                        valid_file_url = build_file_url(file_url, request)
             else:
                 logger.warning(f"FILE_URL이 없음: video_id={video_id}, file_name={file_name}")
             
@@ -198,6 +198,7 @@ async def delete_video(
 
 @router.post("")
 async def upload_video(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user_id: str = Form(...)
@@ -285,7 +286,7 @@ async def upload_video(
         return {
             "success": True,
             "video_id": video_id,
-            "file_url": build_file_url(file_url),
+            "file_url": build_file_url(file_url, request),
             "message": f"{file_type} 업로드가 완료되었습니다."
         }
     except (ValidationException, NotFoundException):
@@ -308,6 +309,7 @@ async def upload_video(
 
 @router.get("/convert-video/{video_id}")
 async def convert_video(
+    request: Request,
     video_id: int,
     user_id: str = Query(...)
 ):
@@ -343,7 +345,7 @@ async def convert_video(
             # 이미 지원하는 형식이면 원본 URL 반환
             return {
                 "success": True,
-                "converted_url": build_file_url(file_url),
+                "converted_url": build_file_url(file_url, request),
                 "message": "이미 지원하는 형식입니다."
             }
         
@@ -355,10 +357,12 @@ async def convert_video(
         
         # 이미 변환된 파일이 있으면 반환
         if converted_file_path.exists():
+            converted_file_url = build_file_url(converted_url, request)
             logger.info(f"변환된 파일이 이미 존재함: {converted_file_path}")
+            logger.info(f"변환된 파일 URL: {converted_file_url}")
             return {
                 "success": True,
-                "converted_url": build_file_url(converted_url),
+                "converted_url": converted_file_url,
                 "message": "변환된 동영상이 준비되었습니다."
             }
         
@@ -371,7 +375,7 @@ async def convert_video(
         
         return {
             "success": True,
-            "converted_url": build_file_url(converted_url),
+            "converted_url": build_file_url(converted_url, request),
             "message": "동영상이 MP4로 변환되었습니다."
         }
     except HTTPException:

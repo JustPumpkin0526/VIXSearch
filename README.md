@@ -143,8 +143,16 @@ cp .env.example .env
 
 ```env
 # API Base URL
+# 프론트엔드에서 백엔드 API로 접속할 때 사용 (외부 접속 시 자동 감지)
 VITE_API_BASE_URL=http://localhost:8001
 API_BASE_URL=http://localhost:8001
+
+# VIA 서버 설정 (필수)
+# VIA 서버가 다른 서버에서 실행되는 경우 해당 서버의 IP 주소를 설정하세요
+# 예: VIA_SERVER_URL=http://192.168.1.100:8101
+# 프론트엔드에서도 VIA 서버에 직접 접속하므로 VITE_VIA_SERVER_URL도 설정 필요
+VIA_SERVER_URL=http://localhost:8101
+VITE_VIA_SERVER_URL=http://localhost:8101
 
 # 데이터베이스 설정 (필수)
 DB_HOST=localhost
@@ -154,10 +162,17 @@ DB_PORT=3306
 DB_NAME=vss
 
 # Ollama 설정 (선택사항, 프롬프트 생성 및 번역용)
-# 같은 서버에서 실행 중이면 http://127.0.0.1:11434 사용
+# 같은 서버에서 실행 중이면 http://localhost:11434 사용
 # 다른 서버에서 실행 중이면 해당 서버의 IP 주소 사용
-OLLAMA_BASE_URL=http://127.0.0.1:11434
+# 예: OLLAMA_BASE_URL=http://192.168.1.100:11434
+OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3
+
+# CV Event Detector API 설정 (선택사항)
+# 다른 서버에서 실행되는 경우 해당 서버의 IP 주소를 설정하세요
+# 예: CV_EVENT_DETECTOR_API_URL=http://192.168.1.100:23491
+CV_EVENT_DETECTOR_API_URL=http://localhost:23491
+VITE_CV_EVENT_DETECTOR_API_URL=http://localhost:23491
 
 # SMTP 설정 (선택사항, 이메일 인증용)
 SMTP_SERVER=smtp.gmail.com
@@ -169,9 +184,12 @@ SMTP_FROM_EMAIL=your-email@gmail.com
 
 **참고:** 
 - `.env.example` 파일을 참고하여 필요한 환경 변수를 설정하세요
+- **다른 서버에서 실행되는 서비스 설정:**
+  - VIA 서버가 다른 서버에 있다면 `VIA_SERVER_URL`과 `VITE_VIA_SERVER_URL`에 해당 서버의 IP 주소를 설정하세요
+  - Ollama가 다른 서버에 있다면 `OLLAMA_BASE_URL`에 해당 서버의 IP 주소를 설정하세요
+  - CV Event Detector가 다른 서버에 있다면 `CV_EVENT_DETECTOR_API_URL`과 `VITE_CV_EVENT_DETECTOR_API_URL`에 해당 서버의 IP 주소를 설정하세요
 - SMTP 설정은 `SMTP_SETUP_GUIDE.md` 참고
 - `setup_smtp.py` 스크립트로 자동 설정 가능: `python setup_smtp.py`
-- VIA 서버 URL은 `src/api/config/settings.py`에서 하드코딩되어 있습니다 (`VIA_SERVER_URL = "http://172.16.7.64:8101"`). 필요시 수정하세요.
 - **보안**: `.env` 파일은 절대 Git에 커밋하지 마세요
 
 ## 🗄️ 데이터베이스 설정

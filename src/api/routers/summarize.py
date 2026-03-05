@@ -13,7 +13,8 @@ from utils.helpers import (
     ensure_vss_client,
     get_via_model,
     build_summarize_params,
-    check_video_type
+    check_video_type,
+    translate_to_korean
 )
 from database.connection import get_db_connection
 from exceptions import NotFoundException, DatabaseException, ValidationException
@@ -173,15 +174,24 @@ async def vss_summarize(
             "[CA-RAG DEBUG] ⚠️ 이후 query_video 호출 시 CA-RAG 컨텍스트 상태 확인 필요"
         )
 
-        # DB에 요약 결과 저장
+        # 요약 결과를 한국어로 번역
+        translated_result = result
         try:
-            _save_summary_to_db(video_id, user_id, result, prompt)
-            logger.info(f"요약 결과 DB 저장 완료: video_id={video_id}, user_id={user_id}")
+            translated_result = await translate_to_korean(result)
+            logger.info(f"요약 결과 번역 완료: video_id={video_id}")
+        except Exception as translate_error:
+            logger.warning(f"요약 결과 번역 실패, 원문 저장: {translate_error}")
+            # 번역 실패 시 원문 사용
+
+        # DB에 번역된 요약 결과 저장
+        try:
+            _save_summary_to_db(video_id, user_id, translated_result, prompt)
+            logger.info(f"요약 결과 DB 저장 완료 (번역본): video_id={video_id}, user_id={user_id}")
         except Exception as save_error:
             logger.error(f"요약 결과 DB 저장 실패: {save_error}")
             # DB 저장 실패해도 요약 결과는 반환 (사용자 경험 우선)
         
-        return {"summary": result, "video_id": video_id, "image_mode": image_mode}
+        return {"summary": translated_result, "video_id": video_id, "image_mode": image_mode}
     except HTTPException:
         # HTTPException은 그대로 전파
         raise
@@ -290,17 +300,26 @@ async def vss_summarize_multi(
         from utils.helpers import vss_client
         result = await vss_client.summarize_video(*summarize_params)
         
-        # DB에 요약 결과 저장 (멀티 이미지의 경우 첫 번째 video_id를 대표로 사용)
+        # 요약 결과를 한국어로 번역
+        translated_result = result
+        try:
+            translated_result = await translate_to_korean(result)
+            logger.info(f"멀티 이미지 요약 결과 번역 완료: video_ids={video_id_list}")
+        except Exception as translate_error:
+            logger.warning(f"멀티 이미지 요약 결과 번역 실패, 원문 저장: {translate_error}")
+            # 번역 실패 시 원문 사용
+        
+        # DB에 번역된 요약 결과 저장 (멀티 이미지의 경우 첫 번째 video_id를 대표로 사용)
         try:
             # 멀티 이미지는 하나의 요약으로 통합되므로 첫 번째 video_id로 저장
             primary_video_id = video_id_list[0]
-            _save_summary_to_db(primary_video_id, user_id, result, prompt)
-            logger.info(f"멀티 이미지 요약 결과 DB 저장 완료: video_ids={video_id_list}, user_id={user_id}")
+            _save_summary_to_db(primary_video_id, user_id, translated_result, prompt)
+            logger.info(f"멀티 이미지 요약 결과 DB 저장 완료 (번역본): video_ids={video_id_list}, user_id={user_id}")
         except Exception as save_error:
             logger.error(f"멀티 이미지 요약 결과 DB 저장 실패: {save_error}")
             # DB 저장 실패해도 요약 결과는 반환
         
-        return {"summary": result, "video_ids": video_id_list, "image_mode": True}
+        return {"summary": translated_result, "video_ids": video_id_list, "image_mode": True}
     except HTTPException:
         raise
     except Exception as e:
@@ -315,11 +334,13 @@ def get_summary(
     user_id: str = Query(...)
 ):
     """특정 동영상의 요약 결과 조회 (VIA 서버 video_id 기준)"""
+    logger.info(f"[get_summary] 요약 결과 조회 요청: VIDEO_ID={video_id}, USER_ID={user_id}")
     try:
         # 사용자 존재 확인
         with get_db_connection() as cursor:
             cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
             if not cursor.fetchone():
+                logger.warning(f"[get_summary] 사용자를 찾을 수 없음: USER_ID={user_id}")
                 raise NotFoundException("사용자", user_id)
         with get_db_connection() as cursor:
             cursor.execute(
@@ -330,11 +351,13 @@ def get_summary(
             )
             row = cursor.fetchone()
             if not row:
+                logger.info(f"[get_summary] 요약 결과 없음: VIDEO_ID={video_id}, USER_ID={user_id}")
                 return {
                     "success": False,
                     "message": "요약 결과가 없습니다."
                 }
 
+        logger.info(f"[get_summary] 요약 결과 조회 성공: VIDEO_ID={video_id}, USER_ID={user_id}, SUMMARY_ID={row[0]}")
         return {
             "success": True,
             "summary": {
@@ -350,7 +373,7 @@ def get_summary(
     except NotFoundException:
         raise
     except Exception as e:
-        logger.error(f"요약 결과 조회 실패: {e}")
+        logger.error(f"[get_summary] 요약 결과 조회 실패: VIDEO_ID={video_id}, USER_ID={user_id}, 오류={e}")
         raise DatabaseException(f"요약 결과 조회 중 오류가 발생했습니다: {str(e)}")
 
 
@@ -456,3 +479,24 @@ async def delete_summaries(request: DeleteSummaryRequest):
     except Exception as e:
         logger.error(f"요약 결과 삭제 실패: {e}")
         raise DatabaseException(f"요약 결과 삭제 중 오류가 발생했습니다: {str(e)}")
+
+
+@router.post("/translate-to-korean")
+async def translate_summary_to_korean(
+    text: str = Form(...)
+):
+    """요약 결과를 한국어로 번역하는 API"""
+    try:
+        translated_text = await translate_to_korean(text)
+        return {
+            "success": True,
+            "translated_text": translated_text
+        }
+    except Exception as e:
+        logger.error(f"번역 실패: {e}")
+        # 번역 실패 시 원본 텍스트 반환
+        return {
+            "success": False,
+            "translated_text": text,
+            "error": str(e)
+        }

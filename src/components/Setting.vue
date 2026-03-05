@@ -1,8 +1,8 @@
 <template>
   <!-- Enable Audio Toggle -->
-  <div class="border-2 px-3 py-3 bg-gray-100 mb-3 w-48">
+  <div class="border-2 border-gray-300 dark:border-gray-600 px-3 py-3 bg-gray-100 dark:bg-gray-800 mb-3 w-48">
     <div class="flex items-center justify-between">
-      <label class="text-base font-semibold cursor-pointer" @click="settingStore.enableAudio = !settingStore.enableAudio">
+      <label class="text-base font-semibold text-gray-900 dark:text-gray-100 cursor-pointer" @click="settingStore.enableAudio = !settingStore.enableAudio">
         Enable Audio
       </label>
       <button
@@ -21,19 +21,19 @@
     </div>
   </div>
 
-  <div class="border-2 px-3 py-3 bg-gray-100 mb-3">
-    <button class="w-full text-left flex items-center gap-2" @click="toggleVlmParams">
+  <div class="border-2 border-gray-300 dark:border-gray-600 px-3 py-3 bg-gray-100 dark:bg-gray-800 mb-3">
+    <button class="w-full text-left flex items-center gap-2 text-gray-900 dark:text-gray-100" @click="toggleVlmParams">
       <h2>VLM Parameters</h2>
       <span class="ml-auto">{{ showVlmParams ? '▲' : '▼' }}</span>
     </button>
     <Transition name="fade-slide">
     <div v-show="showVlmParams" class="mt-3">
       <div class="grid lg:grid-cols-3 gap-4 rounded-md">
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-          <h2 class="font-semibold mb-3">Chunk 설정</h2>
-          <label class="block text-sm mb-1">Chunk Size</label>
-          <p class="text-xs text-gray-500 mt-2">동영상 추론에서 분할 단위를 설정합니다.</p>
-          <select v-model.number="settingStore.chunk" class="border-2 border-gray-300 rounded-md px-3 py-2 w-full mt-3">
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+          <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">Chunk 설정</h2>
+          <label class="block text-sm mb-1 text-gray-700 dark:text-gray-300">Chunk Size</label>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">동영상 추론에서 분할 단위를 설정합니다.</p>
+          <select v-model.number="settingStore.chunk" class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md px-3 py-2 w-full mt-3">
             <option value=0>No chunking</option>
             <option value=5>5 sec</option>
             <option value=10>10 sec</option>
@@ -48,207 +48,207 @@
           </select>
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-          <h2 class="font-semibold mb-3">Caption Summarization Prompt</h2>
-          <textarea v-model="settingStore.captionPrompt" rows="6" class="w-full border-2 border-gray-300 rounded-md p-3"></textarea>
-          <p class="text-xs text-gray-500 mt-2">이미지가 업로드되면 자동으로 이미지 전용 프롬프트로 변경되고, 동영상만 있을 때는 동영상 전용 프롬프트로 표시됩니다.</p>
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+          <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">Caption Summarization Prompt</h2>
+          <textarea v-model="settingStore.captionPrompt" rows="6" class="w-full border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md p-3"></textarea>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">이미지가 업로드되면 자동으로 이미지 전용 프롬프트로 변경되고, 동영상만 있을 때는 동영상 전용 프롬프트로 표시됩니다.</p>
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-          <h2 class="font-semibold mb-3">Summary Aggregation Prompt</h2>
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+          <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">Summary Aggregation Prompt</h2>
           <textarea v-model="settingStore.aggregationPrompt" rows="6"
-            class="w-full border-2 border-gray-300 rounded-md p-3"></textarea>
+            class="w-full border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md p-3"></textarea>
           <p class="text-xs text-gray-500 mt-2">이미지가 업로드되면 자동으로 이미지 전용 프롬프트로 변경되고, 동영상만 있을 때는 동영상 전용 프롬프트로 표시됩니다.</p>
         </section>
       </div>
 
       <div class="grid lg:grid-cols-3 gap-4 mt-4 rounded-md">
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-          <h2 class="font-semibold mb-3">num_frames_per_chunk</h2>
-          <p class="text-xs text-gray-500 mt-2">The number of frames to choose from chunk</p>
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+          <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">num_frames_per_chunk</h2>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">The number of frames to choose from chunk</p>
           <input v-model.number="settingStore.nfmc" type="number" min="0" max="128" step="1"
-            @input="clampValue('nfmc', 128, 0)"
-            class="border-2 border-gray-300 rounded-md px-3 py-2 w-full mt-3" />
+            @blur="clampValue('nfmc', 128, 0)"
+            class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md px-3 py-2 w-full mt-3" />
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-          <h2 class="font-semibold mb-3">VLM Input Width</h2>
-          <p class="text-xs text-gray-500 mt-2">Provide VLM frame's width details</p>
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+          <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">VLM Input Width</h2>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Provide VLM frame's width details</p>
           <input v-model.number="settingStore.frameWidth" type="number" min="0" max="4096" step="1"
-            @input="clampValue('frameWidth', 4096, 0)"
-            class="border-2 border-gray-300 rounded-md px-3 py-2 w-full mt-3" />
+            @blur="clampValue('frameWidth', 4096, 0)"
+            class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md px-3 py-2 w-full mt-3" />
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-          <h2 class="font-semibold mb-3">VLM Input Height</h2>
-          <p class="text-xs text-gray-500 mt-2">Provide VLM frame's height details</p>
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+          <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">VLM Input Height</h2>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Provide VLM frame's height details</p>
           <input v-model.number="settingStore.frameHeight" type="number" min="0" max="4096" step="1"
-            @input="clampValue('frameHeight', 4096, 0)"
-            class="border-2 border-gray-300 rounded-md px-3 py-2 w-full mt-3" />
+            @blur="clampValue('frameHeight', 4096, 0)"
+            class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md px-3 py-2 w-full mt-3" />
         </section>
       </div>
 
       <div class="grid lg:grid-cols-3 gap-4 mt-4 rounded-md">
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-          <h2 class="font-semibold mb-3">Top-k</h2>
-          <p class="text-xs text-gray-500 mt-2">The number of highest probability vocabulary tokens to keep for
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+          <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">Top-k</h2>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">The number of highest probability vocabulary tokens to keep for
             top-k-filtering</p>
           <input v-model.number="settingStore.topk" type="number" min="1" max="1000" step="1"
-            @input="clampValue('topk', 1000, 1)"
-            class="border-2 border-gray-300 rounded-md px-3 py-2 w-full mt-3" />
+            @blur="clampValue('topk', 1000, 1)"
+            class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md px-3 py-2 w-full mt-3" />
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-          <h2 class="font-semibold mb-3">Top-p</h2>
-          <p class="text-xs text-gray-500 mt-2">The top-p sampling mass used for text generation. The top-p value
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+          <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">Top-p</h2>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">The top-p sampling mass used for text generation. The top-p value
             determines the probability mass that is sampled at sampling time. For example, if top_p = 0.2, only the most
             likely tokens (summing to 0.2 cumulative probability) will be sampled. It is not recommended to modify both
             temperature and top_p in the same call.</p>
           <div>
             <input v-model.number="settingStore.topp" type="number" min="0" max="1" step="0.1"
-              @input="clampValue('topp', 1, 0)"
-              class="border-2 border-gray-300 w-20 mt-3 text-center" />
-            <button class="border-2 border-gray-300 w-7" @click="reset_TopP">↺</button>
+              @blur="clampValue('topp', 1, 0)"
+              class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-20 mt-3 text-center" />
+            <button class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 w-7" @click="reset_TopP">↺</button>
           </div>
           
           <div class="flex items-end h-10">
             <input v-model.number="settingStore.topp" type="range" min="0" max="1" step="0.05"
-              class="w-11/12 mx-auto border-gray-300" />
+              class="w-11/12 mx-auto border-gray-300 dark:border-gray-600" />
           </div>
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-          <h2 class="font-semibold mb-3">Temperature</h2>
-          <p class="text-xs text-gray-500 mt-2">The sampling temperature to use for text generation. The higher the
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+          <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">Temperature</h2>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">The sampling temperature to use for text generation. The higher the
             temperature value is, the less deterministic the output text will be. It is not recommended to modify both
             temperature and top_p in the same call.</p>
           <div>
             <input v-model.number="settingStore.temp" type="number" min="0" max="1" step="0.1"
-              @input="clampValue('temp', 1, 0)"
-              class="border-2 border-gray-300 w-20 mt-3 text-center" />
-            <button class="border-2 border-gray-300 w-7" @click="reset_Temperature">↺</button>
+              @blur="clampValue('temp', 1, 0)"
+              class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-20 mt-3 text-center" />
+            <button class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 w-7" @click="reset_Temperature">↺</button>
           </div>
           
           <div class="flex items-end h-10">
             <input v-model.number="settingStore.temp" type="range" min="0" max="1" step="0.05"
-              class="w-11/12 mx-auto border-gray-300" />
+              class="w-11/12 mx-auto border-gray-300 dark:border-gray-600" />
           </div>
         </section>
       </div>
 
       <div class="grid lg:grid-cols-2 gap-4 mt-4 rounded-md">
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
           <div class="flex items-center gap-2">
-            <div><h2 class="font-semibold">Max Tokens</h2>
-            <p class="text-xs text-gray-500">The maximum number of tokens to generate in any given call. Note that
+            <div><h2 class="font-semibold text-gray-900 dark:text-gray-100">Max Tokens</h2>
+            <p class="text-xs text-gray-500 dark:text-gray-400">The maximum number of tokens to generate in any given call. Note that
             the
             model is not aware of this value, and generation will simply stop at the number of tokens specified.</p>
             </div>
 
             <div class="ml-auto">
               <input v-model.number="settingStore.maxTokens" type="number" min="1" max="1024" step="1"
-                @input="clampValue('maxTokens', 1024, 1)"
-                class="border-2 border-gray-300 w-[70%] text-center" />
-              <button class="border-2 border-gray-300 w-7" @click="reset_MaxTokens">↺</button>
+                @blur="clampValue('maxTokens', 1024, 1)"
+                class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-[70%] text-center" />
+              <button class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 w-7" @click="reset_MaxTokens">↺</button>
             </div>
           </div>
         
           <div class="flex items-end h-10">
-            <span class="text-xs text-gray-400 w-8 text-center">1</span>
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-8 text-center">1</span>
             <input v-model.number="settingStore.maxTokens" type="range" min="1" max="1024" step="1"
-              class="w-11/12 mx-auto border-gray-300" />
-            <span class="text-xs text-gray-400 w-12 text-center">1024</span>
+              class="w-11/12 mx-auto border-gray-300 dark:border-gray-600" />
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-12 text-center">1024</span>
           </div>
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-          <h2 class="font-semibold mb-3">seed</h2>
-          <p class="text-xs text-gray-500 mt-2">Seed value to use for sampling. Repeated requests with the same seed and
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+          <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">seed</h2>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Seed value to use for sampling. Repeated requests with the same seed and
             parameters should return the same result.</p>
           <input v-model.number="settingStore.seed" type="number" min="1" max="4294967295" step="1"
-            @input="clampValue('seed', 4294967295, 1)"
-            class="border-2 border-gray-300 rounded-md px-3 py-2 w-full mt-3" />
+            @blur="clampValue('seed', 4294967295, 1)"
+            class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md px-3 py-2 w-full mt-3" />
         </section>
       </div>
     </div>
     </Transition>
   </div>
 
-  <div class="border-2 px-3 py-3 bg-gray-100">
-    <button class="w-full text-left flex items-center gap-2" @click="toggleRAGParams">
+  <div class="border-2 border-gray-300 dark:border-gray-600 px-3 py-3 bg-gray-100 dark:bg-gray-800">
+    <button class="w-full text-left flex items-center gap-2 text-gray-900 dark:text-gray-100" @click="toggleRAGParams">
       <h2>RAG Parameters</h2>
       <span class="ml-auto">{{ showRAGParams ? '▲' : '▼' }}</span>
     </button>
 
     <!--Summarize Parameters-->
     <Transition name="fade-slide">
-    <div v-show="showRAGParams" class="mt-3 border-2 border-gray-300">
-      <button class="w-full text-left rounded-md px-3 py-2 flex items-center gap-2"  @click="toggleSUMMARYParams">
+    <div v-show="showRAGParams" class="mt-3 border-2 border-gray-300 dark:border-gray-600">
+      <button class="w-full text-left rounded-md px-3 py-2 flex items-center gap-2 text-gray-900 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700"  @click="toggleSUMMARYParams">
         <span>Summarize Parameters</span>
         <span class="ml-auto">{{ showSUMMARYParams ? '▲' : '▼' }}</span>
       </button>
       <Transition name="fade-scale">
       <div v-show="showSUMMARYParams" class="mt-3 m-3">
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
           <div class="flex items-center gap-2">
             <label>
-              <h2 class="font-semibold">Summarize Top P</h2>
-              <p class="text-xs text-gray-500">The top-p sampling mass used for summarization. Determines the probability mass that is sampled.</p>
+              <h2 class="font-semibold text-gray-900 dark:text-gray-100">Summarize Top P</h2>
+              <p class="text-xs text-gray-500 dark:text-gray-400">The top-p sampling mass used for summarization. Determines the probability mass that is sampled.</p>
             </label>
             <div class="ml-auto">
               <input v-model.number="settingStore.S_TopP" type="number" min="0" max="1" step="0.05"
-                @input="clampValue('S_TopP', 1, 0)"
-                class="border-2 border-gray-300 w-28 text-center" />
-              <button class="border-2 border-gray-300 w-7" @click="resetS_TopP">↺</button>
+                @blur="clampValue('S_TopP', 1, 0)"
+                class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-28 text-center" />
+              <button class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 w-7" @click="resetS_TopP">↺</button>
             </div>
           </div>
           <div class="flex items-end h-10">
-            <span class="text-xs text-gray-400 w-10 text-center">0</span>
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">0</span>
             <input v-model.number="settingStore.S_TopP" type="range" min="0" max="1" step="0.05"
-              class="w-full border-gray-300" />
-            <span class="text-xs text-gray-400 w-10 text-center">1</span>
+              class="w-full border-gray-300 dark:border-gray-600" />
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">1</span>
           </div>
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
           <div class="flex items-center gap-2">
             <label>
-              <h2 class="font-semibold">Summarize Temperature</h2>
-              <p class="text-xs text-gray-500">The sampling temperature to use for summarization. Higher values make the output less deterministic.</p>
+              <h2 class="font-semibold text-gray-900 dark:text-gray-100">Summarize Temperature</h2>
+              <p class="text-xs text-gray-500 dark:text-gray-400">The sampling temperature to use for summarization. Higher values make the output less deterministic.</p>
             </label>
             <div class="ml-auto">
               <input v-model.number="settingStore.S_TEMPERATURE" type="number" min="0" max="1" step="0.05"
-                @input="clampValue('S_TEMPERATURE', 1, 0)"
-                class="border-2 border-gray-300 w-28 text-center" />
-              <button class="border-2 border-gray-300 w-7" @click="resetS_TEMPERATURE">↺</button>
+                @blur="clampValue('S_TEMPERATURE', 1, 0)"
+                class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-28 text-center" />
+              <button class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 w-7" @click="resetS_TEMPERATURE">↺</button>
             </div>
           </div>
           <div class="flex items-end h-10">
-            <span class="text-xs text-gray-400 w-10 text-center">0</span>
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">0</span>
             <input v-model.number="settingStore.S_TEMPERATURE" type="range" min="0" max="1" step="0.05"
-              class="w-full border-gray-300" />
-            <span class="text-xs text-gray-400 w-10 text-center">1</span>
+              class="w-full border-gray-300 dark:border-gray-600" />
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">1</span>
           </div>
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
           <div class="flex items-center gap-2">
             <label>
-              <h2 class="font-semibold">Summarize Max Tokens</h2>
-              <p class="text-xs text-gray-500">The maximum number of tokens to generate for summarization.</p>
+              <h2 class="font-semibold text-gray-900 dark:text-gray-100">Summarize Max Tokens</h2>
+              <p class="text-xs text-gray-500 dark:text-gray-400">The maximum number of tokens to generate for summarization.</p>
             </label>
             <div class="ml-auto">
               <input v-model.number="settingStore.SMAX_TOKENS" type="number" min="1" max="10240" step="1"
-                @input="clampValue('SMAX_TOKENS', 10240, 1)"
-                class="border-2 border-gray-300 w-28 text-center" />
-              <button class="border-2 border-gray-300 w-7" @click="resetSMAX_TOKENS">↺</button>
+                @blur="clampValue('SMAX_TOKENS', 10240, 1)"
+                class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-28 text-center" />
+              <button class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 w-7" @click="resetSMAX_TOKENS">↺</button>
             </div>
           </div>
           <div class="flex items-end h-10">
-            <span class="text-xs text-gray-400 w-10 text-center">0</span>
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">0</span>
             <input v-model.number="settingStore.SMAX_TOKENS" type="range" min="1" max="10240" step="1"
-              class="w-full border-gray-300" />
-            <span class="text-xs text-gray-400 w-10 text-center">10240</span>
+              class="w-full border-gray-300 dark:border-gray-600" />
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-12 text-center">10240</span>
           </div>
         </section>
       </div>
@@ -258,73 +258,73 @@
 
     <!-- Chat parameters-->
     <Transition name="fade-slide">
-    <div v-show="showRAGParams" class="mt-3 border-2 border-gray-300">
-      <button class="w-full text-left rounded-md px-3 py-2 flex items-center gap-2"  @click="toggleChatParams">
+    <div v-show="showRAGParams" class="mt-3 border-2 border-gray-300 dark:border-gray-600">
+      <button class="w-full text-left rounded-md px-3 py-2 flex items-center gap-2 text-gray-900 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700"  @click="toggleChatParams">
         <span>Chat Parameters</span>
         <span class="ml-auto">{{ showChatParams ? '▲' : '▼' }}</span>
       </button>
       <Transition name="fade-scale">
       <div v-show="showChatParams" class="mt-3 m-3">
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
           <div class="flex items-center gap-2">
             <label>
-              <h2 class="font-semibold">Chat Top P</h2>
-              <p class="text-xs text-gray-500">The top-p sampling mass used for chat. Determines the probability mass that is sampled.</p>
+              <h2 class="font-semibold text-gray-900 dark:text-gray-100">Chat Top P</h2>
+              <p class="text-xs text-gray-500 dark:text-gray-400">The top-p sampling mass used for chat. Determines the probability mass that is sampled.</p>
             </label>
             <div class="ml-auto">
               <input v-model.number="settingStore.C_TopP" type="number" min="0" max="1" step="0.05"
-                @input="clampValue('C_TopP', 1, 0)"
-                class="border-2 border-gray-300 w-28 text-center" />
-              <button class="border-2 border-gray-300 w-7" @click="resetC_TopP">↺</button>
+                @blur="clampValue('C_TopP', 1, 0)"
+                class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-28 text-center" />
+              <button class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 w-7" @click="resetC_TopP">↺</button>
             </div>
           </div>
           <div class="flex items-end h-10">
-            <span class="text-xs text-gray-400 w-10 text-center">0</span>
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">0</span>
             <input v-model.number="settingStore.C_TopP" type="range" min="0" max="1" step="0.05"
-              class="w-full border-gray-300" />
-            <span class="text-xs text-gray-400 w-10 text-center">1</span>
+              class="w-full border-gray-300 dark:border-gray-600" />
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">1</span>
           </div>
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
           <div class="flex items-center gap-2">
             <label>
-              <h2 class="font-semibold">Chat Temperature</h2>
-              <p class="text-xs text-gray-500">The sampling temperature to use for chat. Higher values make the output less deterministic.</p>
+              <h2 class="font-semibold text-gray-900 dark:text-gray-100">Chat Temperature</h2>
+              <p class="text-xs text-gray-500 dark:text-gray-400">The sampling temperature to use for chat. Higher values make the output less deterministic.</p>
             </label>
             <div class="ml-auto">
               <input v-model.number="settingStore.C_TEMPERATURE" type="number" min="0" max="1" step="0.05"
-                @input="clampValue('C_TEMPERATURE', 1, 0)"
-                class="border-2 border-gray-300 w-28 text-center" />
-              <button class="border-2 border-gray-300 w-7" @click="resetC_TEMPERATURE">↺</button>
+                @blur="clampValue('C_TEMPERATURE', 1, 0)"
+                class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-28 text-center" />
+              <button class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 w-7" @click="resetC_TEMPERATURE">↺</button>
             </div>
           </div>
           <div class="flex items-end h-10">
-            <span class="text-xs text-gray-400 w-10 text-center">0</span>
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">0</span>
             <input v-model.number="settingStore.C_TEMPERATURE" type="range" min="0" max="1" step="0.05"
-              class="w-full border-gray-300" />
-            <span class="text-xs text-gray-400 w-10 text-center">1</span>
+              class="w-full border-gray-300 dark:border-gray-600" />
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">1</span>
           </div>
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
           <div class="flex items-center gap-2">
             <label>
-              <h2 class="font-semibold">Chat Max Tokens</h2>
-              <p class="text-xs text-gray-500">The maximum number of tokens to generate for chat.</p>
+              <h2 class="font-semibold text-gray-900 dark:text-gray-100">Chat Max Tokens</h2>
+              <p class="text-xs text-gray-500 dark:text-gray-400">The maximum number of tokens to generate for chat.</p>
             </label>
             <div class="ml-auto">
               <input v-model.number="settingStore.C_MAX_TOKENS" type="number" min="1" max="10240" step="1"
-                @input="clampValue('C_MAX_TOKENS', 10240, 1)"
-                class="border-2 border-gray-300 w-28 text-center" />
-              <button class="border-2 border-gray-300 w-7" @click="resetC_MAX_TOKENS">↺</button>
+                @blur="clampValue('C_MAX_TOKENS', 10240, 1)"
+                class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-28 text-center" />
+              <button class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 w-7" @click="resetC_MAX_TOKENS">↺</button>
             </div>
           </div>
           <div class="flex items-end h-10">
-            <span class="text-xs text-gray-400 w-10 text-center">0</span>
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">0</span>
             <input v-model.number="settingStore.C_MAX_TOKENS" type="range" min="1" max="10240" step="1"
-              class="w-full border-gray-300" />
-            <span class="text-xs text-gray-400 w-10 text-center">10240</span>
+              class="w-full border-gray-300 dark:border-gray-600" />
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-12 text-center">10240</span>
           </div>
         </section>
       </div>
@@ -334,73 +334,73 @@
 
     <!-- Alert Parameters -->
     <Transition name="fade-slide">
-    <div v-show="showRAGParams" class="mt-3 border-2 border-gray-300">
-      <button class="w-full text-left rounded-md px-3 py-2 flex items-center gap-2"  @click="toggleAlertParams">
+    <div v-show="showRAGParams" class="mt-3 border-2 border-gray-300 dark:border-gray-600">
+      <button class="w-full text-left rounded-md px-3 py-2 flex items-center gap-2 text-gray-900 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700"  @click="toggleAlertParams">
         <span>Alert Parameters</span>
         <span class="ml-auto">{{ showAlertParams ? '▲' : '▼' }}</span>
       </button>
       <Transition name="fade-scale">
       <div v-show="showAlertParams" class="mt-3 m-3">
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
           <div class="flex items-center gap-2">
             <label>
-              <h2 class="font-semibold">Alert Top P</h2>
-              <p class="text-xs text-gray-500">The top-p sampling mass used for alerts. Determines the probability mass that is sampled.</p>
+              <h2 class="font-semibold text-gray-900 dark:text-gray-100">Alert Top P</h2>
+              <p class="text-xs text-gray-500 dark:text-gray-400">The top-p sampling mass used for alerts. Determines the probability mass that is sampled.</p>
             </label>
             <div class="ml-auto">
               <input v-model.number="settingStore.A_TopP" type="number" min="0" max="1" step="0.05"
-                @input="clampValue('A_TopP', 1, 0)"
-                class="border-2 border-gray-300 w-28 text-center" />
-              <button class="border-2 border-gray-300 w-7" @click="resetA_TopP">↺</button>
+                @blur="clampValue('A_TopP', 1, 0)"
+                class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-28 text-center" />
+              <button class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 w-7" @click="resetA_TopP">↺</button>
             </div>
           </div>
           <div class="flex items-end h-10">
-            <span class="text-xs text-gray-400 w-10 text-center">0</span>
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">0</span>
             <input v-model.number="settingStore.A_TopP" type="range" min="0" max="1" step="0.05"
-              class="w-full border-gray-300" />
-            <span class="text-xs text-gray-400 w-10 text-center">1</span>
+              class="w-full border-gray-300 dark:border-gray-600" />
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">1</span>
           </div>
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
           <div class="flex items-center gap-2">
             <label>
-              <h2 class="font-semibold">Alert Temperature</h2>
-              <p class="text-xs text-gray-500">The sampling temperature to use for alerts. Higher values make the output less deterministic.</p>
+              <h2 class="font-semibold text-gray-900 dark:text-gray-100">Alert Temperature</h2>
+              <p class="text-xs text-gray-500 dark:text-gray-400">The sampling temperature to use for alerts. Higher values make the output less deterministic.</p>
             </label>
             <div class="ml-auto">
               <input v-model.number="settingStore.A_TEMPERATURE" type="number" min="0" max="1" step="0.05"
-                @input="clampValue('A_TEMPERATURE', 1, 0)"
-                class="border-2 border-gray-300 w-28 text-center" />
-              <button class="border-2 border-gray-300 w-7" @click="resetA_TEMPERATURE">↺</button>
+                @blur="clampValue('A_TEMPERATURE', 1, 0)"
+                class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-28 text-center" />
+              <button class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 w-7" @click="resetA_TEMPERATURE">↺</button>
             </div>
           </div>
           <div class="flex items-end h-10">
-            <span class="text-xs text-gray-400 w-10 text-center">0</span>
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">0</span>
             <input v-model.number="settingStore.A_TEMPERATURE" type="range" min="0" max="1" step="0.05"
-              class="w-full border-gray-300" />
-            <span class="text-xs text-gray-400 w-10 text-center">1</span>
+              class="w-full border-gray-300 dark:border-gray-600" />
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">1</span>
           </div>
         </section>
 
-        <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
+        <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
           <div class="flex items-center gap-2">
             <label>
-              <h2 class="font-semibold">Alert Max Tokens</h2>
-              <p class="text-xs text-gray-500">The maximum number of tokens to generate for alerts.</p>
+              <h2 class="font-semibold text-gray-900 dark:text-gray-100">Alert Max Tokens</h2>
+              <p class="text-xs text-gray-500 dark:text-gray-400">The maximum number of tokens to generate for alerts.</p>
             </label>
             <div class="ml-auto">
               <input v-model.number="settingStore.A_MAX_TOKENS" type="number" min="1" max="10240" step="1"
-                @input="clampValue('A_MAX_TOKENS', 10240, 1)"
-                class="border-2 border-gray-300 w-28 text-center" />
-              <button class="border-2 border-gray-300 w-7" @click="resetA_MAX_TOKENS">↺</button>
+                @blur="clampValue('A_MAX_TOKENS', 10240, 1)"
+                class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 w-28 text-center" />
+              <button class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 w-7" @click="resetA_MAX_TOKENS">↺</button>
             </div>
           </div>
           <div class="flex items-end h-10">
-            <span class="text-xs text-gray-400 w-10 text-center">0</span>
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-10 text-center">0</span>
             <input v-model.number="settingStore.A_MAX_TOKENS" type="range" min="1" max="10240" step="1"
-              class="w-full border-gray-300" />
-            <span class="text-xs text-gray-400 w-10 text-center">10240</span>
+              class="w-full border-gray-300 dark:border-gray-600" />
+            <span class="text-xs text-gray-400 dark:text-gray-500 w-12 text-center">10240</span>
           </div>
         </section>
       </div>
@@ -410,30 +410,30 @@
 
     <!--Batch Size-->
     <div class="grid lg:grid-cols-1 gap-4 rounded-md, mt-3">
-      <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-        <h2 class="font-semibold mb-3">Summarize Batch Size</h2>
-          <p class="text-xs text-gray-500 mt-2">Batch size for summarization.</p>
+      <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+        <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">Summarize Batch Size</h2>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Batch size for summarization.</p>
           <input v-model.number="settingStore.batch" type="number" min="1" max="1024" step="1"
-            @input="clampValue('batch', 1024, 1)"
-            class="border-2 border-gray-300 rounded-md px-3 py-2 w-full mt-3" />
+            @blur="clampValue('batch', 1024, 1)"
+            class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md px-3 py-2 w-full mt-3" />
       </section>
     </div>
 
     <!-- RAG settings -->
     <div class="grid lg:grid-cols-2 gap-4 rounded-md, mt-3">
-      <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-        <h2 class="font-semibold mb-3">RAG Batch Size</h2>
-          <p class="text-xs text-gray-500 mt-2">Batch size for RAG processing.</p>
+      <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+        <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">RAG Batch Size</h2>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Batch size for RAG processing.</p>
           <input v-model.number="settingStore.RAG_batch" type="number" min="1" max="1024" step="1"
-            @input="clampValue('RAG_batch', 1024, 1)"
-            class="border-2 border-gray-300 rounded-md px-3 py-2 w-full mt-3" />
+            @blur="clampValue('RAG_batch', 1024, 1)"
+            class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md px-3 py-2 w-full mt-3" />
       </section>
-      <section class="rounded-2xl border-2 px-2 py-3 min-w-[220px] bg-white">
-        <h2 class="font-semibold mb-3">RAG Top K</h2>
-          <p class="text-xs text-gray-500 mt-2">The number of highest probability vocabulary tokens to keep for RAG top-k-filtering.</p>
+      <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">
+        <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">RAG Top K</h2>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">The number of highest probability vocabulary tokens to keep for RAG top-k-filtering.</p>
           <input v-model.number="settingStore.RAG_topk" type="number" min="1" max="1024" step="1"
-            @input="clampValue('RAG_topk', 1024, 1)"
-            class="border-2 border-gray-300 rounded-md px-3 py-2 w-full mt-3" />
+            @blur="clampValue('RAG_topk', 1024, 1)"
+            class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md px-3 py-2 w-full mt-3" />
       </section>
     </div>
 
@@ -469,12 +469,33 @@ const resetParameter = (paramName, defaultValue) => {
   settingStore[paramName] = defaultValue;
 };
 
-// 값 범위 제한 함수
+// 값 범위 제한 함수 (blur 이벤트에서 호출 - 입력 완료 후에만 검증)
 const clampValue = (paramName, maxValue, minValue = null) => {
   const currentValue = settingStore[paramName];
-  if (currentValue > maxValue) {
+  // 값이 null, undefined, 빈 문자열, NaN인 경우 처리
+  if (currentValue === null || currentValue === undefined || currentValue === '' || isNaN(currentValue)) {
+    if (minValue !== null) {
+      settingStore[paramName] = minValue;
+    } else {
+      settingStore[paramName] = 0;
+    }
+    return;
+  }
+  
+  const numValue = Number(currentValue);
+  if (isNaN(numValue)) {
+    // 숫자가 아닌 경우 최소값 또는 0으로 설정
+    if (minValue !== null) {
+      settingStore[paramName] = minValue;
+    } else {
+      settingStore[paramName] = 0;
+    }
+    return;
+  }
+  
+  if (numValue > maxValue) {
     settingStore[paramName] = maxValue;
-  } else if (minValue !== null && currentValue < minValue) {
+  } else if (minValue !== null && numValue < minValue) {
     settingStore[paramName] = minValue;
   }
 };

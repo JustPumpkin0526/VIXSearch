@@ -80,7 +80,8 @@
       
         <!-- 동영상 출력 영역 -->
         <div 
-          class="relative w-full h-[calc(100vh-15rem)] border border-slate-200/80 dark:border-gray-700 rounded-2xl shadow-inner mt-4 transition-all duration-300 flex flex-col"
+          ref="videoContainerRef"
+          class="relative w-full h-[calc(100vh-15rem)] border border-slate-200/80 dark:border-gray-700 rounded-2xl shadow-inner mt-4 transition-all duration-300 flex flex-col overflow-hidden"
           :class="isDragOverUpload ? 'bg-blue-100 dark:bg-blue-900/30 border-blue-400 dark:border-blue-500 ring-2 ring-blue-300 dark:ring-blue-600' : 'bg-gray-50 dark:bg-gray-700'"
           @dragover.prevent="onDragOverUpload"
           @dragleave.prevent="onDragLeaveUpload"
@@ -103,13 +104,89 @@
             </div>
           </div>
 
+          <!-- 경로 표시 (Breadcrumb) -->
+          <div v-if="currentGroupPath.length > 0" class="px-6 pt-4 pb-2 border-b border-gray-200 dark:border-gray-700">
+            <div class="flex items-center gap-2 text-sm">
+              <button 
+                @click="navigateToGroup([])"
+                class="text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors">
+                {{ settingStore.language === 'ko' ? '홈' : 'Home' }}
+              </button>
+              <span class="text-gray-400 dark:text-gray-500">/</span>
+              <template v-for="(groupId, index) in currentGroupPath" :key="groupId">
+                <button 
+                  @click="navigateToGroup(currentGroupPath.slice(0, index + 1))"
+                  class="text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors">
+                  {{ getGroupName(groupId) }}
+                </button>
+                <span v-if="index < currentGroupPath.length - 1" class="text-gray-400 dark:text-gray-500">/</span>
+              </template>
+            </div>
+          </div>
+
           <!-- 동영상 출력 그리드(행열 구조) -->
           <div 
-            class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 p-6 flex-1 transition-opacity duration-300 min-h-0 content-start"
-            :class="{ 'opacity-50': isDragOverUpload && items.length > 0 }">
+            ref="videoGridRef"
+            class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 p-6 flex-1 transition-opacity duration-300 min-h-0 content-start overflow-y-auto relative"
+            :class="{ 'opacity-50': isDragOverUpload && items.length > 0 }"
+            @contextmenu.prevent="onEmptySpaceContextMenu">
+            <!-- 드래그 선택 영역 표시 -->
+            <div 
+              v-if="isDragSelecting && dragSelectBox"
+              class="fixed border-2 border-blue-500 bg-blue-500/20 pointer-events-none z-50"
+              :style="dragSelectBox"></div>
+            
+            <!-- 그룹 렌더링 -->
+            <div v-for="group in filteredGroups" :key="group.id"
+              class="flex flex-col items-center justify-center rounded-2xl shadow-md hover:shadow-xl cursor-pointer p-3 border-2 border-dashed h-auto self-start transform transition-all duration-300 hover:scale-105 hover:-translate-y-1"
+              :class="dragOverGroupId === group.id 
+                ? 'border-blue-600 dark:border-blue-400 bg-blue-100 dark:bg-blue-800 ring-2 ring-blue-400 dark:ring-blue-500' 
+                : 'border-blue-400 dark:border-blue-500 bg-blue-50 dark:bg-blue-900/20'"
+              :style="getGroupGridPosition(group)"
+              @dblclick="enterGroup(group.id)"
+              @contextmenu.prevent.stop="onGroupContextMenu(group, $event)"
+              @dragover.prevent="onGroupDragOver(group.id, $event)"
+              @dragleave="onGroupDragLeave(group.id, $event)"
+              @drop.prevent="onGroupDrop(group.id, $event)">
+              <div class="w-full aspect-video flex items-center justify-center bg-gradient-to-br from-blue-100 to-blue-200 dark:from-blue-800 dark:to-blue-900 rounded-xl mb-2">
+                <!-- 폴더 아이콘 -->
+                <svg class="w-16 h-16 text-blue-500 dark:text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                </svg>
+              </div>
+              <div class="w-full text-center">
+                <!-- 그룹 이름 편집 모드 -->
+                <div v-if="editingGroupId === group.id" class="px-2">
+                  <input
+                    ref="groupNameInput"
+                    v-model="editingGroupName"
+                    type="text"
+                    class="w-full text-sm font-medium text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-700 border border-blue-400 dark:border-blue-500 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    @keydown.enter="saveGroupName(group.id)"
+                    @keydown.esc="cancelGroupNameEdit"
+                    @blur="saveGroupName(group.id)"
+                    @click.stop
+                  />
+                </div>
+                <!-- 그룹 이름 표시 모드 -->
+                <div v-else 
+                  class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate px-2 cursor-text"
+                  @dblclick.stop="startEditGroupName(group.id, group.name)">
+                  {{ group.name }}
+                </div>
+                <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  {{ group.videoIds.length }} {{ settingStore.language === 'ko' ? '개 동영상' : 'videos' }}
+                </div>
+              </div>
+            </div>
+            
             <div v-for="video in paginatedItems" :key="video.id"
               class="flex flex-col items-center justify-center rounded-2xl shadow-md hover:shadow-xl cursor-pointer p-3 border border-gray-200 dark:border-gray-700 relative transform transition-all duration-300 hover:scale-105 hover:-translate-y-1 group bg-white dark:bg-gray-800 h-auto self-start"
-              :class="{ 'ring-2 ring-blue-400 dark:ring-blue-500 bg-blue-100 dark:bg-blue-900/30': selectedIds.includes(video.id) }"
+              :class="{ 'ring-2 ring-blue-400 dark:ring-blue-500 bg-blue-100 dark:bg-blue-900/30': selectedIds.includes(video.id), 'opacity-50': draggedVideoId === video.id }"
+              :ref="el => { if (el) videoCardRefs[video.id] = el }"
+              draggable="true"
+              @dragstart="onVideoDragStart(video.id, $event)"
+              @dragend="onVideoDragEnd"
               @click="onCardClick(video.id, $event)" @contextmenu.prevent.stop="onVideoContextMenu(video, $event)">
               <div
                 class="w-[100%] h-[100%] flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-600 rounded-xl mb-2 overflow-hidden relative group-hover:from-gray-200 group-hover:to-gray-300 dark:group-hover:from-gray-600 dark:group-hover:to-gray-500 transition-all duration-300 aspect-video"
@@ -452,6 +529,28 @@
               <div class="h-px bg-gray-100 dark:bg-gray-700"></div>
               <button class="w-full text-left px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700" @click.stop="contextDelete">{{
                 selectedIds.length > 1 ? `${t.deleteSelected} (${selectedIds.length})` : t.delete }}</button>
+            </div>
+          </div>
+        </Teleport>
+
+        <!-- 빈 공간 우클릭 컨텍스트 메뉴 (Teleport로 body에 렌더링) -->
+        <Teleport to="body">
+          <div v-if="emptySpaceContextMenu.visible" class="fixed z-[200]"
+            :style="{ left: `${emptySpaceContextMenu.x}px`, top: `${emptySpaceContextMenu.y}px` }" @click.stop>
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden w-[200px]">
+              <button class="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200"
+                @click.stop="createGroup">{{ t.createGroup }}</button>
+            </div>
+          </div>
+        </Teleport>
+
+        <!-- 그룹 우클릭 컨텍스트 메뉴 (Teleport로 body에 렌더링) -->
+        <Teleport to="body">
+          <div v-if="groupContextMenu.visible" class="fixed z-[200]"
+            :style="{ left: `${groupContextMenu.x}px`, top: `${groupContextMenu.y}px` }" @click.stop>
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden w-[200px]">
+              <button class="w-full text-left px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700"
+                @click.stop="deleteGroup">{{ settingStore.language === 'ko' ? '그룹 삭제' : 'Delete Group' }}</button>
             </div>
           </div>
         </Teleport>
@@ -1348,17 +1447,58 @@ import settingIcon from '@/assets/icons/setting.png';
 import videoIcon from '@/assets/icons/video.png';
 import timeIcon from '@/assets/icons/time.png';
 
+// ==================== 상수 정의 ====================
+const API_BASE_URL = getApiBaseUrl();
+const UNSUPPORTED_VIDEO_FORMATS = ['avi', 'mkv', 'flv', 'wmv'];
+const MAX_ERROR_RETRIES = 2;
+const UPLOAD_TIMEOUT = 1800000; // 30분
+const CONTEXT_MENU_SIZE = { width: 200, height: 200, margin: 10 };
+const ROWS_PER_PAGE = 3;
+const ENABLE_DEMO_MODE = false;
+
 // ==================== 로딩 모달 상태 ====================
 const showListLoadingModal = ref(false);
 
-// ==================== 상수 정의 ====================
-const API_BASE_URL = getApiBaseUrl();
+// ==================== AbortController 관리 유틸리티 ====================
 
-// VIA 파일 목록 조회 함수
-async function loadViaFiles() {
-  // AbortController 생성 및 추적
+/**
+ * AbortController를 생성하고 추적 목록에 추가
+ * @returns {AbortController} 생성된 AbortController
+ */
+function createAbortController() {
   const abortController = new AbortController();
   abortControllers.value.push(abortController);
+  return abortController;
+}
+
+/**
+ * AbortController를 추적 목록에서 제거
+ * @param {AbortController} abortController - 제거할 AbortController
+ */
+function removeAbortController(abortController) {
+  const index = abortControllers.value.indexOf(abortController);
+  if (index > -1) {
+    abortControllers.value.splice(index, 1);
+  }
+}
+
+/**
+ * AbortError인지 확인
+ * @param {Error} error - 확인할 에러
+ * @returns {boolean} AbortError 여부
+ */
+function isAbortError(error) {
+  return error.name === 'AbortError';
+}
+
+// ==================== API 호출 함수 ====================
+
+/**
+ * VIA 파일 목록 조회
+ * @returns {Promise<Array|null>} 파일 목록 또는 null
+ */
+async function loadViaFiles() {
+  const abortController = createAbortController();
   
   try {
     const response = await fetch(`${API_BASE_URL}/via-files?purpose=vision`, {
@@ -1369,37 +1509,35 @@ async function loadViaFiles() {
       return null;
     }
     const data = await response.json();
-    if (data && data.data) {
+    if (data?.data) {
       console.log('VIA 서버 파일 목록:', data.data);
       return data.data;
     }
     return null;
   } catch (error) {
-    // AbortError는 정상적인 취소이므로 무시
-    if (error.name === 'AbortError') {
+    if (isAbortError(error)) {
       return null;
     }
     console.error('VIA 파일 목록 조회 중 오류:', error);
     return null;
   } finally {
-    // 완료된 AbortController 제거
-    const index = abortControllers.value.indexOf(abortController);
-    if (index > -1) {
-      abortControllers.value.splice(index, 1);
-    }
+    removeAbortController(abortController);
   }
 }
 
-// 동영상을 MP4로 변환하는 함수
+/**
+ * 동영상을 MP4로 변환
+ * @param {string|number} videoId - 동영상 ID
+ * @param {string} userId - 사용자 ID
+ * @param {Object} videoObject - 동영상 객체
+ * @returns {Promise<string|null>} 변환된 URL 또는 null
+ */
 async function convertVideoToMp4(videoId, userId, videoObject) {
-  // 변환 중 상태 표시
   if (videoObject) {
     videoObject._isConverting = true;
   }
   
-  // AbortController 생성 및 추적
-  const abortController = new AbortController();
-  abortControllers.value.push(abortController);
+  const abortController = createAbortController();
   
   try {
     const response = await fetch(`${API_BASE_URL}/convert-video/${videoId}?user_id=${userId}`, {
@@ -1414,7 +1552,6 @@ async function convertVideoToMp4(videoId, userId, videoObject) {
     }
     const data = await response.json();
     if (data.success && data.converted_url) {
-      // 변환된 MP4 URL을 displayUrl로 업데이트
       videoObject.displayUrl = data.converted_url;
       videoObject.originUrl = data.converted_url;
       videoObject._isConverting = false;
@@ -1429,8 +1566,7 @@ async function convertVideoToMp4(videoId, userId, videoObject) {
     }
     return null;
   } catch (error) {
-    // AbortError는 정상적인 취소이므로 무시
-    if (error.name === 'AbortError') {
+    if (isAbortError(error)) {
       if (videoObject) {
         videoObject._isConverting = false;
       }
@@ -1442,17 +1578,9 @@ async function convertVideoToMp4(videoId, userId, videoObject) {
     }
     return null;
   } finally {
-    // 완료된 AbortController 제거
-    const index = abortControllers.value.indexOf(abortController);
-    if (index > -1) {
-      abortControllers.value.splice(index, 1);
-    }
+    removeAbortController(abortController);
   }
 }
-const UNSUPPORTED_VIDEO_FORMATS = ['avi', 'mkv', 'flv', 'wmv']; // 브라우저가 직접 재생하지 못하는 형식
-const MAX_ERROR_RETRIES = 2; // 비디오 로드 에러 최대 재시도 횟수
-const UPLOAD_TIMEOUT = 1800000; // 업로드 타임아웃 (30분 - 큰 파일 대비)
-const CONTEXT_MENU_SIZE = { width: 200, height: 200, margin: 10 };
 
 // ==================== 다국어 지원 ====================
 const settingStore = useSettingStore();
@@ -1460,12 +1588,12 @@ const settingStore = useSettingStore();
 const translations = {  
   ko: {
     workspace: "Video management space",
-    description: "동영상 업로드 후 동영상을 우클릭하여 요약 혹은 검색을 진행할 수 있습니다.",
+    description: "파일 업로드 후 파일을 우클릭하여 요약 혹은 검색을 진행할 수 있습니다.",
     descriptionDetail: "검색 메뉴에서 원하는 장면을 검색하고 해당 장면의 클립을 확인할 수 있습니다.",
     selectAll: "전체 선택",
     clearSelection: "선택 해제",
-    uploadVideo: "동영상 업로드",
-    pleaseUpload: "동영상을 업로드해주세요",
+    uploadVideo: "파일 업로드",
+    pleaseUpload: "파일을 업로드해주세요",
     dropHere: "여기에 파일을 놓으세요",
     noThumbnail: "썸네일 없음",
     expand: "확대",
@@ -1489,7 +1617,11 @@ const translations = {
     noScenes: "해당하는 장면이 없습니다.",
     foundScenes: "개의 동영상에서",
     foundClips: "개의 장면을 찾았습니다.",
-    searchError: "검색 중 오류가 발생했습니다."
+    searchError: "검색 중 오류가 발생했습니다.",
+    createGroup: "그룹 생성",
+    deleteGroup: "그룹 삭제",
+    deleteGroupConfirm: "그룹을 삭제하시겠습니까?",
+    deleteGroupConfirmDetail: "그룹 내의 동영상은 루트로 이동됩니다."
   },
   en: {
     workspace: "Video management space",
@@ -1522,7 +1654,11 @@ const translations = {
     noScenes: "No matching scenes found.",
     foundScenes: "videos,",
     foundClips: "scenes found.",
-    searchError: "An error occurred during search."
+    searchError: "An error occurred during search.",
+    createGroup: "Create Group",
+    deleteGroup: "Delete Group",
+    deleteGroupConfirm: "Do you want to delete this group?",
+    deleteGroupConfirmDetail: "Videos in the group will be moved to root."
   }
 };
 
@@ -1546,6 +1682,15 @@ const progressBarRefs = ref({}); // 비디오별 진행바 엘리먼트 참조
 const isDragging = ref(false);
 const draggedVideoId = ref(null);
 let draggingBarEl = null; // 현재 드래그 중인 진행바 엘리먼트
+// 드래그 선택 관련
+const videoContainerRef = ref(null);
+const videoGridRef = ref(null);
+const videoCardRefs = ref({});
+const isDragSelecting = ref(false);
+const dragSelectStart = ref({ x: 0, y: 0 });
+const dragSelectEnd = ref({ x: 0, y: 0 });
+const dragSelectBox = ref(null);
+const dragSelectInitialSelection = ref([]); // 드래그 시작 시점의 선택 상태 저장
 const isDragOverUpload = ref(false); // 드래그 & 드롭 업로드 상태
 const chatSessions = ref([]);
 const currentChatIndex = ref(0);
@@ -1580,7 +1725,6 @@ const durationMap = ref({});
 
 // 페이지네이션 관련
 const currentPage = ref(1);
-const ROWS_PER_PAGE = 3; // 페이지당 3줄
 const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024);
 
 // 화면 크기 변경 핸들러
@@ -1599,8 +1743,6 @@ const columnsPerRow = computed(() => {
 // 페이지당 아이템 수 계산 (3줄 × 열 수)
 const itemsPerPage = computed(() => ROWS_PER_PAGE * columnsPerRow.value);
 
-// ==================== 예시 이미지 촬영용 고정값 (비활성화하려면 ENABLE_DEMO_MODE를 false로 설정) ====================
-const ENABLE_DEMO_MODE = true; // 예시 이미지 촬영 모드 활성화/비활성화 플래그
 
 // 총 페이지 수 계산
 // const totalPages = computed(() => {
@@ -1608,23 +1750,71 @@ const ENABLE_DEMO_MODE = true; // 예시 이미지 촬영 모드 활성화/비�
 //   return Math.ceil(items.value.length / itemsPerPage.value);
 // });
 
+// 현재 그룹에 속한 동영상만 필터링
+const filteredItems = computed(() => {
+  // 루트 그룹이면 그룹에 속하지 않은 동영상만 표시
+  if (currentGroupPath.value.length === 0) {
+    // 모든 그룹에 속한 동영상 ID 수집
+    const groupedVideoIds = new Set();
+    groups.value.forEach(group => {
+      if (group.videoIds && Array.isArray(group.videoIds)) {
+        group.videoIds.forEach(videoId => groupedVideoIds.add(videoId));
+      }
+    });
+    
+    // 그룹에 속하지 않은 동영상만 필터링
+    return items.value.filter(video => !groupedVideoIds.has(video.id));
+  }
+  
+  // 현재 그룹 ID 가져오기
+  const currentGroupId = currentGroupPath.value[currentGroupPath.value.length - 1];
+  const currentGroup = groups.value.find(g => g.id === currentGroupId);
+  
+  if (!currentGroup) {
+    return items.value;
+  }
+  
+  // 현재 그룹에 속한 동영상만 필터링
+  return items.value.filter(video => currentGroup.videoIds.includes(video.id));
+});
+
+// 현재 그룹에 속한 그룹만 필터링 (하위 그룹)
+const filteredGroups = computed(() => {
+  // 루트 그룹이면 모든 그룹 표시
+  if (currentGroupPath.value.length === 0) {
+    return groups.value;
+  }
+  
+  // 현재 그룹 ID 가져오기
+  const currentGroupId = currentGroupPath.value[currentGroupPath.value.length - 1];
+  const currentGroup = groups.value.find(g => g.id === currentGroupId);
+  
+  if (!currentGroup) {
+    return [];
+  }
+  
+  // 현재 그룹에 속한 그룹만 필터링 (그룹도 videoIds처럼 관리하거나, 별도 필드 필요)
+  // 일단은 빈 배열 반환 (그룹 내부에 그룹이 있는 경우는 나중에 확장)
+  return [];
+});
+
 // 예시 이미지 촬영용 고정값
 const totalPages = computed(() => {
   if (ENABLE_DEMO_MODE) {
     return 7; // 고정값: 7페이지
   }
-  if (items.value.length <= itemsPerPage.value) return 1;
-  return Math.ceil(items.value.length / itemsPerPage.value);
+  if (filteredItems.value.length <= itemsPerPage.value) return 1;
+  return Math.ceil(filteredItems.value.length / itemsPerPage.value);
 });
 
 // 현재 페이지의 아이템만 필터링
 const paginatedItems = computed(() => {
-  if (items.value.length <= itemsPerPage.value) {
-    return items.value;
+  if (filteredItems.value.length <= itemsPerPage.value) {
+    return filteredItems.value;
   }
   const startIndex = (currentPage.value - 1) * itemsPerPage.value;
   const endIndex = startIndex + itemsPerPage.value;
-  return items.value.slice(startIndex, endIndex);
+  return filteredItems.value.slice(startIndex, endIndex);
 });
 
 // 동영상 리스트 통계
@@ -1675,6 +1865,65 @@ const zoomedClipReportSubmenu = ref({ visible: false, x: 0, y: 0 });
 const zoomedClipReportListSubmenu = ref({ visible: false, x: 0, y: 0, reports: [] });
 // 채팅창 탭 컨텍스트 메뉴 상태
 const chatTabContextMenu = ref({ visible: false, chatIndex: null, x: 0, y: 0 });
+// 빈 공간 우클릭 컨텍스트 메뉴 상태
+const emptySpaceContextMenu = ref({ visible: false, x: 0, y: 0 });
+// 그룹 데이터
+const groups = ref([]);
+// 현재 그룹 경로 (그룹 ID 배열, 빈 배열이면 루트)
+const currentGroupPath = ref([]);
+// 드래그 오버 중인 그룹 ID
+const dragOverGroupId = ref(null);
+// 편집 중인 그룹 ID
+const editingGroupId = ref(null);
+// 편집 중인 그룹 이름
+const editingGroupName = ref('');
+// 그룹 우클릭 컨텍스트 메뉴 상태
+const groupContextMenu = ref({ visible: false, x: 0, y: 0, group: null });
+
+// ==================== 그룹 데이터 저장/복원 ====================
+function getGroupsStorageKey() {
+  const userId = localStorage.getItem("vss_user_id");
+  if (!userId) {
+    return 'management_groups_no_user';
+  }
+  return `management_groups_${userId}`;
+}
+
+function saveGroupsToLocalStorage() {
+  try {
+    const storageKey = getGroupsStorageKey();
+    const groupsData = groups.value.map(group => ({
+      id: group.id,
+      name: group.name,
+      position: group.position,
+      videoIds: group.videoIds
+    }));
+    localStorage.setItem(storageKey, JSON.stringify(groupsData));
+  } catch (error) {
+    console.error('그룹 데이터 저장 실패:', error);
+  }
+}
+
+function loadGroupsFromLocalStorage() {
+  try {
+    const storageKey = getGroupsStorageKey();
+    const stored = localStorage.getItem(storageKey);
+    if (!stored) {
+      groups.value = [];
+      return;
+    }
+    
+    const groupsData = JSON.parse(stored);
+    if (Array.isArray(groupsData)) {
+      groups.value = groupsData;
+    } else {
+      groups.value = [];
+    }
+  } catch (error) {
+    console.error('그룹 데이터 불러오기 실패:', error);
+    groups.value = [];
+  }
+}
 
 // ==================== 유틸리티 함수 ====================
 // 팝업 배경 클릭 핸들러 (드래그 방지)
@@ -1774,6 +2023,264 @@ function onVideoContextMenu(video, e) {
 function closeContextMenu() {
   contextMenu.value.visible = false;
   contextMenu.value.video = null;
+}
+
+// ==================== 빈 공간 우클릭 컨텍스트 메뉴 ====================
+function onEmptySpaceContextMenu(e) {
+  const clickedElement = e.target;
+  
+  // 그리드 요소 자체를 클릭한 경우 처리
+  if (clickedElement === videoGridRef.value) {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // 다른 메뉴들에게 빈 공간 컨텍스트 메뉴가 열릴 예정임을 알림
+    window.dispatchEvent(new CustomEvent('empty-space-context-menu-opened'));
+
+    const { x, y } = constrainContextMenuPosition(e.clientX, e.clientY);
+    emptySpaceContextMenu.value = { visible: true, x, y };
+    return;
+  }
+  
+  // 동영상 카드나 그룹 요소를 클릭한 경우 무시
+  // 동영상 카드는 rounded-2xl 클래스를 가진 div로 감싸져 있음
+  // 그룹 요소는 border-dashed 클래스를 가짐
+  const videoCard = clickedElement.closest('div[class*="rounded-2xl"]:not([class*="border-dashed"])');
+  const groupElement = clickedElement.closest('[class*="border-dashed"]');
+  
+  // 동영상 카드나 그룹이 아닌 경우에만 처리 (빈 공간)
+  // 또한 드래그 선택 영역도 무시
+  if (!videoCard && !groupElement && !clickedElement.closest('[class*="border-blue-500"]')) {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // 다른 메뉴들에게 빈 공간 컨텍스트 메뉴가 열릴 예정임을 알림
+    window.dispatchEvent(new CustomEvent('empty-space-context-menu-opened'));
+
+    const { x, y } = constrainContextMenuPosition(e.clientX, e.clientY);
+    emptySpaceContextMenu.value = { visible: true, x, y };
+  }
+}
+
+function closeEmptySpaceContextMenu() {
+  emptySpaceContextMenu.value.visible = false;
+}
+
+// ==================== 그룹 생성 ====================
+function createGroup() {
+  if (!emptySpaceContextMenu.value.visible) return;
+
+  // 그리드 내에서 마우스 위치를 기준으로 그룹 위치 계산
+  const gridRect = videoGridRef.value?.getBoundingClientRect();
+  if (!gridRect) return;
+
+  const clickX = emptySpaceContextMenu.value.x;
+  const clickY = emptySpaceContextMenu.value.y;
+
+  // 그리드 좌표로 변환
+  const gridX = clickX - gridRect.left;
+  const gridY = clickY - gridRect.top;
+
+  // 그리드 열 수 계산 (반응형)
+  const gridCols = window.innerWidth >= 1024 ? 5 : window.innerWidth >= 768 ? 3 : 2;
+  const gap = 24; // gap-6 = 1.5rem = 24px
+  const padding = 24; // p-6 = 1.5rem = 24px
+
+  // 그리드 셀 크기 계산 (대략적인 값)
+  const cellWidth = (gridRect.width - padding * 2 - gap * (gridCols - 1)) / gridCols;
+  const cellHeight = cellWidth * 0.75; // aspect-video 비율
+
+  // 그리드 셀 인덱스 계산
+  const colIndex = Math.max(0, Math.floor((gridX - padding) / (cellWidth + gap)));
+  const rowIndex = Math.max(0, Math.floor((gridY - padding) / (cellHeight + gap)));
+
+  // 그룹 생성
+  const newGroup = {
+    id: `group-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    name: settingStore.language === 'ko' ? `그룹 ${groups.value.length + 1}` : `Group ${groups.value.length + 1}`,
+    position: { x: colIndex, y: rowIndex },
+    videoIds: []
+  };
+
+  groups.value.push(newGroup);
+  closeEmptySpaceContextMenu();
+  // 그룹 데이터 저장
+  saveGroupsToLocalStorage();
+}
+
+// 그룹의 그리드 위치 계산 (CSS Grid order 사용)
+function getGroupGridPosition(group) {
+  // 그리드 열 수 계산 (반응형)
+  const gridCols = window.innerWidth >= 1024 ? 5 : window.innerWidth >= 768 ? 3 : 2;
+  // 그리드 순서 계산: row * cols + col
+  // 그룹을 동영상 앞에 배치하기 위해 큰 음수 값 사용
+  const order = -(group.position.y * gridCols + group.position.x + 1000);
+  return {
+    order: order
+  };
+}
+
+// ==================== 그룹 네비게이션 ====================
+function enterGroup(groupId) {
+  // 그룹 내부로 진입
+  currentGroupPath.value.push(groupId);
+  // 페이지를 1로 리셋
+  currentPage.value = 1;
+}
+
+function navigateToGroup(path) {
+  // 특정 그룹 경로로 이동
+  currentGroupPath.value = [...path];
+  // 페이지를 1로 리셋
+  currentPage.value = 1;
+}
+
+function getGroupName(groupId) {
+  const group = groups.value.find(g => g.id === groupId);
+  return group ? group.name : (settingStore.language === 'ko' ? '알 수 없음' : 'Unknown');
+}
+
+// ==================== 그룹 이름 편집 ====================
+const groupNameInput = ref(null);
+
+function startEditGroupName(groupId, currentName) {
+  editingGroupId.value = groupId;
+  editingGroupName.value = currentName;
+  // 다음 틱에서 input에 포커스
+  nextTick(() => {
+    if (groupNameInput.value) {
+      groupNameInput.value.focus();
+      groupNameInput.value.select();
+    }
+  });
+}
+
+function saveGroupName(groupId) {
+  if (!editingGroupName.value.trim()) {
+    // 빈 이름이면 원래 이름으로 복원
+    cancelGroupNameEdit();
+    return;
+  }
+  
+  const group = groups.value.find(g => g.id === groupId);
+  if (group) {
+    group.name = editingGroupName.value.trim();
+    // 그룹 데이터 저장
+    saveGroupsToLocalStorage();
+  }
+  
+  editingGroupId.value = null;
+  editingGroupName.value = '';
+}
+
+function cancelGroupNameEdit() {
+  editingGroupId.value = null;
+  editingGroupName.value = '';
+}
+
+// ==================== 그룹 컨텍스트 메뉴 ====================
+function onGroupContextMenu(group, e) {
+  // 다른 메뉴들에게 그룹 컨텍스트 메뉴가 열릴 예정임을 알림
+  window.dispatchEvent(new CustomEvent('group-context-menu-opened'));
+
+  const { x, y } = constrainContextMenuPosition(e.clientX, e.clientY);
+  groupContextMenu.value = { visible: true, x, y, group };
+}
+
+function closeGroupContextMenu() {
+  groupContextMenu.value.visible = false;
+  groupContextMenu.value.group = null;
+}
+
+function deleteGroup() {
+  if (!groupContextMenu.value.group) return;
+  
+  const group = groupContextMenu.value.group;
+  const confirmMessage = settingStore.language === 'ko' 
+    ? `${t.value.deleteGroupConfirm}\n${t.value.deleteGroupConfirmDetail}`
+    : `${t.value.deleteGroupConfirm}\n${t.value.deleteGroupConfirmDetail}`;
+  
+  if (!confirm(confirmMessage)) {
+    closeGroupContextMenu();
+    return;
+  }
+  
+  // 그룹 삭제
+  const groupIndex = groups.value.findIndex(g => g.id === group.id);
+  if (groupIndex !== -1) {
+    // 그룹에 속한 동영상은 루트로 이동 (videoIds에서 제거하면 자동으로 루트에 표시됨)
+    // 그룹 삭제
+    groups.value.splice(groupIndex, 1);
+    
+    // 현재 그룹 경로가 삭제된 그룹을 포함하고 있으면 루트로 이동
+    if (currentGroupPath.value.includes(group.id)) {
+      currentGroupPath.value = [];
+      currentPage.value = 1;
+    }
+    
+    // 그룹 데이터 저장
+    saveGroupsToLocalStorage();
+  }
+  
+  closeGroupContextMenu();
+}
+
+// ==================== 동영상 드래그 앤 드롭 ====================
+function onVideoDragStart(videoId, e) {
+  draggedVideoId.value = videoId;
+  // 드래그 데이터 설정
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', videoId);
+  // 동영상 드래그임을 표시하는 커스텀 데이터 타입 추가
+  e.dataTransfer.setData('application/video-drag', 'true');
+  // 드래그 이미지 설정 (투명하게)
+  const dragImage = document.createElement('div');
+  dragImage.style.opacity = '0';
+  document.body.appendChild(dragImage);
+  e.dataTransfer.setDragImage(dragImage, 0, 0);
+  setTimeout(() => document.body.removeChild(dragImage), 0);
+}
+
+function onVideoDragEnd() {
+  draggedVideoId.value = null;
+  dragOverGroupId.value = null;
+}
+
+function onGroupDragOver(groupId, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  dragOverGroupId.value = groupId;
+  e.dataTransfer.dropEffect = 'move';
+}
+
+function onGroupDragLeave(groupId, e) {
+  // 그룹 요소를 벗어났는지 확인 (자식 요소로 이동한 경우는 무시)
+  const relatedTarget = e.relatedTarget;
+  const groupElement = e.currentTarget;
+  if (!groupElement.contains(relatedTarget)) {
+    dragOverGroupId.value = null;
+  }
+}
+
+function onGroupDrop(groupId, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  
+  if (!draggedVideoId.value) return;
+  
+  const group = groups.value.find(g => g.id === groupId);
+  if (!group) return;
+  
+  // 그룹에 동영상 추가 (중복 방지)
+  if (!group.videoIds.includes(draggedVideoId.value)) {
+    group.videoIds.push(draggedVideoId.value);
+    // 그룹 데이터 저장
+    saveGroupsToLocalStorage();
+  }
+  
+  // 드래그 상태 초기화
+  draggedVideoId.value = null;
+  dragOverGroupId.value = null;
 }
 
 function contextZoom() {
@@ -1881,6 +2388,16 @@ function handleGlobalClick(e) {
   if (contextMenu.value.visible) {
     // close when clicking outside
     closeContextMenu();
+  }
+  
+  if (emptySpaceContextMenu.value.visible) {
+    // close empty space context menu when clicking outside
+    closeEmptySpaceContextMenu();
+  }
+  
+  if (groupContextMenu.value.visible) {
+    // close group context menu when clicking outside
+    closeGroupContextMenu();
   }
   
   if (chatMessageContextMenu.value.visible) {
@@ -2808,12 +3325,25 @@ function deleteChatMessage(messageIndex) {
   }
 }
 
-onMounted(() => window.addEventListener('click', handleGlobalClick));
-onBeforeUnmount(() => window.removeEventListener('click', handleGlobalClick));
+onMounted(() => {
+  window.addEventListener('click', handleGlobalClick);
+  // 전체 화면에서 드래그 선택 시작 가능하도록 document 레벨 이벤트 리스너 추가
+  document.addEventListener('mousedown', startDragSelect);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('click', handleGlobalClick);
+  // document 레벨 이벤트 리스너 제거
+  document.removeEventListener('mousedown', startDragSelect);
+  document.removeEventListener('mousemove', handleDragSelectMove);
+  document.removeEventListener('mouseup', handleDragSelectEnd);
+});
 
 
 // ==================== 비디오 선택 ====================
 function onCardClick(id, event) {
+  // 드래그 선택 중이면 클릭 무시
+  if (isDragSelecting.value) return;
   if (event && typeof event.button !== 'undefined' && event.button !== 0) return;
   toggleSelect(id);
 }
@@ -2827,6 +3357,171 @@ function allselect() {
   selectedIds.value = selectedIds.value.length === items.value.length 
     ? [] 
     : items.value.map(v => v.id);
+}
+
+// ==================== 드래그 선택 ====================
+function startDragSelect(event) {
+  // 진행 바 드래그 중이면 무시
+  if (isDragging.value) return;
+  // 우클릭이면 무시
+  if (event.button !== 0) return;
+  
+  // 특정 요소에서 시작된 드래그는 무시 (버튼, 링크, 입력 필드, 비디오 컨트롤 등)
+  const target = event.target;
+  if (
+    target.closest('button') || 
+    target.closest('a') || 
+    target.closest('input') || 
+    target.closest('textarea') || 
+    target.closest('select') ||
+    target.closest('.group') && target.closest('video') ||
+    target.closest('[role="button"]') ||
+    target.closest('.cursor-pointer') && target.closest('.group')
+  ) {
+    return;
+  }
+  
+  isDragSelecting.value = true;
+  // 드래그 시작 시점의 선택 상태 저장 (파일 탐색기처럼)
+  dragSelectInitialSelection.value = [...selectedIds.value];
+  
+  // 화면 기준 좌표 사용 (fixed positioning)
+  dragSelectStart.value = {
+    x: event.clientX,
+    y: event.clientY
+  };
+  dragSelectEnd.value = { ...dragSelectStart.value };
+  updateDragSelectBox();
+  
+  // document 레벨 이벤트 리스너 추가
+  document.addEventListener('mousemove', handleDragSelectMove);
+  document.addEventListener('mouseup', handleDragSelectEnd);
+  
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function handleDragSelectMove(event) {
+  if (!isDragSelecting.value) return;
+  
+  // 화면 기준 좌표 사용 (fixed positioning)
+  dragSelectEnd.value = {
+    x: event.clientX,
+    y: event.clientY
+  };
+  updateDragSelectBox();
+  // 드래그 중에는 선택 영역만 표시 (실제 선택은 하지 않음)
+  
+  event.preventDefault();
+}
+
+function handleDragSelectEnd(event) {
+  if (!isDragSelecting.value) return;
+  
+  // document 레벨 이벤트 리스너 제거
+  document.removeEventListener('mousemove', handleDragSelectMove);
+  document.removeEventListener('mouseup', handleDragSelectEnd);
+  
+  // 드래그가 충분히 움직였는지 확인 (클릭과 구분)
+  const moved = Math.abs(dragSelectEnd.value.x - dragSelectStart.value.x) > 3 || 
+                Math.abs(dragSelectEnd.value.y - dragSelectStart.value.y) > 3;
+  
+  if (moved && dragSelectBox.value) {
+    // 드래그 종료 시에만 선택 적용 (파일 탐색기처럼)
+    applyDragSelection(event);
+  }
+  
+  isDragSelecting.value = false;
+  dragSelectBox.value = null;
+  dragSelectInitialSelection.value = [];
+  
+  event.preventDefault();
+}
+
+// 드래그 선택 적용 (토글 방식)
+function applyDragSelection(event) {
+  if (!dragSelectBox.value || !videoGridRef.value) return;
+  
+  // 화면 기준 선택 박스
+  const box = {
+    left: parseFloat(dragSelectBox.value.left),
+    top: parseFloat(dragSelectBox.value.top),
+    right: parseFloat(dragSelectBox.value.left) + parseFloat(dragSelectBox.value.width),
+    bottom: parseFloat(dragSelectBox.value.top) + parseFloat(dragSelectBox.value.height)
+  };
+  
+  // 선택 박스와 교차하는 동영상 찾기
+  paginatedItems.value.forEach(video => {
+    const cardEl = videoCardRefs.value[video.id];
+    if (!cardEl) return;
+    
+    const cardRect = cardEl.getBoundingClientRect();
+    const cardBox = {
+      left: cardRect.left,
+      top: cardRect.top,
+      right: cardRect.right,
+      bottom: cardRect.bottom
+    };
+    
+    // 카드가 선택 박스와 교차하는지 확인
+    const isIntersecting = !(
+      box.right < cardBox.left ||
+      box.left > cardBox.right ||
+      box.bottom < cardBox.top ||
+      box.top > cardBox.bottom
+    );
+    
+    // 드래그 범위에 들어간 동영상만 토글
+    if (isIntersecting) {
+      const index = selectedIds.value.indexOf(video.id);
+      if (index > -1) {
+        // 이미 선택된 동영상 → 선택 해제
+        selectedIds.value.splice(index, 1);
+      } else {
+        // 선택되지 않은 동영상 → 선택
+        selectedIds.value.push(video.id);
+      }
+    }
+    // 드래그 범위에 들어가지 않은 동영상은 변화 없음
+  });
+}
+
+function updateDragSelect(event) {
+  // 이 함수는 더 이상 사용하지 않지만 호환성을 위해 유지
+  handleDragSelectMove(event);
+}
+
+function endDragSelect() {
+  // 이 함수는 더 이상 사용하지 않지만 호환성을 위해 유지
+  handleDragSelectEnd(new MouseEvent('mouseup'));
+}
+
+function updateDragSelectBox() {
+  const start = dragSelectStart.value;
+  const end = dragSelectEnd.value;
+  
+  const left = Math.min(start.x, end.x);
+  const top = Math.min(start.y, end.y);
+  const width = Math.abs(end.x - start.x);
+  const height = Math.abs(end.y - start.y);
+  
+  if (width < 5 || height < 5) {
+    dragSelectBox.value = null;
+    return;
+  }
+  
+  dragSelectBox.value = {
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${width}px`,
+    height: `${height}px`
+  };
+}
+
+// 이 함수는 더 이상 사용하지 않지만 호환성을 위해 유지
+function updateSelectedVideosInBox() {
+  // 파일 탐색기 방식으로 변경되어 드래그 중에는 선택하지 않음
+  // 실제 선택은 handleDragSelectEnd에서 applyDragSelection으로 처리
 }
 
 // ==================== Vue 인스턴스 및 스토어 ====================
@@ -3044,6 +3739,9 @@ function autoSaveSearchState() {
 }
 
 onMounted(() => {
+  // 그룹 데이터 먼저 불러오기
+  loadGroupsFromLocalStorage();
+  
   showListLoadingModal.value = true;
   loadVideosFromStorage().then(() => {
     if (items.value.length > 0 && chatSessions.value.length > 0) {
@@ -3071,6 +3769,8 @@ onMounted(() => {
   });
   // 다른 메뉴가 열렸을 때 컨텍스트 메뉴 닫기
   window.addEventListener('profile-menu-opened', closeContextMenu);
+  window.addEventListener('empty-space-context-menu-opened', closeContextMenu);
+  window.addEventListener('group-context-menu-opened', closeContextMenu);
   window.addEventListener('video-context-menu-opened', closeChatMessageContextMenu);
   window.addEventListener('chat-message-context-menu-opened', closeContextMenu);
   
@@ -3160,6 +3860,9 @@ function cleanupVideos() {
 }
 
 onActivated(() => {
+  // 그룹 데이터 불러오기 (컴포넌트가 활성화될 때마다)
+  loadGroupsFromLocalStorage();
+  
   if (items.value.length === 0) {
     loadVideosFromStorage().then(() => {
       // 동영상 목록 로드 후 채팅 메시지의 selectedVideos 업데이트
@@ -3180,6 +3883,9 @@ onActivated(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('search-videos-updated', loadVideosFromStorage);
   window.removeEventListener('profile-menu-opened', closeContextMenu);
+  window.removeEventListener('empty-space-context-menu-opened', closeContextMenu);
+  window.removeEventListener('group-context-menu-opened', closeContextMenu);
+  window.removeEventListener('group-context-menu-opened', closeContextMenu);
   window.removeEventListener('video-context-menu-opened', closeChatMessageContextMenu);
   window.removeEventListener('chat-message-context-menu-opened', closeContextMenu);
   
@@ -3246,10 +3952,20 @@ onBeforeUnmount(() => {
 });
 
 // 페이지네이션: items나 itemsPerPage 변경 시 현재 페이지 조정
-watch([items, itemsPerPage, totalPages], () => {
+// 그룹 경로 변경 시 페이지 리셋
+watch(currentGroupPath, () => {
+  currentPage.value = 1;
+});
+
+watch([filteredItems, itemsPerPage, totalPages], () => {
   if (currentPage.value > totalPages.value && totalPages.value > 0) {
     currentPage.value = totalPages.value;
   }
+});
+
+// 그룹 경로 변경 시 페이지 리셋
+watch(currentGroupPath, () => {
+  currentPage.value = 1;
 });
 
 // items가 변경될 때 모든 동영상의 duration 미리 로드
@@ -3425,12 +4141,19 @@ function loadFromLocalStorage() {
     const loadedItems = parsed
       .filter(v => v && (v.displayUrl || v.url || v.originUrl)) // URL이 있는 항목만 필터링
       .map(v => {
-        const displayUrl = v.displayUrl || v.url || v.originUrl || '';
+        // blob URL은 일시적이므로 서버 URL(originUrl)을 우선 사용
+        let displayUrl = v.displayUrl || v.url || v.originUrl || '';
+        // displayUrl이 blob URL이면 originUrl 사용
+        if (displayUrl && displayUrl.startsWith('blob:')) {
+          displayUrl = v.originUrl || v.url || '';
+        }
+        const originUrl = v.originUrl || v.url || displayUrl;
+        
         return createVideoObject({
           id: v.id,
           title: v.title,
-          originUrl: v.originUrl || v.url || displayUrl,
-          displayUrl,
+          originUrl: originUrl,
+          displayUrl: displayUrl,
           date: v.date,
           fileSize: v.fileSize,
           width: v.width,
@@ -3465,11 +4188,29 @@ function persistToStorage() {
 
 // ==================== 파일 업로드 ====================
 function onDragOverUpload(e) {
+  // 동영상 드래그 중이면 파일 업로드 드래그 오버 무시
+  if (draggedVideoId.value !== null) {
+    return;
+  }
+  
+  // 파일 드래그인지 확인 (dataTransfer.types에 'Files'가 있는지)
+  const hasFiles = e.dataTransfer.types && e.dataTransfer.types.includes('Files');
+  
+  // 파일 드래그가 아닌 경우 (동영상 드래그 등) 무시
+  if (!hasFiles) {
+    return;
+  }
+  
   e.preventDefault();
   isDragOverUpload.value = true;
 }
 
 function onDragLeaveUpload(e) {
+  // 동영상 드래그 중이면 파일 업로드 드래그 오버 무시
+  if (draggedVideoId.value !== null) {
+    return;
+  }
+  
   e.preventDefault();
   if (!e.currentTarget.contains(e.relatedTarget)) {
     isDragOverUpload.value = false;
@@ -3477,6 +4218,11 @@ function onDragLeaveUpload(e) {
 }
 
 async function onDropUpload(e) {
+  // 동영상 드래그 중이면 파일 업로드 드롭 무시
+  if (draggedVideoId.value !== null) {
+    return;
+  }
+  
   e.preventDefault();
   isDragOverUpload.value = false;
   const files = filterVideoFiles(e.dataTransfer.files ?? []);
@@ -3550,19 +4296,37 @@ async function processUploadFiles(files) {
   // 업로드 모달 표시
   showUploadModal.value = true;
 
-  // 동시 업로드 수 자동 조절 (최대 2~6개, 네트워크 상황에 따라 확장 가능)
-  const MAX_CONCURRENT_UPLOADS = Math.min(6, Math.max(2, navigator.hardwareConcurrency || 4));
+  // 동시 업로드 수 자동 조절 (최대 2~10개, 네트워크 상황에 따라 확장 가능)
+  // 네트워크 대역폭이 충분한 경우 더 많은 동시 업로드로 전체 시간 단축
+  const MAX_CONCURRENT_UPLOADS = Math.min(10, Math.max(2, navigator.hardwareConcurrency || 6));
   let activeUploads = 0;
-  let uploadQueue = filesToUpload.map((file, idx) => ({ file, idx, retries: 0 }));
+  // uploadQueue 생성 시 uploadId를 미리 저장하여 인덱스 변경 문제 방지
+  let uploadQueue = filesToUpload.map((file, idx) => ({ 
+    file, 
+    idx, 
+    uploadId: uploadProgress.value[idx]?.id, // ID 미리 저장
+    retries: 0 
+  }));
   const MAX_RETRIES = 2;
 
   async function uploadSingleFile(queueItem) {
-    const { file, idx } = queueItem;
-    const uploadId = uploadProgress.value[idx]?.id;
+    const { file, uploadId } = queueItem; // idx 대신 uploadId 사용
+    if (!uploadId) {
+      console.warn(`[업로드] 업로드 ID를 찾을 수 없습니다. 파일: ${file.name}`);
+      return;
+    }
+    
     try {
+      // 업로드 시작 전 상태 업데이트
       const uploadItem = uploadProgress.value.find(u => u.id === uploadId);
-      if (uploadItem) uploadItem.status = '업로드 대기 중...';
+      if (uploadItem) {
+        uploadItem.status = '업로드 대기 중...';
+        uploadItem.progress = 0;
+      }
+      
       const data = await uploadVideoWithProgress(file, userId, uploadId);
+      
+      // 업로드 성공 후 동영상 객체 생성
       const useServerUrl = isUnsupportedFormat(file.name);
       const serverUrl = data.file_url;
       const objUrl = useServerUrl ? null : URL.createObjectURL(file);
@@ -3575,35 +4339,57 @@ async function processUploadFiles(files) {
         dbId: data.video_id
       }, { file, objectUrl: objUrl });
       items.value.unshift(newVideo);
+      
       if (useServerUrl) {
         convertVideoToMp4(data.video_id, userId, newVideo).then(convertedUrl => {
           if (convertedUrl) nextTick(() => {});
         });
       }
-      // 100% 진행률 0.5초 유지 후 제거
-      const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
-      if (uploadItemIndex !== -1) {
-        uploadProgress.value[uploadItemIndex].progress = 100;
-        uploadProgress.value[uploadItemIndex].status = '완료';
+      
+      // 업로드 완료 처리 - ID 기반으로 안전하게 찾기
+      const finalUploadItem = uploadProgress.value.find(u => u.id === uploadId);
+      if (finalUploadItem) {
+        finalUploadItem.progress = 100;
+        finalUploadItem.status = '완료';
+        // 0.5초 후 제거
         setTimeout(() => {
-          uploadProgress.value.splice(uploadItemIndex, 1);
+          const removeIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+          if (removeIndex !== -1) {
+            uploadProgress.value.splice(removeIndex, 1);
+          }
         }, 500);
       }
     } catch (error) {
+      // 에러 처리 - ID 기반으로 안전하게 찾기
+      const errorUploadItem = uploadProgress.value.find(u => u.id === uploadId);
+      
       if (error.message === '업로드 취소됨') {
-        const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
-        if (uploadItemIndex !== -1) uploadProgress.value.splice(uploadItemIndex, 1);
+        if (errorUploadItem) {
+          const removeIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+          if (removeIndex !== -1) {
+            uploadProgress.value.splice(removeIndex, 1);
+          }
+        }
       } else {
         queueItem.retries++;
         if (queueItem.retries <= MAX_RETRIES) {
+          // 재시도 전 상태 업데이트
+          if (errorUploadItem) {
+            errorUploadItem.status = `재시도 중... (${queueItem.retries}/${MAX_RETRIES})`;
+            errorUploadItem.progress = 0;
+          }
           // 재시도
           await uploadSingleFile(queueItem);
         } else {
-          const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
-          if (uploadItemIndex !== -1) {
-            uploadProgress.value[uploadItemIndex].status = '실패';
+          // 최종 실패 처리
+          if (errorUploadItem) {
+            errorUploadItem.status = '실패';
+            errorUploadItem.progress = 0;
             setTimeout(() => {
-              uploadProgress.value.splice(uploadItemIndex, 1);
+              const removeIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
+              if (removeIndex !== -1) {
+                uploadProgress.value.splice(removeIndex, 1);
+              }
             }, 1000);
           }
           alert(`동영상 업로드 실패: ${error.message}`);
@@ -3613,6 +4399,9 @@ async function processUploadFiles(files) {
   }
 
   async function uploadManager() {
+    const totalFiles = filesToUpload.length;
+    console.log(`[업로드 시작] 총 ${totalFiles}개 파일 업로드 시작`);
+    
     while (uploadQueue.length > 0) {
       if (activeUploads < MAX_CONCURRENT_UPLOADS) {
         const queueItem = uploadQueue.shift();
@@ -3621,16 +4410,18 @@ async function processUploadFiles(files) {
           activeUploads--;
         });
       } else {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // 업로드 큐 체크 간격 단축 (100ms → 50ms)으로 다음 파일을 더 빠르게 시작
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
     }
-    // 모든 업로드가 끝나면 모달 닫기
+    // 모든 업로드가 끝나면 모달 닫기 (체크 간격 단축: 200ms → 100ms)
     const checkDone = setInterval(() => {
       if (uploadProgress.value.length === 0) {
+        console.log(`[업로드 완료] 총 ${totalFiles}개 파일 업로드 프로세스 완료`);
         showUploadModal.value = false;
         clearInterval(checkDone);
       }
-    }, 200);
+    }, 100);
   }
   uploadManager();
 }
@@ -3921,41 +4712,35 @@ async function confirmDelete() {
   showDeletePopup.value = false;
 }
 
-function goToSummary() {
-  const selectedVideos = items.value.filter(v => selectedIds.value.includes(v.id));
-  
-  // Summarize로 전달할 비디오 객체 준비 (objectUrl 제거, 서버 URL만 사용)
-  const videosForSummarize = selectedVideos.map(video => {
-    // objectUrl이 blob: URL인 경우 originUrl 사용 (서버 URL)
-    // objectUrl이 없거나 originUrl이 있는 경우 originUrl 우선 사용
+// ==================== 네비게이션 헬퍼 함수 ====================
+
+/**
+ * 선택된 동영상을 Summarize 형식으로 변환
+ * @param {Array} videos - 변환할 동영상 배열
+ * @returns {Array} 변환된 동영상 배열
+ */
+function prepareVideosForSummarize(videos) {
+  return videos.map(video => {
     const displayUrl = video.originUrl || (video.displayUrl?.startsWith('blob:') ? null : video.displayUrl) || video.url || '';
     const originUrl = video.originUrl || video.url || displayUrl;
     
     return {
       ...video,
-      // objectUrl은 제거 (Summarize에서 무효화될 수 있음)
       objectUrl: null,
-      // 서버 URL만 사용 (blob: URL 제외)
       displayUrl: displayUrl.startsWith('blob:') ? originUrl : displayUrl,
       originUrl: originUrl,
       url: originUrl || displayUrl
     };
   });
-  
-  summaryVideoStore.setVideos(videosForSummarize); // Pinia 스토어에 선택된 동영상 저장
-  router.push({ name: 'Summarize' }); // Summarize 페이지로 이동
 }
 
-function goToSearch() {
-  if (selectedIds.value.length === 0) {
-    return;
-  }
-
-  const selectionVideos = selectedVideos.value;
-  
-  // 선택된 동영상 데이터를 JSON 문자열로 변환하여 라우터 state로 전달
-  // 필요한 정보만 추출 (displayUrl은 나중에 다시 가져올 수 있으므로 제외)
-  const videosData = selectionVideos.map(video => ({
+/**
+ * 선택된 동영상을 Search 형식으로 변환
+ * @param {Array} videos - 변환할 동영상 배열
+ * @returns {Array} 변환된 동영상 배열
+ */
+function prepareVideosForSearch(videos) {
+  return videos.map(video => ({
     id: video.id,
     dbId: video.dbId || video.id,
     title: video.title,
@@ -3963,17 +4748,58 @@ function goToSearch() {
     displayUrl: video.displayUrl || video.originUrl || '',
     originUrl: video.originUrl || video.displayUrl || ''
   }));
+}
 
-  // 라우터로 Search 페이지로 이동하며 선택된 동영상 데이터 전달
-  router.push({
-    name: 'search',
-    state: {
-      selectedVideos: videosData
-    }
+/**
+ * history.state에 데이터를 설정하고 라우터로 이동
+ * @param {string} routeName - 이동할 라우트 이름
+ * @param {Object} stateData - history.state에 저장할 데이터
+ */
+function navigateWithState(routeName, stateData) {
+  console.log('[Management] navigateWithState 호출:', routeName, stateData);
+  
+  // router.push()를 먼저 호출하고, 완료 후 state 설정
+  router.push({ name: routeName }).then(() => {
+    // router.push() 완료 후 nextTick에서 state 설정
+    nextTick(() => {
+      const currentState = history.state || {};
+      const newState = {
+        ...currentState,
+        ...stateData
+      };
+      history.replaceState(newState, '');
+      console.log('[Management] History state 설정 완료:', newState);
+      
+      // Search.vue가 마운트된 후 state를 확인할 수 있도록 약간의 지연
+      setTimeout(() => {
+        if (history.state && history.state.selectedVideos) {
+          console.log('[Management] History state 확인:', history.state.selectedVideos.length, '개 동영상');
+        } else {
+          console.warn('[Management] History state가 설정되지 않았습니다!');
+        }
+      }, 200);
+    });
+  }).catch((error) => {
+    console.error('[Management] 네비게이션 에러:', error);
   });
 }
 
+function goToSummary() {
+  const selectedVideos = items.value.filter(v => selectedIds.value.includes(v.id));
+  const videosForSummarize = prepareVideosForSummarize(selectedVideos);
+  summaryVideoStore.setVideos(videosForSummarize);
+  router.push({ name: 'Summarize' });
+}
 
+function goToSearch() {
+  if (selectedIds.value.length === 0) {
+    return;
+  }
+  const selectedVideos = items.value.filter(v => selectedIds.value.includes(v.id));
+  const videosData = prepareVideosForSearch(selectedVideos);
+  console.log('[Management] 검색 버튼 클릭 - 선택된 동영상:', videosData.length, '개');
+  navigateWithState('search', { selectedVideos: videosData });
+}
 
 function scrollToBottom() {
   nextTick(() => {
@@ -4427,6 +5253,13 @@ async function ensureVideoFile(video) {
     return null;
   }
 
+  // blob URL의 경우 fetch를 수행하지 않음 (반복 요청 방지)
+  // blob URL은 브라우저 내부 메모리 URL이므로 fetch로 접근하면 반복 요청이 발생할 수 있음
+  if (video.displayUrl.startsWith('blob:')) {
+    // blob URL인 경우 이미 file 객체가 있어야 하므로 null 반환
+    return null;
+  }
+
   // AbortController 생성 및 추적
   const abortController = new AbortController();
   abortControllers.value.push(abortController);
@@ -4852,6 +5685,9 @@ let durationLoadQueue = [];
 let isProcessingDurationQueue = false;
 const DURATION_BATCH_SIZE = 5; // 한 번에 처리할 동영상 수
 const DURATION_BATCH_DELAY = 200; // 배치 간 지연 시간 (ms)
+const DURATION_LOAD_TIMEOUT = 15000; // duration 로드 타임아웃 (15초, 큰 파일 대응)
+const loadingDurationUrls = new Set(); // 로드 중인 URL 추적 (중복 요청 방지)
+const loadingDurationVideoIds = new Set(); // 로드 중인 video ID 추적
 
 function processDurationQueue() {
   if (isProcessingDurationQueue || durationLoadQueue.length === 0) return;
@@ -4864,6 +5700,8 @@ function processDurationQueue() {
     if (durationMap.value[video.id]) return;
     // 이미지 파일이면 스킵
     if (isImageFile(video)) return;
+    // 이미 로드 중인 video ID면 스킵
+    if (loadingDurationVideoIds.has(video.id)) return;
     
     // 백엔드 API에서 받은 duration이 있으면 먼저 사용
     if (video.duration && isFinite(video.duration) && video.duration > 0) {
@@ -4874,26 +5712,77 @@ function processDurationQueue() {
     // displayUrl이 없으면 스킵
     if (!video.displayUrl) return;
     
+    // blob URL은 duration 로드 시도하지 않음 (반복 요청 방지)
+    // blob URL은 브라우저 내부 메모리 URL이므로 video 요소로 로드 시 반복 요청이 발생할 수 있음
+    if (video.displayUrl.startsWith('blob:')) return;
+    
+    // 이미 로드 중인 URL이면 스킵 (중복 요청 방지)
+    if (loadingDurationUrls.has(video.displayUrl)) {
+      return;
+    }
+    
+    // 큰 파일 체크 (1GB 이상이면 duration 로드 스킵)
+    const fileSizeGB = video.fileSize ? video.fileSize / (1024 * 1024 * 1024) : 0;
+    if (fileSizeGB > 1.0) {
+      console.log(`[Duration 로드 스킵] 큰 파일 (${fileSizeGB.toFixed(2)}GB): ${video.title}`);
+      return;
+    }
+    
+    // 로드 중인 URL 및 video ID로 표시
+    loadingDurationUrls.add(video.displayUrl);
+    loadingDurationVideoIds.add(video.id);
+    
     // 숨겨진 video 요소를 만들어서 메타데이터 로드 (백엔드 duration이 없는 경우에만)
     const videoElement = document.createElement('video');
     videoElement.preload = 'metadata';
     videoElement.crossOrigin = 'anonymous';
     videoElement.style.display = 'none';
+    videoElement.muted = true; // 음소거하여 자동 재생 방지
+    
+    // 정리 함수
+    const cleanup = () => {
+      loadingDurationUrls.delete(video.displayUrl);
+      loadingDurationVideoIds.delete(video.id);
+      if (videoElement.parentNode) {
+        try {
+          document.body.removeChild(videoElement);
+        } catch (e) {
+          // 이미 제거되었을 수 있음
+        }
+      }
+      // src 제거하여 추가 요청 방지
+      try {
+        videoElement.src = '';
+        videoElement.load();
+      } catch (e) {
+        // 에러 무시
+      }
+    };
+    
+    // 타임아웃 설정 (일정 시간 후 강제 정리)
+    const timeoutId = setTimeout(() => {
+      console.warn(`[Duration 로드 타임아웃] ${video.title} (${video.displayUrl})`);
+      cleanup();
+    }, DURATION_LOAD_TIMEOUT);
     
     videoElement.addEventListener('loadedmetadata', () => {
+      clearTimeout(timeoutId);
       const duration = videoElement.duration;
       if (duration && isFinite(duration) && duration > 0) {
         durationMap.value[video.id] = duration;
       }
-      if (videoElement.parentNode) {
-        document.body.removeChild(videoElement);
-      }
+      cleanup();
     }, { once: true });
     
     videoElement.addEventListener('error', () => {
-      if (videoElement.parentNode) {
-        document.body.removeChild(videoElement);
-      }
+      clearTimeout(timeoutId);
+      cleanup();
+    }, { once: true });
+    
+    // abort 이벤트도 처리
+    videoElement.addEventListener('abort', () => {
+      clearTimeout(timeoutId);
+      cleanup();
     }, { once: true });
     
     videoElement.src = video.displayUrl;
@@ -4909,7 +5798,7 @@ function processDurationQueue() {
 }
 
 function preloadAllVideoDurations() {
-  // 큐에 추가
+  // 큐에 추가 (중복 제거: 이미 로드 중인 URL은 제외)
   durationLoadQueue = items.value.filter(video => {
     if (durationMap.value[video.id]) return false;
     if (isImageFile(video)) return false;
@@ -4918,6 +5807,15 @@ function preloadAllVideoDurations() {
       return false;
     }
     if (!video.displayUrl) return false;
+    // blob URL은 duration 로드 시도하지 않음 (반복 요청 방지)
+    if (video.displayUrl.startsWith('blob:')) return false;
+    // 이미 로드 중인 URL은 제외 (중복 요청 방지)
+    if (loadingDurationUrls.has(video.displayUrl)) return false;
+    // 이미 로드 중인 video ID는 제외
+    if (loadingDurationVideoIds.has(video.id)) return false;
+    // 큰 파일 (1GB 이상)은 스킵
+    const fileSizeGB = video.fileSize ? video.fileSize / (1024 * 1024 * 1024) : 0;
+    if (fileSizeGB > 1.0) return false;
     return true;
   });
   
@@ -5013,6 +5911,7 @@ async function handleVideoError(videoId, event, isZoom = false) {
     event: event?.type || 'unknown'
   };
   
+  // 최대 재시도 횟수 초과 시 즉시 종료 (더 이상 시도하지 않음)
   if (video._errorRetryCount >= MAX_ERROR_RETRIES) {
     // 최종 실패 시 displayUrl을 null로 설정하여 썸네일 없음 상태로 표시
     console.warn(`비디오 로드 최종 실패 (최대 재시도 횟수 초과): ${video.title}. 썸네일을 숨깁니다.`, errorInfo);
@@ -5021,7 +5920,53 @@ async function handleVideoError(videoId, event, isZoom = false) {
     } else if (zoomedVideo.value) {
       zoomedVideo.value.displayUrl = null;
     }
+    // _triedUrls에 현재 URL 추가하여 더 이상 시도하지 않도록 함
+    if (currentUrl) {
+      video._triedUrls.add(currentUrl);
+    }
     return;
+  }
+  
+  // 현재 URL이 이미 시도한 URL이고, 변환된 URL도 이미 시도했다면 더 이상 재시도하지 않음
+  if (video._triedUrls.has(currentUrl)) {
+    // 변환된 URL이 있는지 확인
+    if (currentUrl && currentUrl.includes('/video-files/') && !currentUrl.includes('/converted-videos/')) {
+      try {
+        const urlPath = new URL(currentUrl).pathname;
+        const filename = urlPath.split('/').pop() || '';
+        const baseName = filename.replace(/\.[^.]+$/, '');
+        const convertedUrl = currentUrl.replace('/video-files/', '/converted-videos/').replace(filename, `${baseName}.mp4`);
+        
+        if (video._triedUrls.has(convertedUrl)) {
+          // 원본 URL과 변환된 URL 모두 시도했으면 최종 실패
+          console.warn(`비디오 로드 최종 실패 (모든 URL 시도 완료): ${video.title}`, errorInfo);
+          if (!isZoom) {
+            video.displayUrl = null;
+          } else if (zoomedVideo.value) {
+            zoomedVideo.value.displayUrl = null;
+          }
+          return;
+        }
+      } catch (urlError) {
+        // URL 파싱 실패 시 최종 실패 처리
+        console.warn(`비디오 URL 파싱 실패: ${video.title}`, errorInfo);
+        if (!isZoom) {
+          video.displayUrl = null;
+        } else if (zoomedVideo.value) {
+          zoomedVideo.value.displayUrl = null;
+        }
+        return;
+      }
+    } else if (currentUrl && currentUrl.includes('/converted-videos/')) {
+      // 변환된 URL이 이미 실패했다면 더 이상 재시도하지 않음
+      console.warn(`비디오 로드 최종 실패 (변환된 URL 실패): ${video.title}`, errorInfo);
+      if (!isZoom) {
+        video.displayUrl = null;
+      } else if (zoomedVideo.value) {
+        zoomedVideo.value.displayUrl = null;
+      }
+      return;
+    }
   }
   
   video._triedUrls.add(currentUrl);
@@ -5094,71 +6039,96 @@ async function handleVideoError(videoId, event, isZoom = false) {
   // 4. 서버 URL이지만 로드 실패한 경우 - 변환된 MP4 URL 확인 및 URL 접근성 확인
   if (!isBlobUrl && !video.file && currentUrl && currentUrl.startsWith('http')) {
     // 변환된 MP4 URL 확인 (converted-videos 경로) - 먼저 시도
+    // 단, 이미 변환된 URL(/converted-videos/)이 실패한 경우는 더 이상 재시도하지 않음
     if (currentUrl.includes('/video-files/') && !currentUrl.includes('/converted-videos/')) {
-      // 파일명에서 확장자 제거 후 .mp4 추가
-      const urlPath = new URL(currentUrl).pathname;
-      const filename = urlPath.split('/').pop() || '';
-      const baseName = filename.replace(/\.[^.]+$/, ''); // 확장자 제거
-      const convertedUrl = currentUrl.replace('/video-files/', '/converted-videos/').replace(filename, `${baseName}.mp4`);
-      
-      if (!video._triedUrls.has(convertedUrl)) {
-        console.info(`변환된 MP4 URL 시도: ${video.title}`, { 
-          originalUrl: currentUrl,
-          convertedUrl 
-        });
-        video._triedUrls.add(convertedUrl);
-        if (videoElement) {
-          videoElement.crossOrigin = 'anonymous';
-          videoElement.src = convertedUrl;
-          videoElement.load();
+      try {
+        // 파일명에서 확장자 제거 후 .mp4 추가
+        const urlPath = new URL(currentUrl).pathname;
+        const filename = urlPath.split('/').pop() || '';
+        const baseName = filename.replace(/\.[^.]+$/, ''); // 확장자 제거
+        const convertedUrl = currentUrl.replace('/video-files/', '/converted-videos/').replace(filename, `${baseName}.mp4`);
+        
+        // 변환된 URL을 아직 시도하지 않았고, 원래 URL도 이미 시도한 경우에만 변환된 URL 시도
+        if (!video._triedUrls.has(convertedUrl) && video._triedUrls.has(currentUrl)) {
+          console.info(`변환된 MP4 URL 시도: ${video.title}`, { 
+            originalUrl: currentUrl,
+            convertedUrl 
+          });
+          video._triedUrls.add(convertedUrl);
+          if (videoElement) {
+            videoElement.crossOrigin = 'anonymous';
+            videoElement.src = convertedUrl;
+            videoElement.load();
+          }
+          if (isZoom && zoomedVideo.value) {
+            zoomedVideo.value.displayUrl = convertedUrl;
+          }
+          return;
+        } else if (video._triedUrls.has(convertedUrl)) {
+          // 변환된 URL도 이미 시도했으면 더 이상 재시도하지 않음
+          console.warn(`비디오 로드 실패 (변환된 URL도 실패): ${video.title}`, {
+            ...errorInfo,
+            convertedUrl,
+            note: '원본 URL과 변환된 URL 모두 시도했지만 실패했습니다.'
+          });
+          if (!isZoom) {
+            video.displayUrl = null;
+          } else if (zoomedVideo.value) {
+            zoomedVideo.value.displayUrl = null;
+          }
+          return;
         }
-        if (isZoom && zoomedVideo.value) {
-          zoomedVideo.value.displayUrl = convertedUrl;
+      } catch (urlError) {
+        // URL 파싱 실패 시 최종 실패 처리
+        console.warn(`비디오 URL 파싱 실패: ${video.title}`, {
+          ...errorInfo,
+          urlError: urlError.message,
+          note: 'URL 파싱 중 오류가 발생했습니다.'
+        });
+        if (!isZoom) {
+          video.displayUrl = null;
+        } else if (zoomedVideo.value) {
+          zoomedVideo.value.displayUrl = null;
         }
         return;
       }
+    } else if (currentUrl.includes('/converted-videos/')) {
+      // 이미 변환된 URL이 실패한 경우 - 더 이상 재시도하지 않음
+      console.warn(`비디오 로드 실패 (변환된 URL 실패): ${video.title}`, {
+        ...errorInfo,
+        note: '변환된 MP4 URL도 실패했습니다. 더 이상 재시도하지 않습니다.'
+      });
+      if (!isZoom) {
+        video.displayUrl = null;
+      } else if (zoomedVideo.value) {
+        zoomedVideo.value.displayUrl = null;
+      }
+      return;
     }
     
-    // 변환된 MP4도 실패했거나 없으면 서버 URL 접근성 확인
-    try {
-      // HEAD 요청으로 파일 존재 여부 확인 (CORS 문제로 인해 실패할 수 있음)
-      const response = await fetch(currentUrl, { 
-        method: 'HEAD',
-        mode: 'cors',
-        cache: 'no-cache'
-      });
-      
-      if (!response.ok) {
-        console.warn(`비디오 로드 실패 (HTTP ${response.status}): ${video.title}`, {
-          ...errorInfo,
-          url: currentUrl,
-          httpStatus: response.status,
-          httpStatusText: response.statusText,
-          note: `서버에서 파일이 존재한다고 했지만 HTTP ${response.status} 에러가 발생했습니다.`
-        });
-      } else {
-        // HTTP 응답은 성공했지만 비디오 로드 실패 - 파일 형식 문제 가능성
-        console.warn(`비디오 로드 실패 (파일 형식 문제 가능성): ${video.title}`, {
-          ...errorInfo,
-          url: currentUrl,
-          httpStatus: response.status,
-          contentType: response.headers.get('content-type'),
-          note: 'HTTP 응답은 성공했지만 비디오 엘리먼트에서 로드 실패. 파일 형식이나 손상 가능성.'
-        });
-      }
-    } catch (fetchError) {
-      // CORS 문제 또는 네트워크 문제
-      console.warn(`비디오 URL 접근 확인 실패 (CORS/네트워크 문제 가능성): ${video.title}`, {
-        ...errorInfo,
-        url: currentUrl,
-        fetchError: fetchError.message,
-        note: 'CORS 문제이거나 네트워크 연결 문제일 수 있습니다.'
-      });
-    }
+    // 변환된 MP4도 실패했거나 없으면 최대 재시도 횟수 확인 후 종료
+    // HEAD 요청은 CORS 문제로 인해 대부분 실패하므로 제거하고, 재시도 횟수만 확인
+    console.warn(`비디오 로드 실패 (서버 URL): ${video.title}`, {
+      ...errorInfo,
+      url: currentUrl,
+      note: '서버 URL 로드 실패. 최대 재시도 횟수 확인 후 종료합니다.'
+    });
   }
   
   // 5. 그 외의 경우 최종 실패
   console.warn(`비디오 로드 실패: ${video.title}`, errorInfo);
+  
+  // 비디오 요소를 비활성화하여 무한 루프 방지
+  if (videoElement) {
+    try {
+      videoElement.removeAttribute('src');
+      videoElement.load();
+      // 에러 핸들러 제거는 Vue의 반응형 시스템과 충돌할 수 있으므로 하지 않음
+    } catch (e) {
+      // 에러 무시
+    }
+  }
+  
   if (!isZoom) {
     video.displayUrl = null;
   } else if (zoomedVideo.value) {
@@ -5384,7 +6354,7 @@ function uploadVideoWithProgress(file, userId, uploadId) {
       }
     });
 
-    // 완료 처리 (100%로 표시 후 잠시 대기)
+    // 완료 처리 (진행률만 업데이트, 제거는 uploadSingleFile에서 처리)
     xhr.addEventListener('load', () => {
       delete activeUploads.value[uploadId];
       const uploadItem = uploadProgress.value.find(u => u.id === uploadId);
@@ -5393,21 +6363,13 @@ function uploadVideoWithProgress(file, userId, uploadId) {
           const data = JSON.parse(xhr.responseText);
           if (uploadItem) {
             uploadItem.progress = 100;
-            uploadItem.status = '완료';
-            setTimeout(() => {
-              const idx = uploadProgress.value.findIndex(u => u.id === uploadId);
-              if (idx !== -1) uploadProgress.value.splice(idx, 1);
-            }, 800);
+            uploadItem.status = '처리 중...';
           }
           resolve(data);
         } catch (e) {
           if (uploadItem) {
             uploadItem.status = '실패: 응답 파싱 오류';
             uploadItem.progress = 0;
-            setTimeout(() => {
-              const idx = uploadProgress.value.findIndex(u => u.id === uploadId);
-              if (idx !== -1) uploadProgress.value.splice(idx, 1);
-            }, 1200);
           }
           reject(new Error('응답 파싱 실패'));
         }
@@ -5415,56 +6377,40 @@ function uploadVideoWithProgress(file, userId, uploadId) {
         if (uploadItem) {
           uploadItem.status = `실패: HTTP ${xhr.status}`;
           uploadItem.progress = 0;
-          setTimeout(() => {
-            const idx = uploadProgress.value.findIndex(u => u.id === uploadId);
-            if (idx !== -1) uploadProgress.value.splice(idx, 1);
-          }, 1200);
         }
         reject(new Error(`업로드 실패: ${xhr.status}`));
       }
     });
 
-    // 타임아웃 처리
+    // 타임아웃 처리 (제거는 uploadSingleFile에서 처리)
     xhr.addEventListener('timeout', () => {
       delete activeUploads.value[uploadId];
       const uploadItem = uploadProgress.value.find(u => u.id === uploadId);
       if (uploadItem) {
         uploadItem.status = '실패: 타임아웃 (서버 응답 없음)';
         uploadItem.progress = 0;
-        setTimeout(() => {
-          const idx = uploadProgress.value.findIndex(u => u.id === uploadId);
-          if (idx !== -1) uploadProgress.value.splice(idx, 1);
-        }, 1200);
       }
       reject(new Error('업로드 타임아웃: 서버 응답이 없습니다.'));
     });
 
-    // 에러 처리
+    // 에러 처리 (제거는 uploadSingleFile에서 처리)
     xhr.addEventListener('error', () => {
       delete activeUploads.value[uploadId];
       const uploadItem = uploadProgress.value.find(u => u.id === uploadId);
       if (uploadItem) {
         uploadItem.status = '실패: 네트워크 오류';
         uploadItem.progress = 0;
-        setTimeout(() => {
-          const idx = uploadProgress.value.findIndex(u => u.id === uploadId);
-          if (idx !== -1) uploadProgress.value.splice(idx, 1);
-        }, 1200);
       }
       reject(new Error('네트워크 오류'));
     });
 
-    // 중단(abort) 처리
+    // 중단(abort) 처리 (제거는 uploadSingleFile에서 처리)
     xhr.addEventListener('abort', () => {
       delete activeUploads.value[uploadId];
       const uploadItem = uploadProgress.value.find(u => u.id === uploadId);
       if (uploadItem) {
         uploadItem.status = '취소됨';
         uploadItem.progress = 0;
-        setTimeout(() => {
-          const idx = uploadProgress.value.findIndex(u => u.id === uploadId);
-          if (idx !== -1) uploadProgress.value.splice(idx, 1);
-        }, 800);
       }
       reject(new Error('업로드 취소됨'));
     });

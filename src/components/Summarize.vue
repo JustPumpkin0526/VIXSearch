@@ -583,7 +583,7 @@
             class="w-full rounded-xl border border-slate-300 dark:border-gray-600 focus:border-emerald-500 dark:focus:border-emerald-400 focus:ring-2 focus:ring-emerald-300 dark:focus:ring-emerald-500 px-4 py-3 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 transition-all"
             @keyup.enter="() => { onAsk(ask_prompt); ask_prompt = ''; }" />
           <button
-            class="rounded-lg bg-emerald-500/90 hover:bg-emerald-400 text-white px-4 py-2 shadow-lg shadow-emerald-500/30 transition-all duration-200 transform hover:scale-[1.03] active:scale-[0.97]"
+            class="rounded-lg bg-emerald-500/90 hover:bg-emerald-400 text-white px-6 py-3 shadow-lg shadow-emerald-500/30 transition-all duration-200 transform hover:scale-[1.03] active:scale-[0.97] text-sm whitespace-nowrap flex-shrink-0"
             @click="() => { onAsk(ask_prompt); ask_prompt = ''; }">
             {{ tSummarize.ask }}
           </button>
@@ -640,6 +640,38 @@ const UNSUPPORTED_VIDEO_FORMATS = ['avi', 'mkv', 'flv', 'wmv']; // 브라우저�
 // 동영상 파일 확장자 추출 함수
 function getVideoFileExtension(filename) {
   return filename.toLowerCase().split('.').pop();
+}
+
+// 요약 결과를 한국어로 번역하는 함수
+async function translateSummaryToKorean(text) {
+  if (!text || text.trim().length === 0) {
+    return text;
+  }
+  
+  try {
+    const formData = new FormData();
+    formData.append('text', text);
+    
+    const response = await fetch(`${API_BASE_URL}/translate-to-korean`, {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!response.ok) {
+      console.warn('번역 API 호출 실패:', response.status);
+      return text; // 번역 실패 시 원본 반환
+    }
+    
+    const data = await response.json();
+    if (data.success && data.translated_text) {
+      return data.translated_text;
+    }
+    
+    return text; // 번역 실패 시 원본 반환
+  } catch (error) {
+    console.warn('번역 중 오류 발생:', error);
+    return text; // 번역 실패 시 원본 반환
+  }
 }
 
 // 지원하지 않는 형식인지 확인하는 함수
@@ -731,7 +763,7 @@ const summarizeTranslations = {
     resultDescription: "요약 결과를 확인하고 질문을 입력할 수 있습니다.",
     noMessages: "아직 메시지가 없습니다. 요약을 실행하거나 질문을 입력하세요.",
     askPlaceholder: "질문을 입력하세요...",
-    ask: "Ask",
+    ask: "질문",
     saveResult: "결과 저장",
     clear: "초기화",
     uploading: "동영상 업로드 중...",
@@ -784,57 +816,15 @@ const samplePrompts = computed(() => {
   
   const prompts = [
     {
-      id: "general_summary",
-      name: settingStore.language === 'ko' ? "일반 요약" : "General Summary",
-      content: isImage
-        ? "Please summarize the main content of this image. Describe important elements, objects, and situations in detail."
-        : "Please summarize the main content of this video. Describe important events and situations in chronological order.",
-      imageOnly: false
-    },
-    {
-      id: "detailed_analysis",
-      name: settingStore.language === 'ko' ? "상세 분석" : "Detailed Analysis",
-      content: isImage
-        ? "Analyze this image in detail and identify all meaningful elements. For each element, provide detailed description including position, appearance, and context."
-        : "Analyze this video frame by frame in detail and identify all meaningful events. For each event, provide start time, end time, and detailed description.",
-      imageOnly: false
-    },
-    {
-      id: "traffic_report",
-      name: settingStore.language === 'ko' ? "교통 상황 보고서" : "Traffic Report",
-      content: isImage
-        ? "Analyze the traffic situation observed in this image and create a report. Include vehicle positions, traffic flow, road conditions, and any unusual situations."
-        : "Analyze the traffic situation observed in this video and create a report. Include vehicle movements, traffic flow, accidents, or unusual situations.",
-      imageOnly: false
-    },
-    {
-      id: "security_monitoring",
-      name: settingStore.language === 'ko' ? "보안 모니터링" : "Security Monitoring",
-      content: isImage
-        ? "Analyze this image from a security monitoring perspective. Describe people's behavior, positions, suspicious activities, and any security-related elements."
-        : "Analyze this video from a security monitoring perspective. Record people's behavior, entry/exit, suspicious activities, etc. in chronological order.",
-      imageOnly: false
-    },
-    {
-      id: "event_timeline",
-      name: settingStore.language === 'ko' ? "이벤트 타임라인" : "Event Timeline",
-      content: isImage
-        ? "Describe all elements and events visible in this image. Organize them in a structured format with detailed descriptions of what is happening."
-        : "Organize all events that occurred in this video in a timeline format. Include the start time, end time, and description of each event.",
-      imageOnly: false
-    },
-    {
-      id: "object_detection",
-      name: settingStore.language === 'ko' ? "객체 감지 및 추적" : "Object Detection & Tracking",
-      content: isImage
-        ? "Detect and describe major objects (people, vehicles, objects, etc.) that appear in this image. Describe their positions, appearances, and relationships."
-        : "Detect and track major objects (people, vehicles, objects, etc.) that appear in this video. Describe the position changes and behavior of each object in chronological order.",
-      imageOnly: false
-    },
-    {
       id: "physique_comparison",
       name: settingStore.language === 'ko' ? "체형 비교(이미지 전용)" : "Physique Comparison (Image Only)",
-      content: "You are a multi-image vision-language model. Compare the visible people in Image 1 and Image 2 by clearly observable, non-sensitive physique cues: overall build (slender/average/stocky/muscular), shoulder-to-waist proportion, limb thickness, posture silhouette, and relative scale if a shared reference exists. Output three labeled paragraphs in complete English sentences: \"Image 1 Observations\", \"Image 2 Observations\", and \"Direct Comparison\", and include multiple explicit contrast sentences in \"Direct Comparison\" (e.g., \"Compared to Image 1, Image 2…\"). Do not use timestamps or timeline wording, and do not infer sensitive attributes (age, ethnicity, identity, health).",
+      content: "Review all provided images from Image 1 to Image N and do not stop after the first image. In each image, identify every visible person using a clear visual identifier, then assign a concealment suitability score from 0 to 100 for each person based only on clothing bulk or looseness, layering, pocket capacity, how much the body shape is obscured, and whether posture or arm placement could hide an object. For every image you must output at least one line, even if you conclude no person is visible. After scoring everyone, rank the top three most concealment-suitable people across all images, name the top candidate, list 3 specific visual reasons, and give a confidence score.",
+      imageOnly: true
+    },
+    {
+      id: "belongings_comparison",
+      name: settingStore.language === 'ko' ? "소지품 비교(이미지 전용)" : "Belongings Comparison (Image Only)",
+      content: "Analyze both images of the same person at the same doorway. For each (A=entering, B=exiting), list all visible belongings and carry-capacity (bags, items, pockets, bulges), using 'not visible' only if truly unseen. Compare A vs B; if B adds/expands a container or shows guarded clutching/scanning, presume possible concealment and state a theft hypothesis, evidence, Suspicion 0–100, and confidence.",
       imageOnly: true
     }
   ];
@@ -849,10 +839,7 @@ function applySamplePrompt() {
   const sample = samplePrompts.value.find(s => s.id === selectedSamplePrompt.value);
   if (sample) {
     prompt.value = sample.content;
-    // 선택 후 드롭다운 초기화
-    nextTick(() => {
-      selectedSamplePrompt.value = "";
-    });
+    // 선택한 프롬프트 이름이 드롭다운에 표시되도록 selectedSamplePrompt 유지
   }
 }
 // 마지막으로 요약된 비디오의 서버 video_id (다른 함수에서 재사용 가능)
@@ -863,8 +850,21 @@ const summarizedVideoMap = ref({}); // 로컬 video.id -> 서버 video_id 매핑
 const chatMessagesMap = reactive({});
 const chatMessages = computed(() => {
   if (!selectedIndexes.value || selectedIndexes.value.length === 0) return [];
-  const videoId = selectedIndexes.value[0];
-  return chatMessagesMap[videoId] || [];
+  
+  // 다중 동영상 요약 시 모든 선택된 동영상의 메시지를 합쳐서 표시
+  const allMessages = [];
+  selectedIndexes.value.forEach(videoId => {
+    if (chatMessagesMap[videoId]) {
+      allMessages.push(...chatMessagesMap[videoId]);
+    }
+  });
+  
+  // 시간순으로 정렬 (id 기준으로 정렬하면 추가 순서대로 정렬됨)
+  return allMessages.sort((a, b) => {
+    const timeA = a.time ? new Date(a.time).getTime() : (a.id || 0);
+    const timeB = b.time ? new Date(b.time).getTime() : (b.id || 0);
+    return timeA - timeB;
+  });
 });
 const chatWindowRef = ref(null); // 채팅 자동 스크롤용
 const isDragging = ref(false); // 업로드 영역 드래그 상태
@@ -1243,7 +1243,8 @@ async function filterVideosByCurrentUser(videos) {
 }
 
 // summaryVideoStore에서 동영상을 로드하여 videoFiles에 설정하는 함수
-async function loadVideosFromStore() {
+// loadSummaries: true일 때만 DB에서 저장된 요약 결과를 로드 (기본값: true)
+async function loadVideosFromStore(loadSummaries = true) {
   const userId = localStorage.getItem("vss_user_id");
   if (!userId) {
     return false;
@@ -1269,15 +1270,40 @@ async function loadVideosFromStore() {
         const videosChanged = newVideoIds.size !== currentVideoIds.size || 
                              Array.from(newVideoIds).some(id => !currentVideoIds.has(id));
         
+        // 동영상이 변경되었는지 확인하고 초기화 여부 결정
+        let shouldLoadSummariesForNewVideos = loadSummaries;
         if (videosChanged) {
-          // 동영상이 변경되면 chatMessagesMap에서 해당 videoId의 메시지만 유지
+          // 동영상이 변경되면 완전히 초기화
           const newVideoIdsArr = Array.from(newVideoIds);
+          
+          // 1. chatMessagesMap에서 제거된 videoId의 메시지 삭제
           Object.keys(chatMessagesMap).forEach(id => {
             if (!newVideoIdsArr.includes(id)) {
               delete chatMessagesMap[id];
             }
           });
+          
+          // 2. summarizedVideoMap에서 제거된 videoId의 매핑 삭제
+          Object.keys(summarizedVideoMap.value).forEach(id => {
+            if (!newVideoIdsArr.includes(id)) {
+              delete summarizedVideoMap.value[id];
+            }
+          });
+          
+          // 3. 모든 동영상이 변경된 경우 summarizedVideoId 초기화 (하지만 새로운 동영상의 요약 결과는 로드해야 함)
+          const hasCommonVideo = Array.from(newVideoIds).some(id => currentVideoIds.has(id));
+          if (!hasCommonVideo) {
+            summarizedVideoId.value = null;
+            // 모든 동영상이 변경되었어도 새로운 동영상의 요약 결과는 로드해야 함
+            // shouldLoadSummariesForNewVideos는 loadSummaries 파라미터를 따름
+          }
+          
+          // 4. 응답 및 프롬프트 초기화
+          response.value = "";
           prompt.value = "";
+          
+          // 5. 각 동영상 객체의 summary 속성도 초기화 (새로 로드된 동영상은 summary가 없어야 함)
+          // 이는 loadSummariesFromDB에서 처리되므로 여기서는 제거하지 않음
         }
 
         // Summarize 전용 표시 URL을 분리하여 Video Storage 원본 URL(ObjectURL)과 독립
@@ -1325,8 +1351,10 @@ async function loadVideosFromStore() {
         }, CHUNK_SIZE_UPDATE_DELAY);
         });
         
-        // DB에서 저장된 요약 결과 로드
-        await loadSummariesFromDB();
+        // DB에서 저장된 요약 결과 로드 (shouldLoadSummariesForNewVideos가 true일 때만)
+        if (shouldLoadSummariesForNewVideos) {
+          await loadSummariesFromDB();
+        }
         
         // VIA 서버 파일 목록 조회 (동기화 확인용)
         await loadViaFiles();
@@ -1382,7 +1410,8 @@ onMounted(async () => {
       });
     }
 
-    // summaryVideoStore에서 동영상 로드
+    // summaryVideoStore에서 동영상 로드 (초기 진입 시 요약 결과 로드)
+    shouldLoadSummaries.value = true;
     await loadVideosFromStore();
   } // 상태 복원 분기 제거
 });
@@ -1400,13 +1429,43 @@ watch(() => summaryVideoStore.videos, async (newVideos, oldVideos) => {
     const storeVideoIds = new Set(newVideos.map(v => v.id || v.dbId));
     const currentVideoIds = new Set(videoFiles.value.map(v => v.id));
     
-    // 동영상 목록이 다르면 업데이트
+    // 동영상 목록이 다르면 업데이트 (요약 결과는 로드하지 않음 - watch에서는 초기 로드가 아니므로)
     const isDifferent = storeVideoIds.size !== currentVideoIds.size || 
                         Array.from(storeVideoIds).some(id => !currentVideoIds.has(id));
     
     if (isDifferent) {
-      // summaryVideoStore에서 동영상 로드
-      await loadVideosFromStore();
+      // 동영상이 완전히 교체된 경우 이전 요약 결과 완전히 초기화
+      const hasCommonVideo = Array.from(storeVideoIds).some(id => currentVideoIds.has(id));
+      if (!hasCommonVideo) {
+        // 모든 동영상이 변경된 경우 완전히 초기화
+        Object.keys(chatMessagesMap).forEach(id => {
+          delete chatMessagesMap[id];
+        });
+        Object.keys(summarizedVideoMap.value).forEach(id => {
+          delete summarizedVideoMap.value[id];
+        });
+        summarizedVideoId.value = null;
+        response.value = "";
+        prompt.value = "";
+      } else {
+        // 일부 동영상만 변경된 경우 제거된 동영상의 메시지만 삭제
+        const storeVideoIdsArr = Array.from(storeVideoIds);
+        Object.keys(chatMessagesMap).forEach(id => {
+          if (!storeVideoIdsArr.includes(id)) {
+            delete chatMessagesMap[id];
+          }
+        });
+        Object.keys(summarizedVideoMap.value).forEach(id => {
+          if (!storeVideoIdsArr.includes(id)) {
+            delete summarizedVideoMap.value[id];
+          }
+        });
+      }
+      
+      // summaryVideoStore에서 동영상 로드 (요약 결과도 함께 로드)
+      // watch에서는 동영상이 변경되었을 때도 요약 결과를 로드해야 함
+      shouldLoadSummaries.value = true;
+      await loadVideosFromStore(true);
     }
   } else if (newVideos.length === 0 && videoFiles.value.length > 0) {
     // summaryVideoStore가 비어있는데 videoFiles에 동영상이 있으면 초기화
@@ -1432,9 +1491,6 @@ onActivated(async () => {
     return;
   }
 
-  // 진행 중인 작업의 결과 확인 및 UI 업데이트
-  await checkAndUpdateTaskResults();
-
   // summaryVideoStore에 새로운 동영상이 있는지 확인
   if (Array.isArray(summaryVideoStore.videos) && summaryVideoStore.videos.length > 0) {
     // 현재 videoFiles와 비교하여 변경되었는지 확인
@@ -1446,8 +1502,45 @@ onActivated(async () => {
                         Array.from(storeVideoIds).some(id => !currentVideoIds.has(id));
     
     if (isDifferent) {
-      // summaryVideoStore에서 동영상 로드
-      await loadVideosFromStore();
+      // 동영상이 완전히 교체된 경우 이전 요약 결과 완전히 초기화
+      const hasCommonVideo = Array.from(storeVideoIds).some(id => currentVideoIds.has(id));
+      if (!hasCommonVideo) {
+        // 모든 동영상이 변경된 경우 완전히 초기화
+        Object.keys(chatMessagesMap).forEach(id => {
+          delete chatMessagesMap[id];
+        });
+        Object.keys(summarizedVideoMap.value).forEach(id => {
+          delete summarizedVideoMap.value[id];
+        });
+        summarizedVideoId.value = null;
+        response.value = "";
+        prompt.value = "";
+      } else {
+        // 일부 동영상만 변경된 경우 제거된 동영상의 메시지만 삭제
+        const storeVideoIdsArr = Array.from(storeVideoIds);
+        Object.keys(chatMessagesMap).forEach(id => {
+          if (!storeVideoIdsArr.includes(id)) {
+            delete chatMessagesMap[id];
+          }
+        });
+        Object.keys(summarizedVideoMap.value).forEach(id => {
+          if (!storeVideoIdsArr.includes(id)) {
+            delete summarizedVideoMap.value[id];
+          }
+        });
+      }
+      
+      // summaryVideoStore에서 동영상 로드 (요약 결과도 함께 로드)
+      // 다른 메뉴에서 돌아왔을 때 저장된 요약 결과를 표시하기 위해 true로 설정
+      shouldLoadSummaries.value = true;
+      await loadVideosFromStore(true);
+    } else {
+      // 동영상이 동일한 경우에도 다른 메뉴에서 돌아왔을 때 요약 결과를 다시 로드
+      // (다른 메뉴에서 요약이 완료되었을 수 있으므로)
+      if (videoFiles.value.length > 0) {
+        shouldLoadSummaries.value = true;
+        await loadSummariesFromDB();
+      }
     }
   } else if (videoFiles.value.length > 0) {
     // summaryVideoStore가 비어있는데 videoFiles에 동영상이 있으면 초기화
@@ -1464,6 +1557,10 @@ onActivated(async () => {
     isZoomed.value = false;
     zoomedIndex.value = null;
     streaming.value = false;
+  } else {
+    // summaryVideoStore에서 동영상 로드 시도 (다른 메뉴에서 동영상을 선택했을 수 있음)
+    shouldLoadSummaries.value = true;
+    await loadVideosFromStore(true);
   }
 });
 
@@ -1473,8 +1570,17 @@ onActivated(async () => {
 async function loadSummariesFromDB() {
   const userId = localStorage.getItem("vss_user_id");
   if (!userId || videoFiles.value.length === 0) {
+    console.log('[loadSummariesFromDB] 사용자 ID 또는 동영상이 없어 요약 결과 로드를 건너뜁니다.');
     return;
   }
+  
+  // 초기화 후 요약 결과 재로드 방지
+  if (!shouldLoadSummaries.value) {
+    console.log('[loadSummariesFromDB] shouldLoadSummaries가 false여서 요약 결과 로드를 건너뜁니다.');
+    return;
+  }
+
+  console.log(`[loadSummariesFromDB] 요약 결과 로드 시작: 동영상 ${videoFiles.value.length}개`);
 
   // 현재 화면에서 "대표"로 볼 동영상(단일/첫 선택/첫 항목) 기준으로 프롬프트를 동기화
   const primaryVideoId =
@@ -1487,10 +1593,12 @@ async function loadSummariesFromDB() {
     for (const video of videoFiles.value) {
       const dbInternalId = video.dbId || video.id;
       if (!dbInternalId) {
+        console.warn(`[loadSummariesFromDB] 동영상 ${video.name || video.title}의 DB ID가 없어 건너뜁니다.`);
         continue;
       }
 
       try {
+        console.log(`[loadSummariesFromDB] 동영상 ${video.name || video.title} (DB_ID: ${dbInternalId})의 VIDEO_ID 조회 중...`);
         // 먼저 내부 DB ID로 vss_videos 테이블에서 VIDEO_ID (VIA 서버의 video_id) 조회
         const videosResponse = await fetch(`${API_BASE_URL}/videos?user_id=${userId}`);
         if (videosResponse.ok) {
@@ -1498,6 +1606,7 @@ async function loadSummariesFromDB() {
           if (videosData.success && videosData.videos) {
             const dbVideo = videosData.videos.find(v => v.id === dbInternalId);
             if (dbVideo && dbVideo.video_id) {
+              console.log(`[loadSummariesFromDB] VIDEO_ID 조회 성공: ${dbVideo.video_id}, 요약 결과 조회 중...`);
               // VIDEO_ID (VIA 서버의 video_id)로 요약 결과 조회
               const response = await fetch(`${API_BASE_URL}/summaries/${dbVideo.video_id}?user_id=${userId}`);
               if (response.ok) {
@@ -1506,6 +1615,7 @@ async function loadSummariesFromDB() {
                   
                   // data가 null이거나 undefined인 경우 처리
                   if (data && data.success && data.summary) {
+                    console.log(`[loadSummariesFromDB] 요약 결과 로드 성공: 동영상 ${video.name || video.title}`);
                     // 요약 결과를 동영상 객체에 저장
                     video.summary = data.summary.summary_text;
                     
@@ -1541,23 +1651,28 @@ async function loadSummariesFromDB() {
                         content: summaryHtml
                       });
                     }
+                  } else {
+                    console.log(`[loadSummariesFromDB] 요약 결과 없음: 동영상 ${video.name || video.title} (VIDEO_ID: ${dbVideo.video_id})`);
                   }
                 } catch (jsonError) {
                   // JSON 파싱 실패 또는 null 응답 처리
-                  console.warn(`동영상 ${dbInternalId}의 요약 결과 파싱 실패:`, jsonError);
+                  console.warn(`[loadSummariesFromDB] 동영상 ${dbInternalId}의 요약 결과 파싱 실패:`, jsonError);
                 }
               } else {
-                console.warn(`[loadSummariesFromDB] 요약 결과 조회 실패: HTTP ${response.status}`);
+                console.warn(`[loadSummariesFromDB] 요약 결과 조회 실패: HTTP ${response.status}, VIDEO_ID=${dbVideo.video_id}`);
               }
+            } else {
+              console.warn(`[loadSummariesFromDB] VIDEO_ID를 찾을 수 없음: 동영상 ${video.name || video.title} (DB_ID: ${dbInternalId})`);
             }
           }
         }
       } catch (error) {
-        console.warn(`동영상 ${dbInternalId}의 요약 결과 로드 실패:`, error);
+        console.warn(`[loadSummariesFromDB] 동영상 ${dbInternalId}의 요약 결과 로드 실패:`, error);
       }
     }
+    console.log('[loadSummariesFromDB] 요약 결과 로드 완료');
   } catch (error) {
-    console.warn('요약 결과 로드 중 오류:', error);
+    console.warn('[loadSummariesFromDB] 요약 결과 로드 중 오류:', error);
   }
 }
 
@@ -1978,19 +2093,28 @@ async function processUploadFiles(files, { insertAtTop = false } = {}) {
       window.dispatchEvent(new CustomEvent('search-videos-updated'));
 
       // summaryVideoStore 업데이트
-      const storeVideos = videoFiles.value.map(v => ({
-        id: v.id,
-        title: v.name,
-        name: v.name,
-        url: v.originUrl || v.displayUrl,
-        originUrl: v.originUrl,
-        displayUrl: v.displayUrl,
-        objectUrl: v.summaryObjectUrl,
-        date: v.date,
-        file: v.file,
-        summary: v.summary || '',
-        dbId: v.dbId
-      }));
+      // blob URL은 일시적이므로 서버 URL(originUrl)을 우선 사용
+      const storeVideos = videoFiles.value.map(v => {
+        // displayUrl이 blob URL이면 originUrl 사용, 아니면 displayUrl 사용
+        const displayUrl = (v.displayUrl && v.displayUrl.startsWith('blob:')) 
+          ? (v.originUrl || '') 
+          : (v.displayUrl || v.originUrl || '');
+        const originUrl = v.originUrl || displayUrl;
+        
+        return {
+          id: v.id,
+          title: v.name,
+          name: v.name,
+          url: originUrl || displayUrl,
+          originUrl: originUrl,
+          displayUrl: displayUrl,
+          objectUrl: v.summaryObjectUrl,
+          date: v.date,
+          file: v.file,
+          summary: v.summary || '',
+          dbId: v.dbId
+        };
+      });
       summaryVideoStore.setVideos(storeVideos);
 
       // 동영상 업로드 시 streaming을 true로 설정
@@ -2184,7 +2308,12 @@ async function processImageGroup(imageGroup, startIdx, totalCount, taskId, taskP
   formData.append('user_id', userId); // 사용자 ID 추가 (DB 저장용)
   
   try {
-    const res = await fetch(VSS_API_URL, { method: 'POST', body: formData });
+    // 타임아웃 없이 요청 (요약 작업은 시간이 오래 걸릴 수 있음)
+    // fetch API는 기본적으로 타임아웃이 없으므로 signal 옵션을 제공하지 않음
+    const res = await fetch(VSS_API_URL, { 
+      method: 'POST', 
+      body: formData
+    });
     const endTime = Date.now();
     const elapsed = ((endTime - startTime) / 1000).toFixed(2);
     
@@ -2212,6 +2341,7 @@ async function processImageGroup(imageGroup, startIdx, totalCount, taskId, taskP
     }
     
     const data = await res.json();
+    // 백엔드에서 이미 번역된 결과를 반환하므로 추가 번역 불필요
     const summaryText = data.summary || '';
     
     // 각 이미지에 요약 결과 저장 및 video_id 매핑 저장
@@ -2512,7 +2642,12 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
     }
 
     try {
-      const res = await fetch(VSS_API_URL, { method: 'POST', body: formData });
+      // 타임아웃 없이 요청 (요약 작업은 시간이 오래 걸릴 수 있음)
+      // fetch API는 기본적으로 타임아웃이 없으므로 signal 옵션을 제공하지 않음
+      const res = await fetch(VSS_API_URL, { 
+        method: 'POST', 
+        body: formData
+      });
       
       // 타이머 정리 (설정된 경우에만)
       if (intervalId) {
@@ -2558,7 +2693,9 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
       }
       const data = await res.json();
       const serverVideoId = data.video_id;
+      // 백엔드에서 이미 번역된 결과를 반환하므로 추가 번역 불필요
       const summaryText = data.summary || '';
+      
       summarizedVideoMap.value[videoObj.id] = serverVideoId;
       summarizedVideoId.value = serverVideoId;
       
@@ -2925,7 +3062,12 @@ async function onAskConfirmed(q) {
   addChatMessage({ id: Date.now() + Math.random(), role: 'user', content: q });
 
   try {
-    const res = await fetch(VSS_API_URL, { method: 'POST', body: formData });
+    // 타임아웃 없이 요청 (질의 작업은 시간이 오래 걸릴 수 있음)
+    // fetch API는 기본적으로 타임아웃이 없으므로 signal 옵션을 제공하지 않음
+    const res = await fetch(VSS_API_URL, { 
+      method: 'POST', 
+      body: formData
+    });
     if (!res.ok) {
       alert(`질의 요청 실패 (HTTP ${res.status})`);
       // 작업 제거
@@ -2953,17 +3095,25 @@ async function onAskConfirmed(q) {
   }
 }
 
+// 초기화 후 요약 결과 재로드 방지 플래그
+const shouldLoadSummaries = ref(true);
+
 function clear() {
-  prompt.value = "";
+  // 프롬프트와 동영상은 유지하고 채팅창만 초기화
+  // prompt.value는 유지 (제거하지 않음)
   response.value = "";
-  chatMessages.value = [];
+  // chatMessages는 computed이므로 chatMessagesMap을 초기화해야 함
+  Object.keys(chatMessagesMap).forEach(key => {
+    delete chatMessagesMap[key];
+  });
   ask_prompt.value = "";
+  // summarizedVideoId와 summarizedVideoMap은 채팅창의 요약 결과와 관련되므로 초기화
   summarizedVideoId.value = null;
   summarizedVideoMap.value = {};
+  // 초기화 후 요약 결과 재로드 방지
+  shouldLoadSummaries.value = false;
   scrollChatToBottom();
-  // localStorage도 초기화 (사용자별 키 사용)
-  const storageKey = getStorageKey();
-  localStorage.removeItem(storageKey);
+  // localStorage는 유지 (프롬프트와 동영상 정보 보존)
 }
 
 function copyMessage(m) {
@@ -3036,20 +3186,29 @@ function handleVideoError(videoId, event) {
   }
 
   // 스토어와 로컬 상태 갱신
+  // blob URL은 일시적이므로 서버 URL(originUrl)을 우선 사용
   if (summaryVideoStore && typeof summaryVideoStore.setVideos === 'function') {
-    const storeVideos = videoFiles.value.map(v => ({
-      id: v.id,
-      title: v.name,
-      name: v.name,
-      url: v.originUrl || v.displayUrl,
-      originUrl: v.originUrl,
-      displayUrl: v.displayUrl,
-      objectUrl: v.summaryObjectUrl,
-      date: v.date,
-      file: v.file,
-      summary: v.summary || '',
-      dbId: v.dbId
-    }));
+    const storeVideos = videoFiles.value.map(v => {
+      // displayUrl이 blob URL이면 originUrl 사용, 아니면 displayUrl 사용
+      const displayUrl = (v.displayUrl && v.displayUrl.startsWith('blob:')) 
+        ? (v.originUrl || '') 
+        : (v.displayUrl || v.originUrl || '');
+      const originUrl = v.originUrl || displayUrl;
+      
+      return {
+        id: v.id,
+        title: v.name,
+        name: v.name,
+        url: originUrl || displayUrl,
+        originUrl: originUrl,
+        displayUrl: displayUrl,
+        objectUrl: v.summaryObjectUrl,
+        date: v.date,
+        file: v.file,
+        summary: v.summary || '',
+        dbId: v.dbId
+      };
+    });
     summaryVideoStore.setVideos(storeVideos);
   }
   saveStateToLocalStorage();

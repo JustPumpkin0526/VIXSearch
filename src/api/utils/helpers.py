@@ -2,7 +2,7 @@
 from typing import Optional, Union, List
 import aiohttp
 import logging
-from fastapi import UploadFile
+from fastapi import UploadFile, Request
 from fastapi import HTTPException
 from config.settings import (
     API_BASE_URL, VIA_SERVER_URL, VIA_MODEL_TIMEOUT,
@@ -74,10 +74,50 @@ async def get_via_model():
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to contact VIA server: {e}")
 
-def build_file_url(file_url: str) -> str:
-    """파일 URL 생성 (API 베이스 URL 포함)"""
+def build_file_url(file_url: str, request: Optional[object] = None) -> str:
+    """
+    파일 URL 생성 (API 베이스 URL 포함)
+    
+    Args:
+        file_url: 상대 경로 또는 절대 URL
+        request: FastAPI Request 객체 (선택사항, 있으면 동적으로 호스트 결정)
+    
+    Returns:
+        절대 URL 문자열
+    """
+    # 이미 절대 URL인 경우 그대로 반환
     if file_url.startswith('http'):
         return file_url
+    
+    # Request 객체가 있으면 동적으로 호스트 결정 (외부 접속 지원)
+    if request:
+        try:
+            # Request에서 호스트와 스키마 추출
+            # Host 헤더가 있으면 우선 사용 (프록시나 리버스 프록시 환경 대응)
+            host_header = request.headers.get("host")
+            if host_header:
+                # Host 헤더에 포트가 포함되어 있을 수 있음
+                scheme = request.url.scheme
+                return f"{scheme}://{host_header}{file_url}"
+            else:
+                # Host 헤더가 없으면 URL에서 추출
+                scheme = request.url.scheme
+                hostname = request.url.hostname or "localhost"
+                port = request.url.port
+                if port:
+                    host = f"{hostname}:{port}"
+                else:
+                    # 포트가 없으면 기본 포트 사용
+                    if scheme == "https":
+                        host = hostname  # HTTPS는 기본 443 포트
+                    else:
+                        host = f"{hostname}:8001"  # HTTP는 8001 포트 (백엔드 기본 포트)
+                return f"{scheme}://{host}{file_url}"
+        except Exception as e:
+            # Request 파싱 실패 시 기본값 사용
+            logger.warning(f"Request에서 호스트 추출 실패, 기본값 사용: {e}")
+    
+    # Request가 없거나 실패한 경우 설정된 API_BASE_URL 사용
     return f"{API_BASE_URL}{file_url}"
 
 async def create_summarize_prompt(user_prompt: str) -> str:

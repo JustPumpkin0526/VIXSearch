@@ -194,7 +194,12 @@ class VSS:
             body.get("enable_chat"),
             body.get("stream")
         )
-        async with session.post(self.summarize_endpoint, json=body) as response:
+        # 타임아웃 없이 요청 (요약 작업은 시간이 오래 걸릴 수 있음)
+        async with session.post(
+            self.summarize_endpoint, 
+            json=body,
+            timeout=None  # 타임아웃 제거
+        ) as response:
             # 에러 응답 처리
             if response.status != 200:
                 error_text = await response.text()
@@ -347,7 +352,12 @@ class VSS:
             "[CA-RAG DEBUG] VIA 서버 /chat/completions 요청 전송: video_id=%s",
             video_id
         )
-        async with session.post(self.query_endpoint, json=body) as response:
+        # 타임아웃 없이 요청 (질의 작업은 시간이 오래 걸릴 수 있음)
+        async with session.post(
+            self.query_endpoint, 
+            json=body,
+            timeout=None  # 타임아웃 제거
+        ) as response:
             json_data = await self.check_response(response)
             
             # ========== CA-RAG 컨텍스트 디버깅 로그 시작 ==========

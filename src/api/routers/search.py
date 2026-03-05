@@ -247,8 +247,12 @@ async def generate_clips(
             video_id = None
             db_internal_id = None
             if video_id_map:
-                # 파일명으로 내부 DB ID 찾기
-                db_internal_id = video_id_map.get(file_path) or video_id_map.get(upfile.filename)
+                # 파일명으로 내부 DB ID 찾기 (여러 가능한 파일명 형식 시도)
+                db_internal_id = (
+                    video_id_map.get(file_path) or 
+                    video_id_map.get(upfile.filename) or
+                    video_id_map.get(os.path.basename(upfile.filename))
+                )
                 if db_internal_id:
                     try:
                         ensure_db_connection()
@@ -266,6 +270,22 @@ async def generate_clips(
                     except Exception as e:
                         logger.warning(f"VIDEO_ID 조회 중 오류: {e}")
             
+            # video_id가 없으면 내부 DB ID로 직접 조회 시도 (video_id_map에서 찾지 못한 경우)
+            if not video_id and db_internal_id and user_id:
+                try:
+                    ensure_db_connection()
+                    # 내부 DB ID로 vss_videos 테이블에서 VIDEO_ID (VIA 서버의 video_id) 조회
+                    cursor.execute(
+                        "SELECT VIDEO_ID FROM vss_videos WHERE ID = ? AND USER_ID = ?",
+                        (db_internal_id, user_id)
+                    )
+                    video_row = cursor.fetchone()
+                    if video_row and video_row[0]:
+                        video_id = video_row[0]  # VIA 서버의 video_id
+                        logger.info(f"내부 DB ID {db_internal_id}로 VIDEO_ID {video_id} 재조회 성공 (파일명: {file_path})")
+                except Exception as e:
+                    logger.warning(f"VIDEO_ID 재조회 중 오류: {e}")
+            
             # video_id가 없으면 VIA 서버 파일 목록에서 확인
             if not video_id:
                 existing_id = via_file_index.get(file_path)
@@ -273,12 +293,29 @@ async def generate_clips(
                     video_id = existing_id
                     logger.info(f"VIA 서버에 이미 존재하는 파일 사용: {file_path} -> {video_id}")
                 else:
-                    logger.info("VIA 서버에 파일이 없어 업로드 시작")
-                    media_type = detect_media_type(file_path, upfile.content_type)
-                    video_id = await upload_via_file(tmp_path, file_path, media_type)
-                    if video_id:
-                        via_file_index[file_path] = video_id
-                    logger.info(f"VIA 서버에 업로드하여 video_id 획득: {video_id}")
+                    # db_internal_id가 있는 경우, DB에서 VIDEO_ID를 다시 한 번 확인
+                    if db_internal_id and user_id:
+                        try:
+                            ensure_db_connection()
+                            cursor.execute(
+                                "SELECT VIDEO_ID FROM vss_videos WHERE ID = ? AND USER_ID = ?",
+                                (db_internal_id, user_id)
+                            )
+                            video_row = cursor.fetchone()
+                            if video_row and video_row[0]:
+                                video_id = video_row[0]
+                                logger.info(f"VIA 서버 업로드 전 DB에서 VIDEO_ID {video_id} 발견 (파일명: {file_path})")
+                        except Exception as e:
+                            logger.warning(f"VIA 서버 업로드 전 VIDEO_ID 조회 중 오류: {e}")
+                    
+                    # 여전히 video_id가 없으면 새로 업로드
+                    if not video_id:
+                        logger.info("VIA 서버에 파일이 없어 업로드 시작")
+                        media_type = detect_media_type(file_path, upfile.content_type)
+                        video_id = await upload_via_file(tmp_path, file_path, media_type)
+                        if video_id:
+                            via_file_index[file_path] = video_id
+                        logger.info(f"VIA 서버에 업로드하여 video_id 획득: {video_id}")
 
             video_clips = []
             # MoviePy에 파일 경로(문자열)로 전달
@@ -315,7 +352,7 @@ async def generate_clips(
             logger.info(f"AI_prompt 생성 완료: {AI_prompt[:100]}... (전체 길이: {len(AI_prompt)})")
             
             # DB에서 요약 결과 확인 (user_id와 video_id가 있는 경우)
-            # 주의: CA-RAG 컨텍스트 초기화를 위해 summarize_video는 항상 호출해야 함
+            # 요약 결과가 있으면 요약 단계를 건너뛰고 검색만 진행
             has_stored_summary = False
             should_skip_summarize = False
             if user_id and video_id:
@@ -323,36 +360,28 @@ async def generate_clips(
                     ensure_db_connection()
                     # VIDEO_ID (VIA 서버의 video_id)로 요약 결과 확인
                     cursor.execute(
-                        """SELECT ID, PROMPT FROM vss_summaries 
+                        """SELECT ID FROM vss_summaries 
                            WHERE VIDEO_ID = ? AND USER_ID = ?""",
                         (video_id, user_id)
                     )
                     summary_row = cursor.fetchone()
                     if summary_row:
-                        stored_prompt = summary_row[1] if len(summary_row) > 1 else None
-                        # 저장된 PROMPT와 현재 AI_prompt를 비교
-                        if stored_prompt and stored_prompt.strip() == AI_prompt.strip():
-                            has_stored_summary = True
-                            # 프롬프트가 동일하더라도 CA-RAG 컨텍스트 초기화를 위해 summarize_video는 호출해야 함
-                            # 하지만 DB 저장은 건너뛸 수 있음
-                            should_skip_summarize = False  # CA-RAG 컨텍스트 초기화를 위해 항상 호출
-                            logger.info(f"저장된 요약 결과 발견: VIDEO_ID {video_id}, 프롬프트 동일. CA-RAG 컨텍스트 초기화를 위해 summarize_video 호출")
-                        else:
-                            has_stored_summary = False
-                            should_skip_summarize = False
-                            logger.info(f"프롬프트가 변경되어 요약을 다시 수행합니다. (VIDEO_ID: {video_id})")
+                        has_stored_summary = True
+                        # 상세 검색 모드에서 이미 요약 결과가 있으면 요약 단계 건너뛰기
+                        should_skip_summarize = True
+                        logger.info(f"저장된 요약 결과 발견: VIDEO_ID {video_id}. 요약 단계를 건너뛰고 검색만 진행합니다.")
                     else:
                         has_stored_summary = False
                         should_skip_summarize = False
+                        logger.info(f"저장된 요약 결과가 없습니다. 요약을 수행합니다. (VIDEO_ID: {video_id})")
                 except Exception as e:
                     logger.warning(f"요약 결과 확인 중 오류: {e}")
                     has_stored_summary = False
                     should_skip_summarize = False
 
-            # CA-RAG 컨텍스트 초기화를 위해 summarize_video는 항상 호출
-            # (저장된 요약이 있어도 query_video가 작동하려면 컨텍스트가 필요함)
-            logger.info(f"summarize_video 호출 준비: VIDEO_ID={video_id}, image_mode={image_mode}")
-            if video_id:  # video_id가 있을 때만 summarize_video 호출
+            # 요약 결과가 있고 프롬프트가 동일한 경우 요약 단계 건너뛰기
+            logger.info(f"summarize_video 호출 준비: VIDEO_ID={video_id}, image_mode={image_mode}, should_skip_summarize={should_skip_summarize}")
+            if video_id and not should_skip_summarize:  # video_id가 있고 요약을 건너뛰지 않는 경우에만 summarize_video 호출
                 # Summarize 파라미터 설정 (제공되지 않으면 기본값 사용)
                 summarize_chunk = summarize_chunk_duration if summarize_chunk_duration is not None else chunk_duration
                 summarize_top_k_val = summarize_top_k if summarize_top_k is not None else DEFAULT_TOP_K
@@ -470,6 +499,9 @@ async def generate_clips(
                         status_code=500, 
                         detail=f"동영상 요약 중 오류가 발생했습니다. CA-RAG 컨텍스트 초기화 실패: {str(summarize_error)}"
                     )
+            elif should_skip_summarize:
+                # 요약을 건너뛰는 경우 로그만 출력
+                logger.info(f"저장된 요약 결과가 있어 요약 단계를 건너뜁니다. VIDEO_ID={video_id}, 검색만 진행합니다.")
             else:
                 logger.error(f"VIDEO_ID가 없어 summarize_video를 호출할 수 없습니다. 파일: {file_path}")
                 raise HTTPException(
@@ -478,7 +510,7 @@ async def generate_clips(
                 )
             
             # prompt를 질문으로 처리: VIA 서버의 query_video 사용
-            # summarize_video가 성공적으로 완료되어 CA-RAG 컨텍스트가 초기화된 후에만 호출
+            # summarize_video가 성공적으로 완료되었거나 건너뛴 경우 query_video 호출
             try:
                 enhanced_prompt = await build_query_prompt(prompt)
                 

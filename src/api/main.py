@@ -76,9 +76,17 @@ async def lifespan(app: FastAPI):
     logger.info("애플리케이션이 시작되었습니다. VIA 서버의 query_video를 사용합니다.")
     logger.info("=" * 60)
     logger.info("서버가 정상적으로 시작되었습니다.")
-    logger.info(f"서버 주소: http://0.0.0.0:8001")
-    logger.info(f"로컬 접속: http://172.16.7.64:8001")
-    logger.info("API 문서: http://172.16.7.64:8001/docs")
+    logger.info(f"서버 주소: http://0.0.0.0:8001 (모든 네트워크 인터페이스에서 접속 가능)")
+    logger.info(f"로컬 접속: http://localhost:8001")
+    logger.info("API 문서: http://localhost:8001/docs")
+    logger.info("외부 접속: http://<서버IP>:8001 (서버의 실제 IP 주소 사용)")
+    logger.info("=" * 60)
+    # VIA 서버 URL 로깅
+    from config.settings import VIA_SERVER_URL
+    logger.info(f"VIA 서버 URL: {VIA_SERVER_URL}")
+    if "localhost" in VIA_SERVER_URL or "127.0.0.1" in VIA_SERVER_URL:
+        logger.warning("VIA 서버가 localhost로 설정되어 있습니다. 다른 서버에서 실행 중이라면")
+        logger.warning("환경 변수 VIA_SERVER_URL을 설정하세요. 예: VIA_SERVER_URL=http://<VIA서버IP>:8101")
     logger.info("=" * 60)
     logger.info("서버가 요청을 기다리는 중입니다... (정상 상태)")
     

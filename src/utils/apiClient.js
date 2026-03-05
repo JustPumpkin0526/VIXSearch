@@ -6,8 +6,8 @@ import axios from 'axios';
 import { getApiBaseUrl } from './apiConfig';
 
 // axios 인스턴스 생성
+// baseURL은 요청 인터셉터에서 동적으로 설정 (외부 IP 접속 지원)
 const apiClient = axios.create({
-  baseURL: getApiBaseUrl(),
   timeout: 300000, // 5분 (대용량 파일 업로드 대비)
   headers: {
     'Content-Type': 'application/json',
@@ -19,6 +19,18 @@ const apiClient = axios.create({
  */
 apiClient.interceptors.request.use(
   (config) => {
+    // baseURL을 동적으로 설정 (외부 IP 접속 지원)
+    // 매 요청마다 현재 호스트를 기반으로 API URL 생성
+    // 환경 변수가 localhost로 설정되어 있어도 현재 호스트를 우선 사용
+    const apiBaseUrl = getApiBaseUrl();
+    config.baseURL = apiBaseUrl;
+    
+    // 디버깅: 생성된 URL 로그 출력 (개발 환경에서만)
+    if (import.meta.env.DEV) {
+      console.log('[apiClient] API Base URL:', apiBaseUrl);
+      console.log('[apiClient] Request URL:', `${apiBaseUrl}${config.url}`);
+    }
+    
     // 필요시 인증 토큰 추가
     const userId = localStorage.getItem('vss_user_id');
     if (userId && !config.headers['X-User-Id']) {
