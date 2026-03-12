@@ -2,7 +2,7 @@
  * 비디오 관련 공통 유틸리티 함수
  */
 
-export const UNSUPPORTED_VIDEO_FORMATS = ['avi', 'mkv', 'flv', 'wmv'];
+export const UNSUPPORTED_VIDEO_FORMATS = ['avi', 'mkv', 'flv', 'wmv']; // 브라우저 호환성을 위해 .avi도 변환 필요
 
 /**
  * 파일 확장자 추출

@@ -635,7 +635,7 @@ async function loadViaFiles() {
 }
 
 // 지원하지 않는 형식 목록
-const UNSUPPORTED_VIDEO_FORMATS = ['avi', 'mkv', 'flv', 'wmv']; // 브라우저가 직접 재생하지 못하는 형식
+const UNSUPPORTED_VIDEO_FORMATS = ['avi', 'mkv', 'flv', 'wmv']; // 브라우저가 직접 재생하지 못하는 형식 (브라우저 호환성을 위해 .avi도 변환 필요)
 
 // 동영상 파일 확장자 추출 함수
 function getVideoFileExtension(filename) {
@@ -810,11 +810,23 @@ const hasImageFiles = computed(() => {
   return videoFiles.value.some(video => isImageFile(video));
 });
 
+// 현재 업로드된 파일이 비디오인지 확인 (이미지가 아닌 파일)
+const hasVideoFiles = computed(() => {
+  return videoFiles.value.some(video => !isImageFile(video));
+});
+
 // 샘플 프롬프트 목록 (이름만 언어 설정에 따라 변경, 내용은 항상 영어, 이미지/동영상에 따라 다름)
 const samplePrompts = computed(() => {
   const isImage = hasImageFiles.value;
+  const isVideo = hasVideoFiles.value;
   
   const prompts = [
+    {
+      id: "default_video_summary",
+      name: settingStore.language === 'ko' ? "기본 비디오 요약" : "Default Video Summary",
+      content: "You are a video monitoring system. Summarize the visible events in this video in chronological order. Describe only what is clearly observable, including people, objects, movements, and interactions. Do not infer intent, risk, or anomalies unless they are visually obvious. Keep the summary concise, factual, and focused on the main scene changes.",
+      videoOnly: true
+    },
     {
       id: "physique_comparison",
       name: settingStore.language === 'ko' ? "체형 비교(이미지 전용)" : "Physique Comparison (Image Only)",
@@ -826,11 +838,31 @@ const samplePrompts = computed(() => {
       name: settingStore.language === 'ko' ? "소지품 비교(이미지 전용)" : "Belongings Comparison (Image Only)",
       content: "Analyze both images of the same person at the same doorway. For each (A=entering, B=exiting), list all visible belongings and carry-capacity (bags, items, pockets, bulges), using 'not visible' only if truly unseen. Compare A vs B; if B adds/expands a container or shows guarded clutching/scanning, presume possible concealment and state a theft hypothesis, evidence, Suspicion 0–100, and confidence.",
       imageOnly: true
+    },
+    {
+      id: "physique_comparison_video",
+      name: settingStore.language === 'ko' ? "체형 비교(비디오 전용)" : "Physique Comparison (Video Only)",
+      content: "You are a video monitoring system. Describe when a person enters and later exits the same building. Start each sentence with the start and end timestamp. Track the same person, compare visible outerwear at entry and exit, and state the difference clearly. If the person enters without outerwear and exits wearing outerwear, label “Clothing change detected”; otherwise state “No clothing change.”",
+      videoOnly: true
+    },
+    {
+      id: "belongings_comparison_video",
+      name: settingStore.language === 'ko' ? "소지품 비교(비디오 전용)" : "Belongings Comparison (Video Only)",
+      content: "You are a video monitoring system. Describe when a person enters and later exits the same building. Start each sentence with the start and end timestamp. Track the same person, compare visible possessions at entry and exit, and state the difference clearly.”",
+      videoOnly: true
     }
   ];
   
-  // 이미지가 없을 때는 이미지 전용 프롬프트 제외
-  return prompts.filter(prompt => !prompt.imageOnly || isImage);
+  // 이미지가 없을 때는 이미지 전용 프롬프트 제외, 비디오만 있을 때는 비디오 전용 프롬프트만 표시
+  return prompts.filter(prompt => {
+    if (prompt.imageOnly) {
+      return isImage;
+    }
+    if (prompt.videoOnly) {
+      return isVideo && !isImage;
+    }
+    return true;
+  });
 });
 
 // 샘플 프롬프트 적용 함수
@@ -1311,14 +1343,34 @@ async function loadVideosFromStore(loadSummaries = true) {
           const hasFile = v.file instanceof File;
           // File 객체가 있으면 새로운 ObjectURL 생성, 없으면 기존 displayUrl 또는 originUrl 사용
           const summaryObjectUrl = hasFile ? URL.createObjectURL(v.file) : null;
-          // displayUrl 우선순위: summaryObjectUrl > v.displayUrl > v.originUrl > v.url
-          const displayUrl = summaryObjectUrl || v.displayUrl || v.originUrl || v.url || '';
-          const originUrl = v.originUrl || v.url || displayUrl;
+          
+          // originUrl이 blob URL이거나 비어있으면 서버에서 조회
+          let originUrl = v.originUrl || v.url || '';
+          if ((!originUrl || originUrl.startsWith('blob:')) && (v.dbId || v.id)) {
+            try {
+              const videosResponse = await fetch(`${API_BASE_URL}/videos?user_id=${userId}`);
+              if (videosResponse.ok) {
+                const videosData = await videosResponse.json();
+                if (videosData.success && videosData.videos) {
+                  const dbVideo = videosData.videos.find(video => video.id === (v.dbId || v.id));
+                  if (dbVideo && dbVideo.file_url) {
+                    originUrl = dbVideo.file_url;
+                  }
+                }
+              }
+            } catch (error) {
+              console.warn('서버에서 동영상 URL 조회 실패:', error);
+            }
+          }
+          
+          // displayUrl 우선순위: summaryObjectUrl > v.displayUrl > originUrl > v.url
+          // 단, summaryObjectUrl은 blob URL이므로 originUrl이 있으면 우선 사용하지 않음
+          const displayUrl = summaryObjectUrl || (v.displayUrl && !v.displayUrl.startsWith('blob:') ? v.displayUrl : null) || originUrl || v.url || '';
           
           const videoObj = {
             id: v.id,
             name: v.name ?? v.title,
-            originUrl, // Video Storage에서 넘어온 원본 URL (삭제 시 revoke 금지)
+            originUrl: originUrl || displayUrl, // Video Storage에서 넘어온 원본 URL (삭제 시 revoke 금지)
             displayUrl, // 렌더링에 사용할 URL
             summaryObjectUrl, // Summarize가 관리/해제할 URL (없으면 null)
             date: v.date ?? '',
@@ -1356,6 +1408,9 @@ async function loadVideosFromStore(loadSummaries = true) {
           await loadSummariesFromDB();
         }
         
+        // summaryVideoStore 업데이트 (management.vue에서 썸네일 표시를 위해)
+        updateSummaryVideoStore();
+        
         // VIA 서버 파일 목록 조회 (동기화 확인용)
         await loadViaFiles();
         
@@ -1378,6 +1433,8 @@ onMounted(async () => {
   document.addEventListener('click', handleGlobalClick);
   // 다른 메뉴가 열렸을 때 컨텍스트 메뉴 닫기
   window.addEventListener('profile-menu-opened', closeContextMenu);
+  // visibilitychange 이벤트 리스너 추가 (백그라운드에서 완료된 결과 복원)
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 
   const userId = localStorage.getItem("vss_user_id");
   if (!userId) {
@@ -1562,7 +1619,91 @@ onActivated(async () => {
     shouldLoadSummaries.value = true;
     await loadVideosFromStore(true);
   }
+  
+  // 탭이 활성화될 때 누락된 요약 결과 확인 및 표시
+  checkAndRestoreMissedResults();
 });
+
+// 백그라운드에서 완료된 요약 결과를 확인하고 복원하는 함수
+function checkAndRestoreMissedResults() {
+  if (!window.__vssTaskResults || window.__vssTaskResults.size === 0) {
+    return;
+  }
+  
+  // 현재 videoFiles의 ID 목록
+  const currentVideoIds = new Set(videoFiles.value.map(v => v.id));
+  
+  // chatMessages에 이미 표시된 결과인지 확인하기 위한 Set
+  const displayedVideoIds = new Set();
+  chatMessages.value.forEach(msg => {
+    if (msg.videoId) {
+      displayedVideoIds.add(msg.videoId);
+    }
+  });
+  
+  // 누락된 결과 찾기 및 표시
+  for (const [resultKey, result] of window.__vssTaskResults.entries()) {
+    // 현재 동영상 목록에 있고, 아직 표시되지 않은 결과만 처리
+    if (currentVideoIds.has(result.videoId) && !displayedVideoIds.has(result.videoId)) {
+      // 요약 결과를 동영상 객체에 저장
+      const videoInFiles = videoFiles.value.find(v => v.id === result.videoId);
+      if (videoInFiles && result.summaryText) {
+        videoInFiles.summary = result.summaryText;
+      }
+      
+      // summarizedVideoMap 업데이트
+      if (result.serverVideoId) {
+        summarizedVideoMap.value[result.videoId] = result.serverVideoId;
+        summarizedVideoId.value = result.serverVideoId;
+      }
+      
+      // 채팅 메시지에 추가
+      if (result.summaryHtml) {
+        addChatMessage({
+          id: Date.now() + Math.random(),
+          role: 'assistant',
+          content: result.summaryHtml,
+          time: new Date(result.timestamp).toISOString(),
+          videoId: result.videoId
+        });
+      }
+      
+      // summaryVideoStore 업데이트
+      updateSummaryVideoStore();
+    }
+  }
+}
+
+// visibilitychange 이벤트 핸들러
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    // 탭이 다시 활성화될 때 누락된 결과 확인 및 표시
+    checkAndRestoreMissedResults();
+    
+    // 활성화된 작업의 타이머 업데이트
+    if (window.__vssActiveTasks && window.__vssActiveTasks.size > 0) {
+      for (const [taskId, taskInfo] of window.__vssActiveTasks.entries()) {
+        if (taskInfo.intervals && taskInfo.intervals.length > 0) {
+          taskInfo.intervals.forEach(({ loadingId, startTime }) => {
+            const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
+            if (loadingIdx !== -1) {
+              const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+              // loadingId에서 videoId 추출 시도 (loadingId 형식: taskId_videoId_timestamp)
+              const parts = loadingId.toString().split('_');
+              if (parts.length >= 2) {
+                const videoId = parts[1];
+                const videoObj = videoFiles.value.find(v => v.id === videoId || v.id.toString() === videoId);
+                if (videoObj) {
+                  chatMessages.value[loadingIdx].content = `⏳ '${videoObj.name}' 요약 요청 중... (경과 시간: ${elapsed}s)`;
+                }
+              }
+            }
+          });
+        }
+      }
+    }
+  }
+}
 
 
 
@@ -1748,6 +1889,13 @@ watch(videoFiles, (newFiles, oldFiles) => {
 }, { deep: true });
 
 // 상태 변경 감지 자동 저장, onUnmounted 상태 저장 로직 완전 제거
+
+onUnmounted(() => {
+  // 이벤트 리스너 제거
+  document.removeEventListener('click', handleGlobalClick);
+  window.removeEventListener('profile-menu-opened', closeContextMenu);
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
+});
 
 // watch 제거: 매 변경마다 새 ObjectURL 생성되어 누수 가능성 감소
 
@@ -2256,15 +2404,13 @@ async function processImageGroup(imageGroup, startIdx, totalCount, taskId, taskP
   const loadingId = Date.now() + Math.random();
   const startTime = Date.now();
   
-  // 로딩 메시지 추가
-  if (document.visibilityState === 'visible') {
-    const imageNamesStr = imageNames.join(', ');
-    addChatMessage({
-      id: loadingId,
-      role: 'system',
-      content: `⏳ [${startIdx + 1}-${startIdx + imageGroup.length}/${totalCount}] 이미지 그룹 요약 중... (${imageGroup.length}개: ${imageNamesStr})`
-    });
-  }
+  // 로딩 메시지 추가 (백그라운드에서도 추가)
+  const imageNamesStr = imageNames.join(', ');
+  addChatMessage({
+    id: loadingId,
+    role: 'system',
+    content: `⏳ [${startIdx + 1}-${startIdx + imageGroup.length}/${totalCount}] 이미지 그룹 요약 중... (${imageGroup.length}개: ${imageNamesStr})`
+  });
   
   // 로딩 ID 저장
   if (currentTask) {
@@ -2303,9 +2449,10 @@ async function processImageGroup(imageGroup, startIdx, totalCount, taskId, taskP
   formData.append('chat_max_tokens', safeNum(settingStore.C_MAX_TOKENS, 512));
   formData.append('alert_top_p', safeNum(settingStore.A_TopP, 1.0));
   formData.append('alert_temperature', safeNum(settingStore.A_TEMPERATURE, 1.0));
-  formData.append('alert_max_tokens', safeNum(settingStore.A_MAX_TOKENS, 512));
-  formData.append('enable_audio', 'false'); // 이미지는 오디오 없음
-  formData.append('user_id', userId); // 사용자 ID 추가 (DB 저장용)
+    formData.append('alert_max_tokens', safeNum(settingStore.A_MAX_TOKENS, 512));
+    formData.append('enable_audio', 'false'); // 이미지는 오디오 없음
+    formData.append('enable_chat_history', 'false'); // 채팅 히스토리 비활성화
+    formData.append('user_id', userId); // 사용자 ID 추가 (DB 저장용)
   
   try {
     // 타임아웃 없이 요청 (요약 작업은 시간이 오래 걸릴 수 있음)
@@ -2332,11 +2479,10 @@ async function processImageGroup(imageGroup, startIdx, totalCount, taskId, taskP
         updateTaskState();
       }
       
-      if (document.visibilityState === 'visible') {
-        const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
-        if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
-        addChatMessage({ id: Date.now() + Math.random(), role: 'system', content: errHtml });
-      }
+      // UI 업데이트 (백그라운드에서도 결과 저장, 탭 활성화 시 표시)
+      const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
+      if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
+      addChatMessage({ id: Date.now() + Math.random(), role: 'system', content: errHtml });
       return;
     }
     
@@ -2383,12 +2529,13 @@ async function processImageGroup(imageGroup, startIdx, totalCount, taskId, taskP
       updateTaskState();
     }
     
-    // UI 업데이트
-    if (document.visibilityState === 'visible') {
-      const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
-      if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
-      addChatMessage({ id: Date.now() + Math.random(), role: 'assistant', content: summaryHtml });
-    }
+    // UI 업데이트 (백그라운드에서도 결과 저장, 탭 활성화 시 표시)
+    const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
+    if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
+    addChatMessage({ id: Date.now() + Math.random(), role: 'assistant', content: summaryHtml });
+    
+    // 이미지 그룹 요약 완료 후 summaryVideoStore 업데이트 (management.vue에서 썸네일 표시를 위해)
+    updateSummaryVideoStore();
   } catch (e) {
     const endTime = Date.now();
     const elapsed = ((endTime - startTime) / 1000).toFixed(2);
@@ -2405,17 +2552,16 @@ async function processImageGroup(imageGroup, startIdx, totalCount, taskId, taskP
       updateTaskState();
     }
     
-    if (document.visibilityState === 'visible') {
-      const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
-      if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
-      addChatMessage({ id: Date.now() + Math.random(), role: 'system', content: errHtml });
-    }
+    // UI 업데이트 (백그라운드에서도 결과 저장, 탭 활성화 시 표시)
+    const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
+    if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
+    addChatMessage({ id: Date.now() + Math.random(), role: 'system', content: errHtml });
   }
 }
 
 async function continueInferenceFromIndex(taskId, targetVideos, startIndex, totalCount, taskPrompt) {
-    // 이미 실패한 비디오 ID를 추적하여 중복 요청 방지
-    const failedVideoIds = new Set();
+  // 이미 실패한 비디오 ID를 추적하여 중복 요청 방지
+  const failedVideoIds = new Set();
   const VSS_API_URL = `${API_BASE_URL}/vss-summarize`;
   
   // 전역 작업 관리자에 등록 (페이지 전환 후에도 계속 실행되도록)
@@ -2533,14 +2679,12 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
 
     const loadingId = Date.now() + Math.random();
     
-    // 로딩 메시지 추가 (페이지가 활성화된 경우에만)
-    if (document.visibilityState === 'visible') {
-      addChatMessage({
-        id: loadingId,
-        role: 'system',
-        content: `⏳ [${idx + 1}/${totalCount}] '${videoObj.name}' 요약 요청 중...`
-      });
-    }
+    // 로딩 메시지 추가 (백그라운드에서도 추가)
+    addChatMessage({
+      id: loadingId,
+      role: 'system',
+      content: `⏳ [${idx + 1}/${totalCount}] '${videoObj.name}' 요약 요청 중...`
+    });
     
     // 로딩 ID 저장
     if (currentTask) {
@@ -2616,29 +2760,27 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
     formData.append('alert_temperature', safeNum(settingStore.A_TEMPERATURE, 1.0));
     formData.append('alert_max_tokens', safeNum(settingStore.A_MAX_TOKENS, 512));
     formData.append('enable_audio', settingStore.enableAudio ? true : false);
+    formData.append('enable_chat_history', 'false'); // 채팅 히스토리 비활성화
     formData.append('video_id', viaVideoId); // VIA 서버의 video_id 전달
     formData.append('user_id', userId); // 사용자 ID 추가 (DB 저장용)
 
-    // 경과 시간 추적기 설정 (페이지가 활성화된 경우에만 UI 업데이트)
+    // 경과 시간 추적기 설정 (백그라운드에서도 계속 동작)
     const intervalId = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-        const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
-        if (loadingIdx !== -1) {
-          chatMessages.value[loadingIdx].content = `⏳ [${idx + 1}/${totalCount}] '${videoObj.name}' 요약 요청 중... (경과 시간: ${elapsed}s)`;
-        }
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+      const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
+      if (loadingIdx !== -1) {
+        // 백그라운드에서도 업데이트 (탭이 활성화될 때 최신 시간으로 갱신됨)
+        chatMessages.value[loadingIdx].content = `⏳ [${idx + 1}/${totalCount}] '${videoObj.name}' 요약 요청 중... (경과 시간: ${elapsed}s)`;
       }
     }, 100); // 0.1초마다 업데이트 (소수점 실시간 표시)
     
-    // 타이머 저장 (페이지가 활성화된 경우에만)
-    if (document.visibilityState === 'visible') {
-      activeIntervals.value[loadingId] = intervalId;
-      
-      // 작업 상태에 타이머 정보 저장
-      if (currentTask) {
-        if (!currentTask.intervals) currentTask.intervals = [];
-        currentTask.intervals.push({ loadingId, intervalId, startTime });
-      }
+    // 타이머 저장 (백그라운드에서도 계속 동작)
+    activeIntervals.value[loadingId] = intervalId;
+    
+    // 작업 상태에 타이머 정보 저장
+    if (currentTask) {
+      if (!currentTask.intervals) currentTask.intervals = [];
+      currentTask.intervals.push({ loadingId, intervalId, startTime });
     }
 
     try {
@@ -2681,12 +2823,10 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
         // 실패한 비디오 ID 기록 (재시도 방지)
         failedVideoIds.add(videoObj.id);
 
-        // UI 업데이트 (컴포넌트가 활성화된 경우에만)
-        if (document.visibilityState === 'visible') {
-          const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
-          if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
-          addChatMessage({ id: Date.now() + Math.random(), role: 'system', content: errHtml });
-        }
+        // UI 업데이트 (백그라운드에서도 결과 저장, 탭 활성화 시 표시)
+        const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
+        if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
+        addChatMessage({ id: Date.now() + Math.random(), role: 'system', content: errHtml });
         console.error('Summarization error response:', errText);
         idx++;
         continue;
@@ -2737,15 +2877,18 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
         updateTaskState();
       }
       
-      // UI 업데이트 (컴포넌트가 활성화된 경우에만)
-      if (document.visibilityState === 'visible') {
-        const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
-        if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
-        addChatMessage({ id: Date.now() + Math.random(), role: 'assistant', content: summaryHtml, time: new Date().toISOString(), videoId: videoObj.id });
-      }
+      // UI 업데이트 (백그라운드에서도 결과 저장, 탭 활성화 시 표시)
+      const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
+      if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
+      
+      // 백그라운드에서도 메시지 추가 (탭이 활성화될 때 자동으로 표시됨)
+      addChatMessage({ id: Date.now() + Math.random(), role: 'assistant', content: summaryHtml, time: new Date().toISOString(), videoId: videoObj.id });
       
       // 더 이상 프론트엔드에서 별도로 DB 저장을 호출하지 않음
       // 백엔드의 /vss-summarize 엔드포인트에서 자동으로 DB에 저장됨
+      
+      // 요약 완료 후 summaryVideoStore 업데이트 (management.vue에서 썸네일 표시를 위해)
+      updateSummaryVideoStore();
       
     } catch (e) {
       // 타이머 정리 (설정된 경우에만)
@@ -2777,12 +2920,10 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
       }
       // 실패한 비디오 ID 기록 (재시도 방지)
       failedVideoIds.add(videoObj.id);
-      // UI 업데이트 (컴포넌트가 활성화된 경우에만)
-      if (document.visibilityState === 'visible') {
-        const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
-        if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
-        addChatMessage({ id: Date.now() + Math.random(), role: 'system', content: errHtml });
-      }
+      // UI 업데이트 (백그라운드에서도 결과 저장, 탭 활성화 시 표시)
+      const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
+      if (loadingIdx !== -1) chatMessages.value.splice(loadingIdx, 1);
+      addChatMessage({ id: Date.now() + Math.random(), role: 'system', content: errHtml });
       console.error('Summarization request failed:', e);
       idx++;
       continue;
@@ -2818,14 +2959,12 @@ async function continueInferenceFromIndex(taskId, targetVideos, startIndex, tota
     activeTasks.value.splice(taskIndex, 1);
   }
   
-  // 전체 완료 메시지 (컴포넌트가 활성화된 경우에만)
-  if (document.visibilityState === 'visible') {
-    addChatMessage({
-      id: Date.now() + Math.random(),
-      role: 'system',
-      content: `✅ 모든 요약 처리 완료 (${taskInfo.completedVideos.length}개 성공). 질의 시 선택된 영상의 서버 요약을 우선 사용합니다.`
-    });
-  }
+  // 전체 완료 메시지 (백그라운드에서도 결과 저장, 탭 활성화 시 표시)
+  addChatMessage({
+    id: Date.now() + Math.random(),
+    role: 'system',
+    content: `✅ 모든 요약 처리 완료 (${taskInfo.completedVideos.length}개 성공). 질의 시 선택된 영상의 서버 요약을 우선 사용합니다.`
+  });
   
   // 작업 완료 이벤트 발생 (다른 컴포넌트에서도 감지 가능)
   window.dispatchEvent(new CustomEvent('vss-task-completed', {
@@ -3097,6 +3236,91 @@ async function onAskConfirmed(q) {
 
 // 초기화 후 요약 결과 재로드 방지 플래그
 const shouldLoadSummaries = ref(true);
+
+/**
+ * summaryVideoStore를 업데이트하는 헬퍼 함수
+ * blob URL을 제거하고 서버 URL만 사용하여 management.vue에서 썸네일이 표시되도록 함
+ */
+function updateSummaryVideoStore() {
+  if (!summaryVideoStore || typeof summaryVideoStore.setVideos !== 'function') {
+    return;
+  }
+  
+  const userId = localStorage.getItem("vss_user_id");
+  if (!userId) {
+    return;
+  }
+  
+  // videoFiles.value의 모든 동영상을 스토어 형식으로 변환
+  const storeVideos = videoFiles.value.map(v => {
+    // displayUrl이 blob URL이면 originUrl 사용, 아니면 displayUrl 사용
+    let displayUrl = (v.displayUrl && v.displayUrl.startsWith('blob:')) 
+      ? (v.originUrl || '') 
+      : (v.displayUrl || v.originUrl || '');
+    
+    // originUrl도 blob URL이면 서버에서 조회 시도
+    let originUrl = v.originUrl || displayUrl;
+    if (originUrl && originUrl.startsWith('blob:')) {
+      originUrl = '';
+    }
+    
+    // originUrl이 비어있으면 서버에서 조회 (비동기이므로 나중에 업데이트)
+    if (!originUrl && v.dbId) {
+      // 서버에서 조회는 나중에 수행 (지금은 빈 값으로 설정)
+      originUrl = '';
+      displayUrl = '';
+    }
+    
+    return {
+      id: v.id,
+      title: v.name,
+      name: v.name,
+      url: originUrl || displayUrl,
+      originUrl: originUrl || displayUrl,
+      displayUrl: displayUrl || originUrl,
+      objectUrl: v.summaryObjectUrl,
+      date: v.date,
+      file: v.file,
+      summary: v.summary || '',
+      dbId: v.dbId
+    };
+  });
+  
+  summaryVideoStore.setVideos(storeVideos);
+  
+  // originUrl이 비어있는 동영상이 있으면 서버에서 조회하여 업데이트
+  const videosNeedingUrl = storeVideos.filter(v => !v.originUrl && v.dbId);
+  if (videosNeedingUrl.length > 0) {
+    // 비동기로 서버에서 조회
+    fetch(`${API_BASE_URL}/videos?user_id=${userId}`)
+      .then(response => {
+        if (!response.ok) return;
+        return response.json();
+      })
+      .then(data => {
+        if (data && data.success && data.videos) {
+          const updatedStoreVideos = storeVideos.map(storeVideo => {
+            if (!storeVideo.originUrl && storeVideo.dbId) {
+              const serverVideo = data.videos.find(v => v.id === storeVideo.dbId);
+              if (serverVideo && serverVideo.file_url) {
+                return {
+                  ...storeVideo,
+                  url: serverVideo.file_url,
+                  originUrl: serverVideo.file_url,
+                  displayUrl: serverVideo.file_url
+                };
+              }
+            }
+            return storeVideo;
+          });
+          summaryVideoStore.setVideos(updatedStoreVideos);
+        }
+      })
+      .catch(error => {
+        console.warn('서버에서 동영상 URL 조회 실패:', error);
+      });
+  }
+}
 
 function clear() {
   // 프롬프트와 동영상은 유지하고 채팅창만 초기화

@@ -3,7 +3,7 @@
     <!-- 로고 -->
     <div class="flex items-center gap-3 cursor-pointer mb-6 overflow-hidden" @click="goToVideoList" :class="collapsed ? 'justify-center' : ''">
       <img :src="logoUrl" alt="Intellivix Logo" class="h-12 w-auto object-contain flex-shrink-0" />
-      <h1 v-if="!collapsed" class="text-2xl font-bold text-vix-primary dark:text-white whitespace-nowrap flex-shrink-0">VIXScope</h1>
+      <h1 v-if="!collapsed" class="text-2xl font-bold text-vix-primary dark:text-white whitespace-nowrap flex-shrink-0">VIXSearch</h1>
     </div>
 
     <nav class="flex flex-col flex-1 gap-2">

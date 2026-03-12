@@ -15,10 +15,11 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from docx import Document
-from docx.shared import Inches, Pt
+from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.enum.section import WD_SECTION
 from PIL import Image
 import requests
 from moviepy.video.io.VideoFileClip import VideoFileClip
@@ -101,6 +102,7 @@ class ClipData(BaseModel):
 class CreateWordReportRequest(BaseModel):
     user_id: str
     title: str
+    author: Optional[str] = None
     description: Optional[str] = None
     query: Optional[str] = None
     clips: List[ClipData]
@@ -198,6 +200,7 @@ async def create_word_report(request: CreateWordReportRequest):
     try:
         user_id = request.user_id
         title = request.title
+        author = request.author or user_id  # 작성자가 없으면 user_id 사용
         description = request.description or ""
         query = request.query or ""
         clips = request.clips
@@ -214,335 +217,198 @@ async def create_word_report(request: CreateWordReportRequest):
         # 워드 문서 생성
         doc = Document()
         
-        # ==================== 표지 페이지 ====================
-        # 빈 줄 추가 (상단 여백)
-        doc.add_paragraph()
-        doc.add_paragraph()
+        # 페이지 여백 설정 (상하좌우 1인치)
+        sections = doc.sections
+        for section in sections:
+            section.top_margin = Inches(1)
+            section.bottom_margin = Inches(1)
+            section.left_margin = Inches(1)
+            section.right_margin = Inches(1)
         
-        # 제목 추가 (큰 글씨, 중앙 정렬)
-        title_heading = doc.add_heading(title, 0)
+        # ==================== 보고서 구조 ====================
+        # 1. 보고서 제목
+        title_heading = doc.add_heading(title, level=1)
         title_heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
         title_run = title_heading.runs[0]
         title_run.font.size = Pt(24)
         title_run.bold = True
+        title_run.font.color.rgb = RGBColor(0, 51, 102)  # 진한 파란색
         
-        # 빈 줄 추가
-        doc.add_paragraph()
-        doc.add_paragraph()
+        doc.add_paragraph()  # 빈 줄
+        doc.add_paragraph()  # 빈 줄
         
-        # 작성 정보 표 생성
-        info_table = doc.add_table(rows=3, cols=2)
+        # 구분선 추가
+        separator_para = doc.add_paragraph()
+        add_horizontal_line(separator_para)
+        
+        doc.add_paragraph()  # 빈 줄
+        doc.add_paragraph()  # 빈 줄
+        
+        # 2. 작성자 및 작성 일자 (테이블 형태)
+        current_date = datetime.now().strftime("%Y년 %m월 %d일")
+        info_table = doc.add_table(rows=2, cols=2)
         info_table.style = 'Light Grid Accent 1'
         
-        # 작성자 정보
-        info_table.rows[0].cells[0].text = "작성자"
-        info_table.rows[0].cells[1].text = user_id
-        info_table.rows[0].cells[0].paragraphs[0].runs[0].bold = True
-        info_table.rows[0].cells[1].paragraphs[0].runs[0].bold = True
+        # 작성자 행
+        author_row = info_table.rows[0]
+        author_row.cells[0].text = "작성자"
+        author_row.cells[0].paragraphs[0].runs[0].bold = True
+        author_row.cells[0].paragraphs[0].runs[0].font.size = Pt(12)
+        author_row.cells[1].text = author
+        author_row.cells[1].paragraphs[0].runs[0].font.size = Pt(12)
         
-        # 작성일
-        current_date = datetime.now().strftime("%Y년 %m월 %d일")
-        info_table.rows[1].cells[0].text = "작성일"
-        info_table.rows[1].cells[1].text = current_date
-        info_table.rows[1].cells[0].paragraphs[0].runs[0].bold = True
+        # 작성 일자 행
+        date_row = info_table.rows[1]
+        date_row.cells[0].text = "작성 일자"
+        date_row.cells[0].paragraphs[0].runs[0].bold = True
+        date_row.cells[0].paragraphs[0].runs[0].font.size = Pt(12)
+        date_row.cells[1].text = current_date
+        date_row.cells[1].paragraphs[0].runs[0].font.size = Pt(12)
         
-        # 검색 결과 수
-        info_table.rows[2].cells[0].text = "검색 결과 수"
-        info_table.rows[2].cells[1].text = f"{len(clips)}개"
-        info_table.rows[2].cells[0].paragraphs[0].runs[0].bold = True
+        doc.add_paragraph()  # 빈 줄
+        doc.add_paragraph()  # 빈 줄
         
-        # 표 중앙 정렬
-        for row in info_table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        # 구분선 추가
+        separator_para2 = doc.add_paragraph()
+        add_horizontal_line(separator_para2)
         
-        # 페이지 나누기 (표지와 본문 분리)
-        doc.add_page_break()
+        doc.add_paragraph()  # 빈 줄
+        doc.add_paragraph()  # 빈 줄
         
-        # ==================== 목차 ====================
-        toc_heading = doc.add_heading("목차", level=1)
-        toc_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        
-        toc_items = [
-            ("1. 요약", 1),
-            ("2. 검색 쿼리", 2),
-            ("3. 검색 결과", 3),
-            ("4. 상세 결과", 4),
-        ]
-        
-        for item_text, page_num in toc_items:
-            toc_para = doc.add_paragraph()
-            toc_para.style = 'List Bullet'
-            toc_run = toc_para.add_run(f"{item_text} ................... {page_num}")
-            toc_run.font.size = Pt(11)
-        
-        # 페이지 나누기
-        doc.add_page_break()
-        
-        # ==================== 1. 요약 ====================
-        summary_heading = doc.add_heading("1. 요약", level=1)
-        
-        # 요약 정보 표
-        summary_table = doc.add_table(rows=4, cols=2)
-        summary_table.style = 'Light Grid Accent 1'
-        
-        summary_table.rows[0].cells[0].text = "보고서 제목"
-        summary_table.rows[0].cells[1].text = title
-        summary_table.rows[0].cells[0].paragraphs[0].runs[0].bold = True
-        
-        summary_table.rows[1].cells[0].text = "검색 쿼리"
-        summary_table.rows[1].cells[1].text = query if query else "없음"
-        summary_table.rows[1].cells[0].paragraphs[0].runs[0].bold = True
-        
-        summary_table.rows[2].cells[0].text = "검색 결과 수"
-        summary_table.rows[2].cells[1].text = f"{len(clips)}개"
-        summary_table.rows[2].cells[0].paragraphs[0].runs[0].bold = True
-        
-        summary_table.rows[3].cells[0].text = "보고서 설명"
-        summary_table.rows[3].cells[1].text = description if description else "없음"
-        summary_table.rows[3].cells[0].paragraphs[0].runs[0].bold = True
-        
-        # 표 너비 조정
-        for row in summary_table.rows:
-            row.cells[0].width = Inches(2.0)
-            row.cells[1].width = Inches(4.5)
+        # 3. Q. 검색어 섹션
+        query_section_para = doc.add_paragraph()
+        query_label = query_section_para.add_run("Q. 검색어")
+        query_label.bold = True
+        query_label.font.size = Pt(16)
+        query_label.font.color.rgb = RGBColor(0, 102, 204)  # 파란색
         
         doc.add_paragraph()  # 빈 줄
         
-        # ==================== 2. 검색 쿼리 ====================
-        query_heading = doc.add_heading("2. 검색 쿼리", level=1)
+        # 검색어 내용 박스 (들여쓰기)
+        query_content_para = doc.add_paragraph()
+        query_content_para.paragraph_format.left_indent = Inches(0.5)
+        query_content_para.paragraph_format.space_before = Pt(6)
+        query_content_para.paragraph_format.space_after = Pt(6)
         
-        if query:
-            query_para = doc.add_paragraph(query)
-            query_para.style = 'Intense Quote'
-            query_run = query_para.runs[0]
-            query_run.font.size = Pt(12)
-        else:
-            no_query_para = doc.add_paragraph("검색 쿼리가 제공되지 않았습니다.")
-            no_query_para.style = 'Normal'
+        query_content = query if query else "검색어가 제공되지 않았습니다."
+        query_content_run = query_content_para.add_run(query_content)
+        query_content_run.font.size = Pt(13)
+        
+        doc.add_paragraph()  # 빈 줄
+        doc.add_paragraph()  # 빈 줄
+        
+        # 구분선 추가
+        separator_para3 = doc.add_paragraph()
+        add_horizontal_line(separator_para3)
+        
+        doc.add_paragraph()  # 빈 줄
+        doc.add_paragraph()  # 빈 줄
+        
+        # 4. A. 검색 결과 섹션
+        answer_para = doc.add_paragraph()
+        answer_label = answer_para.add_run("A. 검색 결과")
+        answer_label.bold = True
+        answer_label.font.size = Pt(16)
+        answer_label.font.color.rgb = RGBColor(0, 102, 204)  # 파란색
         
         doc.add_paragraph()  # 빈 줄
         
-        # ==================== 3. 검색 결과 요약 ====================
-        result_summary_heading = doc.add_heading("3. 검색 결과", level=1)
-        
-        # 결과 요약 표 생성
-        result_table = doc.add_table(rows=len(clips) + 1, cols=5)
-        result_table.style = 'Light Grid Accent 1'
-        
-        # 표 헤더
-        header_cells = result_table.rows[0].cells
-        header_cells[0].text = "번호"
-        header_cells[1].text = "제목"
-        header_cells[2].text = "시간 범위"
-        header_cells[3].text = "소스 비디오"
-        header_cells[4].text = "장면 설명"
-        
-        # 헤더 스타일 적용
-        for cell in header_cells:
-            cell.paragraphs[0].runs[0].bold = True
-            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        
-        # 표 데이터 채우기
+        # 검색 결과 클립 및 설명
         for idx, clip in enumerate(clips, 1):
-            row_cells = result_table.rows[idx].cells
-            row_cells[0].text = str(idx)
-            row_cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            # 클립 항목 구분선 (첫 번째 항목이 아닌 경우)
+            if idx > 1:
+                clip_separator = doc.add_paragraph()
+                clip_separator.paragraph_format.space_before = Pt(12)
+                clip_separator.paragraph_format.space_after = Pt(12)
+                add_horizontal_line(clip_separator)
+                doc.add_paragraph()  # 빈 줄
             
-            row_cells[1].text = clip.title or "제목 없음"
+            # 클립 번호 및 설명 (들여쓰기)
+            clip_para = doc.add_paragraph()
+            clip_para.paragraph_format.left_indent = Inches(0.3)
+            clip_para.paragraph_format.space_before = Pt(8)
+            clip_para.paragraph_format.space_after = Pt(4)
             
+            clip_number = clip_para.add_run(f"[{idx}] ")
+            clip_number.bold = True
+            clip_number.font.size = Pt(13)
+            clip_number.font.color.rgb = RGBColor(51, 51, 51)  # 진한 회색
+            
+            # 클립 설명 텍스트
+            sentence = clip.sentence if clip.sentence else clip.title
+            if sentence:
+                clip_desc = clip_para.add_run(sentence)
+                clip_desc.font.size = Pt(13)
+            
+            # 시간 정보가 있으면 추가
             if clip.start_time is not None and clip.end_time is not None:
-                time_str = f"{format_time(clip.start_time)} - {format_time(clip.end_time)}"
-            else:
-                time_str = "시간 정보 없음"
-            row_cells[2].text = time_str
-            row_cells[2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-            
-            row_cells[3].text = clip.sourceVideo or "소스 정보 없음"
-            
-            # 장면 설명 (최대 100자로 제한)
-            sentence = clip.sentence or "설명 없음"
-            if len(sentence) > 100:
-                sentence = sentence[:100] + "..."
-            row_cells[4].text = sentence
-        
-        # 표 열 너비 조정
-        result_table.columns[0].width = Inches(0.5)  # 번호
-        result_table.columns[1].width = Inches(1.5)  # 제목
-        result_table.columns[2].width = Inches(1.2)  # 시간 범위
-        result_table.columns[3].width = Inches(1.5)  # 소스 비디오
-        result_table.columns[4].width = Inches(2.3)  # 장면 설명
-        
-        doc.add_page_break()  # 페이지 나누기
-        
-        # ==================== 4. 상세 결과 ====================
-        detail_heading = doc.add_heading("4. 상세 결과", level=1)
-        
-        # 클립 정보 추가 (이미지 데이터를 저장하기 위한 리스트)
-        clip_images = []  # 각 클립의 이미지 데이터를 저장
-        
-        for idx, clip in enumerate(clips, 1):
-            # 클립 번호 및 제목
-            clip_heading = doc.add_heading(f"4.{idx} {clip.title}", level=2)
-            
-            # 클립 정보 표 생성
-            clip_info_table = doc.add_table(rows=3, cols=2)
-            clip_info_table.style = 'Light Grid Accent 1'
-            
-            # 시간 정보
-            clip_info_table.rows[0].cells[0].text = "시간 범위"
-            if clip.start_time is not None and clip.end_time is not None:
-                time_str = f"{format_time(clip.start_time)} - {format_time(clip.end_time)}"
-            else:
-                time_str = "시간 정보 없음"
-            clip_info_table.rows[0].cells[1].text = time_str
-            clip_info_table.rows[0].cells[0].paragraphs[0].runs[0].bold = True
-            
-            # 소스 비디오 정보
-            clip_info_table.rows[1].cells[0].text = "소스 비디오"
-            clip_info_table.rows[1].cells[1].text = clip.sourceVideo or "소스 정보 없음"
-            clip_info_table.rows[1].cells[0].paragraphs[0].runs[0].bold = True
-            
-            # 클립 ID
-            clip_info_table.rows[2].cells[0].text = "클립 ID"
-            clip_info_table.rows[2].cells[1].text = str(clip.id) if clip.id else "ID 없음"
-            clip_info_table.rows[2].cells[0].paragraphs[0].runs[0].bold = True
-            
-            # 표 열 너비 조정
-            clip_info_table.columns[0].width = Inches(1.5)
-            clip_info_table.columns[1].width = Inches(4.5)
+                time_info = f" (시간: {clip.start_time:.2f}초 - {clip.end_time:.2f}초)"
+                time_run = clip_para.add_run(time_info)
+                time_run.font.size = Pt(11)
+                time_run.italic = True
+                time_run.font.color.rgb = RGBColor(128, 128, 128)  # 회색
             
             doc.add_paragraph()  # 빈 줄
             
-            # 썸네일 이미지 추가 시도
-            image_data = None
+            # 썸네일 이미지 추가 시도 (들여쓰기)
             if clip.url:
                 try:
-                    # 이미지 URL인 경우 직접 다운로드
+                    image_data = None
                     if clip.url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
                         image_data = download_image(clip.url)
                     else:
-                        # 비디오 URL인 경우 썸네일 추출
-                        # 클립의 시작 시간을 사용하여 해당 프레임 추출
                         thumbnail_time = clip.start_time if clip.start_time is not None else 0.0
                         image_data = get_video_thumbnail(clip.url, thumbnail_time)
                     
                     if image_data:
                         try:
                             image = Image.open(io.BytesIO(image_data))
-                            # 이미지 크기 조정 (최대 너비 4인치)
-                            max_width = 4.0
+                            max_width = 5.0  # 인치 단위 (약간 더 크게)
                             width, height = image.size
+                            # 너비가 최대 너비보다 크면 리사이즈
                             if width > max_width * 72:  # 72 DPI 기준
                                 ratio = (max_width * 72) / width
                                 new_width = int(width * ratio)
                                 new_height = int(height * ratio)
                                 image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
                             
-                            # PIL Image를 BytesIO로 변환
                             img_byte_arr = io.BytesIO()
                             image.save(img_byte_arr, format='PNG')
                             img_byte_arr.seek(0)
                             
-                            # Word 문서에 이미지 추가
-                            doc.add_picture(img_byte_arr, width=Inches(max_width))
+                            # 이미지 단락에 들여쓰기 추가
+                            img_para = doc.add_paragraph()
+                            img_para.paragraph_format.left_indent = Inches(0.5)
+                            img_para.paragraph_format.space_before = Pt(6)
+                            img_para.paragraph_format.space_after = Pt(12)
                             
-                            # 이미지 데이터를 base64로 인코딩하여 저장 (텍스트 내용용)
-                            img_byte_arr.seek(0)
-                            clip_images.append(base64.b64encode(img_byte_arr.read()).decode('utf-8'))
+                            # 이미지를 단락에 추가
+                            run = img_para.add_run()
+                            run.add_picture(img_byte_arr, width=Inches(max_width))
                         except Exception as e:
-                            logger.warning(f"이미지 추가 실패: {e}")
-                            clip_images.append(None)
-                    else:
-                        clip_images.append(None)
+                            logger.warning(f"이미지 추가 실패 (클립 {idx}): {e}")
                 except Exception as e:
-                    logger.warning(f"썸네일 처리 실패 ({clip.url}): {e}")
-                    clip_images.append(None)
-            else:
-                clip_images.append(None)
+                    logger.warning(f"썸네일 처리 실패 (클립 {idx}, URL: {clip.url}): {e}")
             
-            # 장면 설명 추가
-            if clip.sentence:
-                sentence_heading = doc.add_heading("장면 설명", level=3)
-                desc_para = doc.add_paragraph(clip.sentence)
-                desc_para.style = 'Normal'
-                desc_run = desc_para.runs[0]
-                desc_run.font.size = Pt(11)
-            
-            # 페이지 나누기 (마지막 클립이 아닌 경우)
-            if idx < len(clips):
-                doc.add_page_break()
+            doc.add_paragraph()  # 빈 줄
         
-        # 보고서 내용을 텍스트로 변환 (데이터베이스 저장용) - 이미지 포함
+        # 보고서 내용을 텍스트로 변환 (데이터베이스 저장용) - 새로운 구조
         report_content = f"# {title}\n\n"
-        report_content += f"**작성자:** {user_id}  \n"
-        report_content += f"**작성일:** {current_date}  \n"
-        report_content += f"**검색 결과 수:** {len(clips)}개\n\n"
+        report_content += f"**작성자:** {author}\n\n"
+        report_content += f"**작성 일자:** {current_date}\n\n"
         report_content += "=" * 50 + "\n\n"
-        
-        # 요약 섹션
-        report_content += "## 1. 요약\n\n"
-        report_content += f"**보고서 제목:** {title}\n\n"
-        report_content += f"**검색 쿼리:** {query if query else '없음'}\n\n"
-        report_content += f"**검색 결과 수:** {len(clips)}개\n\n"
-        report_content += f"**보고서 설명:** {description if description else '없음'}\n\n"
+        report_content += "## Q. 검색어\n\n"
+        report_content += f"{query if query else '검색어가 제공되지 않았습니다.'}\n\n"
         report_content += "=" * 50 + "\n\n"
-        
-        # 쿼리 섹션 추가
-        report_content += "## 2. 검색 쿼리\n\n"
-        if query:
-            report_content += f"{query}\n\n"
-        else:
-            report_content += "검색 쿼리가 제공되지 않았습니다.\n\n"
-        report_content += "=" * 50 + "\n\n"
-        
-        # 결과 요약 섹션
-        report_content += "## 3. 검색 결과 요약\n\n"
-        report_content += "| 번호 | 제목 | 시간 범위 | 소스 비디오 | 장면 설명 |\n"
-        report_content += "|------|------|-----------|------------|----------|\n"
+        report_content += "## A. 검색 결과\n\n"
         
         for idx, clip in enumerate(clips, 1):
-            title_text = clip.title or "제목 없음"
-            if clip.start_time is not None and clip.end_time is not None:
-                time_str = f"{format_time(clip.start_time)} - {format_time(clip.end_time)}"
-            else:
-                time_str = "시간 정보 없음"
-            source_text = clip.sourceVideo or "소스 정보 없음"
-            sentence = clip.sentence or "설명 없음"
-            if len(sentence) > 100:
-                sentence = sentence[:100] + "..."
-            
-            # 마크다운 표 형식으로 추가
-            report_content += f"| {idx} | {title_text} | {time_str} | {source_text} | {sentence} |\n"
-        
-        report_content += "\n" + "=" * 50 + "\n\n"
-        
-        # 상세 결과 섹션
-        report_content += "## 4. 상세 결과\n\n"
-        
-        for idx, clip in enumerate(clips, 1):
-            report_content += f"### 4.{idx} {clip.title}\n\n"
-            report_content += "**시간 범위:** "
-            if clip.start_time is not None and clip.end_time is not None:
-                report_content += f"{format_time(clip.start_time)} - {format_time(clip.end_time)}\n\n"
-            else:
-                report_content += "시간 정보 없음\n\n"
-            
-            report_content += f"**소스 비디오:** {clip.sourceVideo or '소스 정보 없음'}\n\n"
-            report_content += f"**클립 ID:** {clip.id if clip.id else 'ID 없음'}\n\n"
-            
-            # 이미지가 있는 경우 base64로 인코딩된 이미지를 마크다운 형식으로 포함
-            if idx <= len(clip_images) and clip_images[idx - 1]:
-                report_content += f"![썸네일 {idx}](data:image/png;base64,{clip_images[idx - 1]})\n\n"
-            elif clip.url:
-                # 이미지를 가져올 수 없는 경우에만 URL 표시
-                report_content += f"**비디오 URL:** {clip.url}\n\n"
-            
-            if clip.sentence:
-                report_content += f"**장면 설명:**\n{clip.sentence}\n\n"
-            
-            report_content += "=" * 50 + "\n\n"
+            sentence = clip.sentence if clip.sentence else clip.title
+            if sentence:
+                report_content += f"{idx}. {sentence}"
+                if clip.start_time is not None and clip.end_time is not None:
+                    report_content += f" ({clip.start_time:.2f}초 - {clip.end_time:.2f}초)"
+                report_content += "\n\n"
         
         # 단어 수 계산
         word_count = len(report_content.split())

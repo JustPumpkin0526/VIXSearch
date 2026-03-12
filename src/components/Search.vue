@@ -426,7 +426,7 @@
           <!-- 입력 영역 (하단 고정) -->
           <div class="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 pt-2 pb-4">
             <!-- 검색 타입 선택 드롭박스 -->
-            <div class="mb-2">
+            <div class="mb-2 flex items-center gap-2">
               <span>
                 {{ settingStore.language === 'ko' ? '검색 타입' : 'Search Type' }} :
               </span>
@@ -438,6 +438,55 @@
                 <option value="fast_vlm">{{ settingStore.language === 'ko' ? '고속 검색 (VLM 분석)' : 'Fast Search (VLM Analysis)' }}</option>
                 <option value="detailed">{{ settingStore.language === 'ko' ? '상세 검색' : 'Detailed Search' }}</option>
               </select>
+              <!-- 별 아이콘 (초록색 바탕) -->
+              <div class="relative" ref="starTooltipRef" @click.stop>
+                <button
+                  type="button"
+                  @click="showStarTooltip = !showStarTooltip"
+                  class="w-8 h-8 rounded-lg bg-green-500 dark:bg-green-600 flex items-center justify-center hover:bg-green-600 dark:hover:bg-green-700 transition-colors"
+                  aria-label="Star"
+                >
+                  <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                  </svg>
+                </button>
+                <!-- 말풍선 (샘플 검색어 리스트) -->
+                <Transition name="fade-slide">
+                  <div
+                    v-if="showStarTooltip"
+                    class="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 rounded-lg shadow-lg bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 z-50 max-h-80 overflow-y-auto"
+                    @click.stop
+                  >
+                    <div class="relative p-2">
+                      <!-- 화살표 -->
+                      <div class="absolute top-full left-1/2 transform -translate-x-1/2 -mt-1 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-200 dark:border-t-gray-600"></div>
+                      <div class="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-white dark:border-t-gray-700" style="margin-top: -1px;"></div>
+                      
+                      <!-- 헤더 -->
+                      <div class="px-3 py-2 border-b border-gray-200 dark:border-gray-600 mb-2">
+                        <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                          {{ settingStore.language === 'ko' ? '샘플 검색어' : 'Sample Search Queries' }}
+                        </h3>
+                      </div>
+                      
+                      <!-- 샘플 검색어 리스트 -->
+                      <div class="space-y-1">
+                        <button
+                          v-for="(query, index) in sampleSearchQueries"
+                          :key="index"
+                          @click="selectSampleQuery(query)"
+                          class="w-full text-left px-3 py-2 rounded-md text-sm text-gray-700 dark:text-gray-300 hover:bg-green-50 dark:hover:bg-green-900/30 hover:text-green-700 dark:hover:text-green-400 transition-colors"
+                        >
+                          {{ query }}
+                        </button>
+                        <div v-if="sampleSearchQueries.length === 0" class="px-3 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                          {{ settingStore.language === 'ko' ? '샘플 검색어가 없습니다' : 'No sample search queries' }}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </Transition>
+              </div>
             </div>
             <div class="flex items-end gap-2">
               <div class="flex-1 relative">
@@ -483,7 +532,7 @@
                     <button 
                       @click="handleSearch" 
                       :disabled="(searchType === 'fast' ? selectedVideos.length === 0 : !searchInput.trim()) || isSearching"
-                      class="absolute right-2 bottom-2 p-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:to-green-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed transition-all duration-300 transform hover:scale-110 active:scale-95 shadow-md">
+                      class="absolute right-1 bottom-[4.5px] p-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:to-green-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed transition-all duration-300 transform hover:scale-110 active:scale-95 shadow-md">
                       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                           d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8">
@@ -613,14 +662,17 @@
                @mouseup.stop>
             <div class="flex flex-col">
               <h3 class="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
-                {{ settingStore.language === 'ko' ? '보고서 제목 입력' : 'Enter Report Title' }}
+                {{ settingStore.language === 'ko' ? '보고서 정보 입력' : 'Enter Report Information' }}
               </h3>
+              <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                {{ settingStore.language === 'ko' ? '보고서 제목' : 'Report Title' }}
+              </label>
               <input
                 v-model="reportTitleInput"
                 type="text"
                 :placeholder="settingStore.language === 'ko' ? '보고서 제목을 입력하세요' : 'Enter report title'"
                 :class="[
-                  'w-full px-4 py-3 border rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 mb-1',
+                  'w-full px-4 py-3 border rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 mb-3',
                   reportTitleError 
                     ? 'border-red-500 dark:border-red-500 focus:ring-red-500 dark:focus:ring-red-500' 
                     : 'border-gray-300 dark:border-gray-600 focus:ring-green-500 dark:focus:ring-green-400'
@@ -628,6 +680,16 @@
                 @input="checkReportTitle"
                 @keyup.enter="confirmReportTitle"
                 autofocus
+              />
+              <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                {{ settingStore.language === 'ko' ? '작성자' : 'Author' }}
+              </label>
+              <input
+                v-model="reportAuthorInput"
+                type="text"
+                :placeholder="settingStore.language === 'ko' ? '작성자를 입력하세요' : 'Enter author name'"
+                class="w-full px-4 py-3 border rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 mb-1 border-gray-300 dark:border-gray-600 focus:ring-green-500 dark:focus:ring-green-400"
+                @keyup.enter="confirmReportTitle"
               />
               <p v-if="reportTitleError" class="text-red-500 dark:text-red-400 text-sm mb-4">
                 {{ reportTitleError }}
@@ -1047,7 +1109,8 @@
                             <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
                               <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">{{ settingStore.language === 'ko' ? 'Chunk Size' : 'Chunk Size' }}</h2>
                               <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '동영상 추론에서 분할 단위를 설정합니다.' : 'Set the chunking unit for video inference.' }}</p>
-                              <select v-model.number="settingStore.summarizeChunk" class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all">
+                              <select v-model.number="settingStore.searchChunk" class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all">
+                                <option value=-1>{{ settingStore.language === 'ko' ? '자동 지정' : 'Auto' }}</option>
                                 <option value=0>{{ settingStore.language === 'ko' ? 'Chunk 없음' : 'No chunking' }}</option>
                                 <option value=5>5 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
                                 <option value=10>10 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
@@ -1071,8 +1134,8 @@
                             <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
                               <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Top-k</h2>
                               <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '최고 확률 어휘 토큰을 유지할 개수' : 'The number of highest probability vocabulary tokens to keep for top-k-filtering' }}</p>
-                              <input v-model.number="settingStore.summarizeTopk" type="number" min="1" max="1000" step="1"
-                                @input="clampSummarizeValue('summarizeTopk', 1000, 1)"
+                              <input v-model.number="settingStore.searchTopK" type="number" min="1" max="1000" step="1"
+                                @input="clampSearchValue('searchTopK', 1000, 1)"
                                 class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
                             </section>
 
@@ -1080,14 +1143,14 @@
                               <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Top-p</h2>
                               <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '텍스트 생성에 사용되는 top-p 샘플링 질량' : 'The top-p sampling mass used for text generation' }}</p>
                               <div class="flex items-center gap-2 mb-2">
-                                <input v-model.number="settingStore.summarizeTopp" type="number" min="0" max="1" step="0.1"
-                                  @input="clampSummarizeValue('summarizeTopp', 1, 0)"
+                                <input v-model.number="settingStore.searchTopP" type="number" min="0" max="1" step="0.1"
+                                  @input="clampSearchValue('searchTopP', 1, 0)"
                                   class="border-2 border-emerald-300 dark:border-emerald-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
-                                <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeTopP">↺</button>
+                                <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSearchTopP">↺</button>
                               </div>
                               <div class="flex items-center gap-2 h-8">
                                 <span class="text-xs text-gray-400 w-8 text-center">0</span>
-                                <input v-model.number="settingStore.summarizeTopp" type="range" min="0" max="1" step="0.05"
+                                <input v-model.number="settingStore.searchTopP" type="range" min="0" max="1" step="0.05"
                                   class="flex-1 border-emerald-300 dark:border-emerald-600" />
                                 <span class="text-xs text-gray-400 w-8 text-center">1</span>
                               </div>
@@ -1097,14 +1160,14 @@
                               <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Temperature</h2>
                               <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '텍스트 생성에 사용되는 샘플링 온도' : 'The sampling temperature to use for text generation' }}</p>
                               <div class="flex items-center gap-2 mb-2">
-                                <input v-model.number="settingStore.summarizeTemp" type="number" min="0" max="2" step="0.1"
-                                  @input="clampSummarizeValue('summarizeTemp', 2, 0)"
+                                <input v-model.number="settingStore.searchTemperature" type="number" min="0" max="2" step="0.1"
+                                  @input="clampSearchValue('searchTemperature', 2, 0)"
                                   class="border-2 border-emerald-300 dark:border-emerald-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
-                                <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeTemperature">↺</button>
+                                <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSearchTemperature">↺</button>
                               </div>
                               <div class="flex items-center gap-2 h-8">
                                 <span class="text-xs text-gray-400 w-8 text-center">0</span>
-                                <input v-model.number="settingStore.summarizeTemp" type="range" min="0" max="2" step="0.1"
+                                <input v-model.number="settingStore.searchTemperature" type="range" min="0" max="2" step="0.1"
                                   class="flex-1 border-emerald-300 dark:border-emerald-600" />
                                 <span class="text-xs text-gray-400 w-8 text-center">2</span>
                               </div>
@@ -1123,15 +1186,15 @@
                                   <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ settingStore.language === 'ko' ? '생성할 최대 토큰 수' : 'The maximum number of tokens to generate' }}</p>
                                 </div>
             <div class="flex items-center gap-2">
-                                  <input v-model.number="settingStore.summarizeMaxTokens" type="number" min="1" max="2048" step="1"
-                                    @input="clampSummarizeValue('summarizeMaxTokens', 2048, 1)"
+                                  <input v-model.number="settingStore.searchMaxTokens" type="number" min="1" max="2048" step="1"
+                                    @input="clampSearchValue('searchMaxTokens', 2048, 1)"
                                     class="border-2 border-emerald-300 dark:border-emerald-600 w-20 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
-                                  <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSummarizeMaxTokens">↺</button>
+                                  <button class="border-2 border-emerald-300 dark:border-emerald-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center" @click="resetSearchMaxTokens">↺</button>
                                 </div>
                               </div>
                               <div class="flex items-center gap-2 h-8 mt-3">
                                 <span class="text-xs text-gray-400 w-8 text-center">1</span>
-                                <input v-model.number="settingStore.summarizeMaxTokens" type="range" min="1" max="2048" step="1"
+                                <input v-model.number="settingStore.searchMaxTokens" type="range" min="1" max="2048" step="1"
                                   class="flex-1 border-emerald-300 dark:border-emerald-600" />
                                 <span class="text-xs text-gray-400 w-12 text-center">2048</span>
                               </div>
@@ -1140,8 +1203,8 @@
                             <section class="rounded-lg border border-emerald-200 dark:border-emerald-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
                               <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Seed</h2>
                               <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '샘플링에 사용할 시드 값' : 'Seed value to use for sampling' }}</p>
-                              <input v-model.number="settingStore.summarizeSeed" type="number" min="1" max="4294967295" step="1"
-                                @input="clampSummarizeValue('summarizeSeed', 4294967295, 1)"
+                              <input v-model.number="settingStore.searchSeed" type="number" min="1" max="4294967295" step="1"
+                                @input="clampSearchValue('searchSeed', 4294967295, 1)"
                                 class="border-2 border-emerald-300 dark:border-emerald-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all" />
                             </section>
                           </div>
@@ -1916,13 +1979,28 @@ const reportLoadingMessage = ref('');
 const reportSuccessMessage = ref('');
 const showReportTitleModal = ref(false);
 const reportTitleInput = ref('');
+const reportAuthorInput = ref('');
 const reportTitleError = ref('');
 const isCheckingTitle = ref(false);
 const pendingReportData = ref(null);
+const titleCheckDebounceTimer = ref(null);
 // 설정 모달 상태
 const showSearchSettingModal = ref(false);
 const showQueryVlmParams = ref(true);
 const showSummarizeVlmParams = ref(true);
+const showStarTooltip = ref(false);
+const starTooltipRef = ref(null);
+// 샘플 검색어 리스트
+const sampleSearchQueries = ref([
+  "창문을 통해 건물에 침입하는 사람이 등장하는 장면을 찾아주세요.",
+  "강도가 여성의 소지품을 빼앗는 장면을 찾아주세요.",
+  "사람들이 싸우는 장면을 찾아주세요.",
+  "차량 사고가 발생한 장면을 찾아주세요.",
+  "쓰러진 사람을 찾아주세요.",
+  "스키 경기에서 균형을 잃고 넘어지는 사람을 찾아주세요.",
+  "축구 선수가 골을 넣어 득점하는 장면을 찾아주세요."
+
+]);
 let modalMouseDownPos = null;
 // Summarize 하위 섹션 접기/펼치기 상태 (기본값: 접힘)
 const showSummarizeSpecificParams = ref(false);
@@ -2770,36 +2848,45 @@ function createNewReport(messageIndex) {
   showReportTitleModal.value = true;
 }
 
-async function checkReportTitle() {
-  const title = reportTitleInput.value.trim();
-  reportTitleError.value = '';
-  
-  if (!title) {
-    return;
+// 디바운스된 제목 확인 함수
+function checkReportTitle() {
+  // 이전 타이머가 있으면 취소
+  if (titleCheckDebounceTimer.value) {
+    clearTimeout(titleCheckDebounceTimer.value);
   }
   
-  if (!pendingReportData.value) return;
-  
-  const { userId } = pendingReportData.value;
-  
-  isCheckingTitle.value = true;
-  
-  try {
-    const response = await fetch(`${API_BASE_URL}/reports/check-title?user_id=${encodeURIComponent(userId)}&title=${encodeURIComponent(title)}`);
+  // 500ms 후에 실제 API 호출
+  titleCheckDebounceTimer.value = setTimeout(async () => {
+    const title = reportTitleInput.value.trim();
+    reportTitleError.value = '';
     
-    if (response.ok) {
-      const data = await response.json();
-      if (data.exists) {
-        reportTitleError.value = settingStore.language === 'ko' 
-          ? '이미 존재하는 보고서 제목입니다.' 
-          : 'This report title already exists.';
-      }
+    if (!title) {
+      return;
     }
-  } catch (error) {
-    console.error('보고서 제목 확인 중 오류:', error);
-  } finally {
-    isCheckingTitle.value = false;
-  }
+    
+    if (!pendingReportData.value) return;
+    
+    const { userId } = pendingReportData.value;
+    
+    isCheckingTitle.value = true;
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/reports/check-title?user_id=${encodeURIComponent(userId)}&title=${encodeURIComponent(title)}`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.exists) {
+          reportTitleError.value = settingStore.language === 'ko' 
+            ? '이미 존재하는 보고서 제목입니다.' 
+            : 'This report title already exists.';
+        }
+      }
+    } catch (error) {
+      console.error('보고서 제목 확인 중 오류:', error);
+    } finally {
+      isCheckingTitle.value = false;
+    }
+  }, 500); // 500ms 디바운스
 }
 
 async function confirmReportTitle() {
@@ -2811,9 +2898,11 @@ async function confirmReportTitle() {
   
   const { reportData, userId } = pendingReportData.value;
   const reportTitle = reportTitleInput.value.trim();
+  const reportAuthor = reportAuthorInput.value.trim() || userId; // 작성자가 없으면 user_id 사용
   
   showReportTitleModal.value = false;
   reportTitleError.value = '';
+  reportAuthorInput.value = '';
   pendingReportData.value = null;
   
   isCreatingReport.value = true;
@@ -2832,6 +2921,7 @@ async function confirmReportTitle() {
       body: JSON.stringify({
         user_id: userId,
         title: reportTitle,
+        author: reportAuthor,
         description: settingStore.language === 'ko' 
           ? `${reportData.clips.length}개의 클립 검색 결과`
           : `Search results for ${reportData.clips.length} clips`,
@@ -2882,6 +2972,7 @@ async function confirmReportTitle() {
 function closeReportTitleModal() {
   showReportTitleModal.value = false;
   reportTitleInput.value = '';
+  reportAuthorInput.value = '';
   reportTitleError.value = '';
   pendingReportData.value = null;
 }
@@ -3039,8 +3130,8 @@ function handleModalBackgroundClick(event, closeFunction) {
   }
 }
 
-// Query 파라미터 값 범위 제한 함수
-function clampQueryValue(paramName, maxValue, minValue = null) {
+// 공통 검색 파라미터 값 범위 제한 함수
+function clampSearchValue(paramName, maxValue, minValue = null) {
   const currentValue = settingStore[paramName];
   if (currentValue > maxValue) {
     settingStore[paramName] = maxValue;
@@ -3049,17 +3140,17 @@ function clampQueryValue(paramName, maxValue, minValue = null) {
   }
 }
 
-// Query 파라미터 리셋 함수들
-function resetQueryTopP() {
-  settingStore.queryTopp = 1.0;
+// 공통 검색 파라미터 리셋 함수들
+function resetSearchTopP() {
+  settingStore.searchTopP = 1.0;
 }
 
-function resetQueryTemperature() {
-  settingStore.queryTemp = 0.3;
+function resetSearchTemperature() {
+  settingStore.searchTemperature = 0.3;
 }
 
-function resetQueryMaxTokens() {
-  settingStore.queryMaxTokens = 1024;
+function resetSearchMaxTokens() {
+  settingStore.searchMaxTokens = 1024;
 }
 
 function clampBoxThreshold() {
@@ -3099,7 +3190,7 @@ function resetObjectDetectionThreshold() {
 }
 
 
-// Summarize 파라미터 값 범위 제한 함수
+// Summarize 전용 파라미터 값 범위 제한 함수
 function clampSummarizeValue(paramName, maxValue, minValue = null) {
   const currentValue = settingStore[paramName];
   if (currentValue > maxValue) {
@@ -3109,17 +3200,17 @@ function clampSummarizeValue(paramName, maxValue, minValue = null) {
   }
 }
 
-// Summarize 파라미터 리셋 함수들
+// Summarize 전용 파라미터 리셋 함수들 (내부 파라미터용)
 function resetSummarizeTopP() {
-  settingStore.summarizeTopp = 1.0;
+  settingStore.summarizeSummarizeTopP = 0.7;
 }
 
 function resetSummarizeTemperature() {
-  settingStore.summarizeTemp = 0.4;
+  settingStore.summarizeSummarizeTemperature = 0.2;
 }
 
 function resetSummarizeMaxTokens() {
-  settingStore.summarizeMaxTokens = 512;
+  settingStore.summarizeSummarizeMaxTokens = 2048;
 }
 
 function resetSummarizeSummarizeTopP() {
@@ -3209,7 +3300,18 @@ function removeUploadedImage() {
  * @returns {Promise<File|null>} File 객체 또는 null
  */
 async function ensureVideoFile(video) {
+  // 최적화: 이미 File 객체가 있으면 fetch를 건너뛰기
+  if (video.file instanceof File) {
+    return video.file;
+  }
+
   if (!video || !video.displayUrl) {
+    return null;
+  }
+
+  // blob URL의 경우 fetch를 수행하지 않음 (반복 요청 방지)
+  if (video.displayUrl.startsWith('blob:')) {
+    // blob URL인 경우 이미 file 객체가 있어야 하므로 null 반환
     return null;
   }
 
@@ -3240,11 +3342,24 @@ async function ensureVideoFile(video) {
 
 /**
  * 선택된 비디오들의 File 객체 수집
+ * 최적화: 이미 File 객체가 있는 경우만 수집 (fetch 최소화)
+ * @param {Array} videos - 수집할 비디오 배열 (기본값: selectedVideos.value)
  * @returns {Promise<Array>} { file, video } 배열
  */
-async function collectSelectedFiles() {
+async function collectSelectedFiles(videos = null) {
+  const targetVideos = videos || selectedVideos.value;
   const results = [];
-  for (const video of selectedVideos.value) {
+  
+  // 최적화: 이미 File 객체가 있는 비디오는 즉시 추가
+  // File 객체가 없는 비디오는 나중에 필요할 때만 fetch
+  for (const video of targetVideos) {
+    // 이미 File 객체가 있으면 즉시 사용
+    if (video.file instanceof File) {
+      results.push({ file: video.file, video });
+      continue;
+    }
+    
+    // File 객체가 없으면 fetch (검색에 필요하므로)
     const file = await ensureVideoFile(video);
     if (file) {
       results.push({ file, video });
@@ -3312,6 +3427,8 @@ async function handleSearch() {
   isSearching.value = true;
 
   try {
+    // 최적화: 검색 전에는 이미 File 객체가 있는 비디오만 수집
+    // File 객체가 없는 비디오는 검색 결과가 나온 후에만 로드
     const fileEntries = await collectSelectedFiles();
     if (fileEntries.length === 0) {
       currentChat.messages.push({
@@ -3320,6 +3437,13 @@ async function handleSearch() {
         timestamp: getCurrentTime()
       });
       return;
+    }
+    
+    // 최적화: File 객체가 없는 비디오는 검색 결과 확인 후에만 로드
+    // 검색을 위해 최소한의 파일만 필요 (백엔드에서 video_id로 검색 가능)
+    const videosWithoutFile = selectedVideos.value.filter(v => !(v.file instanceof File));
+    if (videosWithoutFile.length > 0) {
+      console.log(`[최적화] File 객체가 없는 ${videosWithoutFile.length}개 비디오는 검색 결과 확인 후 로드됩니다.`);
     }
 
     const userId = localStorage.getItem("vss_user_id");
@@ -3369,21 +3493,15 @@ async function handleSearch() {
         return Number.isFinite(n) ? n : fallback;
       };
       
-      // Query 설정값 전달
-      formData.append('chunk_size', safeNum(settingStore.queryChunk, 10));
-      formData.append('top_k', safeNum(settingStore.queryTopk, 80));
-      formData.append('top_p', safeNum(settingStore.queryTopp, 1.0));
-      formData.append('temperature', safeNum(settingStore.queryTemp, 0.3));
-      formData.append('max_new_tokens', safeNum(settingStore.queryMaxTokens, 1024));
-      formData.append('seed', safeNum(settingStore.querySeed, 42));
+      // 공통 파라미터 전달 (query와 summarize 구분 없이 통일)
+      formData.append('chunk_size', safeNum(settingStore.searchChunk, 10));
+      formData.append('top_k', safeNum(settingStore.searchTopK, 80));
+      formData.append('top_p', safeNum(settingStore.searchTopP, 1.0));
+      formData.append('temperature', safeNum(settingStore.searchTemperature, 0.3));
+      formData.append('max_new_tokens', safeNum(settingStore.searchMaxTokens, 1024));
+      formData.append('seed', safeNum(settingStore.searchSeed, 42));
       
-      // Summarize 설정값 전달
-      formData.append('summarize_chunk_duration', safeNum(settingStore.summarizeChunk, 0));
-      formData.append('summarize_top_k', safeNum(settingStore.summarizeTopk, 80));
-      formData.append('summarize_top_p', safeNum(settingStore.summarizeTopp, 1.0));
-      formData.append('summarize_temperature', safeNum(settingStore.summarizeTemp, 0.4));
-      formData.append('summarize_max_new_tokens', safeNum(settingStore.summarizeMaxTokens, 512));
-      formData.append('summarize_seed', safeNum(settingStore.summarizeSeed, 1));
+      // Summarize 전용 파라미터 전달
       formData.append('summarize_num_frames_per_chunk', safeNum(settingStore.summarizeNumFramesPerChunk, 0));
       formData.append('summarize_frame_width', safeNum(settingStore.summarizeFrameWidth, 1920));
       formData.append('summarize_frame_height', safeNum(settingStore.summarizeFrameHeight, 1080));
@@ -3437,6 +3555,24 @@ async function handleSearch() {
           }))
       );
 
+      // 최적화: 검색 결과가 있는 영상만 식별
+      const videosWithResults = new Set();
+      groupedClipItems.forEach(group => {
+        const hasValidClips = group.clips.some(clip => {
+          if (!clip.url || clip.via_response) return false;
+          if (clip.start_time !== undefined && clip.end_time !== undefined) {
+            if (clip.end_time - clip.start_time <= 0) return false;
+          }
+          return true;
+        });
+        if (hasValidClips) {
+          // video 경로에서 파일명 추출
+          const videoPath = group.video || '';
+          const videoFilename = videoPath.split('/').pop() || videoPath;
+          videosWithResults.add(videoFilename);
+        }
+      });
+
       if (!clips_extracted || validClips.length === 0) {
         // 클립이 추출되지 않았을 경우
         currentChat.messages.push({
@@ -3445,6 +3581,20 @@ async function handleSearch() {
           timestamp: getCurrentTime()
         });
         return;
+      }
+
+      // 최적화: 검색 결과가 있는 영상의 파일만 미리 로드 (나중에 클립 재생을 위해)
+      // 검색 결과가 없는 영상의 파일은 로드하지 않음
+      const videosToPreload = selectedVideos.value.filter(video => {
+        const videoFilename = video.title || video.name || '';
+        return videosWithResults.has(videoFilename);
+      });
+      
+      // 백그라운드에서 검색 결과가 있는 영상의 파일만 로드 (비동기, 블로킹하지 않음)
+      if (videosToPreload.length > 0) {
+        Promise.all(videosToPreload.map(video => ensureVideoFile(video))).catch(err => {
+          console.warn('검색 결과 영상 파일 미리 로드 중 오류:', err);
+        });
       }
 
       // 클립이 추출되었을 경우: 클립 동영상과 타임스탬프 표시
@@ -3655,13 +3805,13 @@ async function handleSearch() {
       }
 
       queryFormData.append('query', query);
-      // 상세 검색 설정의 파라미터 사용
-      queryFormData.append('chunk_size', safeNum(settingStore.summarizeChunk, 10));
-      queryFormData.append('top_k', safeNum(settingStore.summarizeTopk, 80));
-      queryFormData.append('top_p', safeNum(settingStore.summarizeTopp, 1.0));
-      queryFormData.append('temperature', safeNum(settingStore.summarizeTemp, 0.4));
-      queryFormData.append('max_new_tokens', safeNum(settingStore.summarizeMaxTokens, 512));
-      queryFormData.append('seed', safeNum(settingStore.summarizeSeed, 1));
+      // 공통 검색 파라미터 사용
+      queryFormData.append('chunk_size', safeNum(settingStore.searchChunk, 10));
+      queryFormData.append('top_k', safeNum(settingStore.searchTopK, 80));
+      queryFormData.append('top_p', safeNum(settingStore.searchTopP, 1.0));
+      queryFormData.append('temperature', safeNum(settingStore.searchTemperature, 0.3));
+      queryFormData.append('max_new_tokens', safeNum(settingStore.searchMaxTokens, 1024));
+      queryFormData.append('seed', safeNum(settingStore.searchSeed, 42));
       
       // 이미지가 업로드된 경우 FormData에 추가
       if (uploadedImage.value) {
@@ -3957,6 +4107,43 @@ function startDragSelect(event) {
     target.closest('.cursor-pointer') && target.closest('.flex.items-center')
   ) {
     return;
+  }
+  
+  // 채팅 영역에서 시작된 드래그는 무시 (텍스트 선택을 위해)
+  if (chatContainer.value && chatContainer.value.contains(target)) {
+    return;
+  }
+  
+  // 텍스트 선택이 가능한 요소에서 시작된 드래그는 무시 (동영상 리스트 영역이 아닌 경우)
+  // 동영상 리스트 영역이 아닌 텍스트 요소에서 시작된 드래그는 무시
+  const isInVideoList = target.closest('.flex.items-center') && target.closest('video') ||
+                        target.closest('[class*="video"]') ||
+                        videoListGridRef.value && videoListGridRef.value.contains(target);
+  
+  if (!isInVideoList) {
+    // 텍스트 요소에서 시작된 드래그는 무시 (텍스트 선택을 위해)
+    if (target.tagName === 'P' || 
+        target.tagName === 'SPAN' || 
+        target.tagName === 'DIV' && !target.closest('.flex.items-center') ||
+        target.tagName === 'LI' ||
+        target.closest('p') ||
+        target.closest('span') ||
+        target.closest('pre') ||
+        target.closest('code') ||
+        target.closest('h1') ||
+        target.closest('h2') ||
+        target.closest('h3') ||
+        target.closest('h4') ||
+        target.closest('h5') ||
+        target.closest('h6')) {
+      // 텍스트 선택을 시도하는 경우 무시
+      const selection = window.getSelection();
+      if (selection && selection.toString().length > 0) {
+        return;
+      }
+      // 텍스트 요소에서 시작된 드래그는 무시 (텍스트 선택을 위해)
+      return;
+    }
   }
   
   isDragSelecting.value = true;
@@ -4577,74 +4764,93 @@ async function processSelectedVideosFromHistory(ignoreIfStateRestored = false) {
       }
     }
     const receivedVideos = history.state.selectedVideos;
-    const mappedVideos = receivedVideos.map(video => ({
-      ...video,
-      id: video.id || video.dbId,
-      dbId: video.dbId || video.id,
-      _isConverting: false // 변환 중 상태 추적
-    }));
     
-    // 동영상 리스트가 비어있는 채팅창 찾기
-    const emptyChatIndex = chatSessions.value.findIndex(chat => 
-      (!chat.videoList || chat.videoList.length === 0) && 
-      (!chat.messages || chat.messages.length === 0)
-    );
-    
-    if (emptyChatIndex !== -1) {
-      // 빈 채팅창이 있으면 해당 채팅창에 동영상 추가
-      const emptyChat = chatSessions.value[emptyChatIndex];
-      
-      // 동영상 리스트 업데이트
-      emptyChat.videoList = mappedVideos.map(v => ({ ...v }));
-      emptyChat.selectedVideoIds = []; // 기본적으로 선택 해제 상태
-      
-      // 현재 채팅창으로 전환
-      currentChatIndex.value = emptyChatIndex;
-      
-      // items와 selectedIds 업데이트 (기본적으로 선택 해제 상태)
-      items.value = mappedVideos;
-      selectedIds.value = [];
-      console.log('[Search] 동영상 리스트 업데이트 완료:', items.value.length, '개');
-      
-      // 상태 저장
-      await nextTick();
-      saveSearchState();
-    } else {
-      // 빈 채팅창이 없으면 동일한 동영상 리스트를 가진 채팅이 있는지 확인
-      const selectionSignature = getSelectionSignature(mappedVideos);
-      const existingChatIndex = chatSessions.value.findIndex(chat => 
-        chat.selectionSignature === selectionSignature
-      );
-      
-      if (existingChatIndex !== -1) {
-        // 동일한 동영상 리스트를 가진 채팅이 있으면 해당 채팅으로 전환
-        currentChatIndex.value = existingChatIndex;
-        const existingChat = chatSessions.value[existingChatIndex];
-        if (existingChat.videoList && Array.isArray(existingChat.videoList)) {
-          items.value = [...existingChat.videoList];
-        } else {
-          items.value = mappedVideos;
+    // 서버에서 최신 동영상 정보 가져오기 (displayUrl 업데이트를 위해)
+    const currentUserId = localStorage.getItem("vss_user_id");
+    let serverVideosMap = new Map();
+    if (currentUserId) {
+      try {
+        const videosResponse = await fetch(`${API_BASE_URL}/videos?user_id=${currentUserId}`);
+        if (videosResponse.ok) {
+          const videosData = await videosResponse.json();
+          if (videosData.success && videosData.videos) {
+            videosData.videos.forEach(v => {
+              if (v.id && v.file_url) {
+                serverVideosMap.set(v.id, v);
+              }
+            });
+          }
         }
-        if (existingChat.selectedVideoIds && Array.isArray(existingChat.selectedVideoIds)) {
-          selectedIds.value = [...existingChat.selectedVideoIds];
-        } else {
-          selectedIds.value = [];
-        }
-      } else {
-        // 동일한 동영상 리스트를 가진 채팅이 없으면 새 채팅 생성
-        createNewChat(mappedVideos, selectionSignature);
+      } catch (error) {
+        console.warn('[Search] 서버에서 동영상 정보 조회 실패:', error);
       }
     }
     
+    // 서버 정보로 displayUrl 업데이트
+    const mappedVideos = receivedVideos.map(video => {
+      const dbId = video.dbId || video.id;
+      const serverVideo = serverVideosMap.get(dbId);
+      
+      // 서버에서 최신 정보를 가져온 경우 displayUrl 업데이트
+      const displayUrl = serverVideo && serverVideo.file_url 
+        ? serverVideo.file_url 
+        : (video.displayUrl || video.originUrl || '');
+      const originUrl = serverVideo && serverVideo.file_url 
+        ? serverVideo.file_url 
+        : (video.originUrl || video.displayUrl || '');
+      
+      return {
+        ...video,
+        id: video.id || video.dbId,
+        dbId: dbId,
+        displayUrl: displayUrl,
+        originUrl: originUrl,
+        title: serverVideo ? (serverVideo.title || video.title) : video.title,
+        date: serverVideo ? (serverVideo.created_at ? serverVideo.created_at.split('T')[0] : video.date) : video.date,
+        fileSize: serverVideo ? (serverVideo.file_size || video.fileSize) : video.fileSize,
+        width: serverVideo ? (serverVideo.width || video.width) : video.width,
+        height: serverVideo ? (serverVideo.height || video.height) : video.height,
+        duration: serverVideo ? (serverVideo.duration || video.duration) : video.duration,
+        videoId: serverVideo ? (serverVideo.video_id || video.videoId) : video.videoId,
+        _isConverting: false // 변환 중 상태 추적
+      };
+    });
+    
+    // 동일한 동영상 리스트를 가진 채팅이 있는지 확인
+    const selectionSignature = getSelectionSignature(mappedVideos);
+    const existingChatIndex = chatSessions.value.findIndex(chat => 
+      chat.selectionSignature === selectionSignature
+    );
+    
+    if (existingChatIndex !== -1) {
+      // 동일한 동영상 리스트를 가진 채팅이 있으면 해당 채팅으로 이동 (새 채팅 생성하지 않음)
+      console.log('[Search] 동일한 동영상 리스트를 가진 채팅 발견, 해당 채팅으로 이동');
+      currentChatIndex.value = existingChatIndex;
+      const existingChat = chatSessions.value[existingChatIndex];
+      if (existingChat.videoList && Array.isArray(existingChat.videoList)) {
+        items.value = [...existingChat.videoList];
+      } else {
+        items.value = mappedVideos;
+      }
+      if (existingChat.selectedVideoIds && Array.isArray(existingChat.selectedVideoIds)) {
+        selectedIds.value = [...existingChat.selectedVideoIds];
+      } else {
+        selectedIds.value = [];
+      }
+    } else {
+      // 동일한 동영상 리스트를 가진 채팅이 없으면 새 채팅 생성
+      console.log('[Search] 동일한 동영상 리스트를 가진 채팅이 없음, 새 채팅 생성');
+      createNewChat(mappedVideos, selectionSignature);
+    }
+    
     // 지원하지 않는 형식의 동영상 변환 체크
-    const userId = localStorage.getItem("vss_user_id");
-    if (userId) {
+    if (currentUserId) {
       const checkUnsupportedVideos = () => {
         mappedVideos.forEach((video) => {
           if (isUnsupportedFormat(video.title || '')) {
             const videoObj = items.value.find(v => v.id === video.id);
             if (videoObj) {
-              convertVideoToMp4(video.dbId || video.id, userId, videoObj).catch(err => {
+              convertVideoToMp4(video.dbId || video.id, currentUserId, videoObj).catch(err => {
                 console.warn(`동영상 변환 실패 (${video.title}):`, err);
               });
             }
@@ -4672,11 +4878,26 @@ async function processSelectedVideosFromHistory(ignoreIfStateRestored = false) {
   return false; // 동영상이 처리되지 않았음을 반환
 }
 
+// 샘플 검색어 선택 함수
+const selectSampleQuery = (query) => {
+  searchInput.value = query;
+  showStarTooltip.value = false;
+};
+
+// 외부 클릭 시 별 아이콘 말풍선 닫기
+const handleClickOutside = (event) => {
+  if (starTooltipRef.value && !starTooltipRef.value.contains(event.target)) {
+    showStarTooltip.value = false;
+  }
+};
+
 onMounted(async () => {
   console.log('[Search] onMounted 호출, history.state:', history.state);
   
   // 전체 화면에서 드래그 선택 시작 가능하도록 document 레벨 이벤트 리스너 추가
   document.addEventListener('mousedown', startDragSelect);
+  // 외부 클릭 감지를 위한 이벤트 리스너 추가
+  document.addEventListener('click', handleClickOutside);
   
   // history.state.selectedVideos 확인 함수
   const checkHistoryState = async () => {
@@ -4694,46 +4915,55 @@ onMounted(async () => {
     hasHistoryVideos = await checkHistoryState();
   }
   
-  let videosProcessed = false;
-  if (hasHistoryVideos) {
-    // history.state.selectedVideos가 있으면 먼저 처리 (DB 상태 복원 전)
-    console.log('[Search] history.state.selectedVideos 처리 시작');
-    videosProcessed = await processSelectedVideosFromHistory(false);
-    console.log('[Search] videosProcessed:', videosProcessed);
-  } else {
-    console.log('[Search] history.state.selectedVideos가 없습니다');
-  }
-  
-  // history.state.selectedVideos가 없거나 처리되지 않은 경우에만 DB에서 상태 복원 시도
-  if (!videosProcessed) {
+  // 먼저 기존 저장된 상태를 복원 (history.state.selectedVideos가 있어도 먼저 복원)
+  // 이렇게 하면 기존 채팅 세션이 먼저 복원되고, 그 후에 새 동영상이 적절히 처리됨
+  if (chatSessions.value.length === 0) {
+    console.log('[Search] onMounted: 채팅 세션이 없음, 상태 복원 시도');
     const dbStateRestored = await loadSearchStateFromDB();
-    
-    // DB에서 복원되지 않았으면 localStorage에서 복원 시도
     const stateRestored = dbStateRestored || loadSearchState();
     
-    if (!stateRestored) {
-      // 상태가 복원되지 않았고 라우터 state도 없으면 초기 채팅 세션 생성
-      if (chatSessions.value.length === 0) {
-        if (items.value.length > 0) {
-          const selectionSignature = getSelectionSignature(items.value);
-          createNewChat(items.value, selectionSignature);
-        } else {
-          createNewChat([], 'none');
-        }
+    if (stateRestored) {
+      console.log('[Search] onMounted: 상태 복원 성공, 채팅 세션 수:', chatSessions.value.length);
+    } else {
+      console.log('[Search] onMounted: 상태 복원 실패');
+    }
+  } else {
+    console.log('[Search] onMounted: 기존 채팅 세션 존재, 채팅 세션 수:', chatSessions.value.length);
+  }
+  
+  // history.state.selectedVideos가 있으면 처리 (management.vue에서 검색 버튼 클릭 시)
+  // 이 경우 기존 상태를 덮어쓰지 않고, 기존 채팅에 추가하거나 동일한 채팅으로 전환
+  let videosProcessed = false;
+  if (hasHistoryVideos) {
+    console.log('[Search] onMounted: history.state.selectedVideos 처리 시작, 현재 채팅 세션 수:', chatSessions.value.length);
+    videosProcessed = await processSelectedVideosFromHistory(false);
+    console.log('[Search] onMounted: videosProcessed:', videosProcessed, ', 현재 채팅 세션 수:', chatSessions.value.length);
+  } else {
+    console.log('[Search] onMounted: history.state.selectedVideos가 없습니다');
+  }
+  
+  // history.state.selectedVideos가 없거나 처리되지 않은 경우, 그리고 채팅 세션이 여전히 없는 경우 초기 채팅 세션 생성
+  if (!videosProcessed && chatSessions.value.length === 0) {
+    console.log('[Search] onMounted: 채팅 세션이 없고 videosProcessed도 false, 초기 채팅 세션 생성');
+    if (items.value.length > 0) {
+      const selectionSignature = getSelectionSignature(items.value);
+      createNewChat(items.value, selectionSignature);
+    } else {
+      createNewChat([], 'none');
+    }
+  } else if (!videosProcessed && chatSessions.value.length > 0) {
+    // 채팅 세션이 있으면 현재 채팅의 동영상 리스트 복원
+    const currentChat = chatSessions.value[currentChatIndex.value];
+    if (currentChat) {
+      if (currentChat.videoList && Array.isArray(currentChat.videoList)) {
+        items.value = [...currentChat.videoList];
       } else {
-        const currentChat = chatSessions.value[currentChatIndex.value];
-        if (currentChat) {
-          if (currentChat.videoList && Array.isArray(currentChat.videoList)) {
-            items.value = [...currentChat.videoList];
-          } else {
-            items.value = [];
-          }
-          if (currentChat.selectedVideoIds && Array.isArray(currentChat.selectedVideoIds)) {
-            selectedIds.value = [...currentChat.selectedVideoIds];
-          } else {
-            selectedIds.value = [];
-          }
-        }
+        items.value = [];
+      }
+      if (currentChat.selectedVideoIds && Array.isArray(currentChat.selectedVideoIds)) {
+        selectedIds.value = [...currentChat.selectedVideoIds];
+      } else {
+        selectedIds.value = [];
       }
     }
   }
@@ -4763,9 +4993,43 @@ onMounted(async () => {
 // 컴포넌트가 활성화될 때마다 history.state.selectedVideos 확인
 onActivated(async () => {
   console.log('[Search] onActivated 호출, history.state:', history.state);
-  // history.state.selectedVideos가 있으면 항상 처리 (management.vue에서 검색 버튼 클릭 시)
-  // ignoreIfStateRestored를 false로 설정하여 상태 복원 여부와 관계없이 처리
-  await processSelectedVideosFromHistory(false);
+  
+  const hasHistoryVideos = history.state && history.state.selectedVideos && Array.isArray(history.state.selectedVideos) && history.state.selectedVideos.length > 0;
+  
+  // 먼저 기존 저장된 상태를 복원 (history.state.selectedVideos가 있어도 먼저 복원)
+  // 이렇게 하면 기존 채팅 세션이 먼저 복원되고, 그 후에 새 동영상이 적절히 처리됨
+  // 채팅 세션이 없거나 비어있으면 기존 상태 복원 시도
+  if (chatSessions.value.length === 0) {
+    console.log('[Search] onActivated: 채팅 세션이 없음, 상태 복원 시도');
+    const dbStateRestored = await loadSearchStateFromDB();
+    const stateRestored = dbStateRestored || loadSearchState();
+    
+    if (stateRestored) {
+      console.log('[Search] onActivated: 상태 복원 성공, 채팅 세션 수:', chatSessions.value.length);
+    } else {
+      console.log('[Search] onActivated: 상태 복원 실패');
+    }
+    
+    if (!stateRestored && !hasHistoryVideos) {
+      // 상태가 복원되지 않았고 history.state.selectedVideos도 없으면 초기 채팅 세션 생성
+      if (items.value.length > 0) {
+        const selectionSignature = getSelectionSignature(items.value);
+        createNewChat(items.value, selectionSignature);
+      } else {
+        createNewChat([], 'none');
+      }
+    }
+  } else {
+    console.log('[Search] onActivated: 기존 채팅 세션 존재, 채팅 세션 수:', chatSessions.value.length);
+  }
+  
+  // history.state.selectedVideos가 있으면 처리 (management.vue에서 검색 버튼 클릭 시)
+  // 이 경우 기존 상태를 덮어쓰지 않고, 기존 채팅에 추가하거나 동일한 채팅으로 전환
+  if (hasHistoryVideos) {
+    console.log('[Search] onActivated: history.state.selectedVideos 처리 시작, 현재 채팅 세션 수:', chatSessions.value.length);
+    await processSelectedVideosFromHistory(false);
+    console.log('[Search] onActivated: history.state.selectedVideos 처리 완료, 현재 채팅 세션 수:', chatSessions.value.length);
+  }
 });
 
 // Management 메뉴에서 동영상 삭제 시 동기화 (useVideoSync 사용)
@@ -5112,8 +5376,13 @@ onBeforeUnmount(() => {
   if (autoSaveTimeout) {
     clearTimeout(autoSaveTimeout);
   }
+  if (titleCheckDebounceTimer.value) {
+    clearTimeout(titleCheckDebounceTimer.value);
+  }
   window.removeEventListener('beforeunload', handleBeforeUnload);
   window.removeEventListener('visibilitychange', handleVisibilityChange);
+  // 별 아이콘 말풍선 외부 클릭 이벤트 리스너 제거
+  document.removeEventListener('click', handleClickOutside);
   window.removeEventListener('videos-deleted-from-management', handleVideosDeletedFromManagement);
   document.removeEventListener('click', handleClickOutsideContextMenu);
   

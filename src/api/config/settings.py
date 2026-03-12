@@ -67,7 +67,7 @@ ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'}
 ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 FILE_BUFFER_SIZE = 16 * 1024 * 1024  # 16MB (업로드 성능 최적화)
 CLIP_CLEANUP_AGE = 86400  # 클립 파일 정리 기준 시간 (24시간, 초)
-UNSUPPORTED_VIDEO_FORMATS = {'.avi', '.mkv', '.flv', '.wmv'}  # 변환이 필요한 비디오 형식
+UNSUPPORTED_VIDEO_FORMATS = {'.avi', '.mkv', '.flv', '.wmv'}  # 변환이 필요한 비디오 형식 (브라우저 호환성을 위해 .avi도 변환 필요)
 
 # ==================== 타임아웃 설정 ====================
 DEFAULT_VIA_TARGET_RESPONSE_TIME = 2 * 60  # 초
@@ -79,6 +79,8 @@ IP_PATTERN = r'^(\d{1,3}\.){3}\d{1,3}$'
 
 # ==================== 이메일 설정 ====================
 EMAIL_CODE_EXPIRY_MINUTES = 10
+# 회원가입 시 이메일 인증 활성화 여부 (환경 변수로 설정 가능, 기본값: True)
+ENABLE_EMAIL_VERIFICATION = os.getenv("ENABLE_EMAIL_VERIFICATION", "true").lower() == "true"
 
 # ==================== VIA 서버 요약 기본 설정 ====================
 #DEFAULT_SUMMARIZE_PROMPT = "You are a video monitoring system. Analyze the video frame by frame and identify all meaningful events. For each event, output in the format START_TIME-END_TIME=Detailed Event Description using seconds for timestamps. Each event must be on a separate line with no text before or after the timestamp-event pairs. Describe events chronologically from initial state through actions to final outcome. Include specific details about human behavior (movements, directions, posture changes, gestures, object interactions, person-to-person interactions, facial expressions if visible), environmental context (location type, background elements, weather, lighting, spatial relationships, time of day), and scene changes (objects appearing/disappearing, doors opening/closing). Focus on events involving human activity, movement, or interaction that are relevant for security or monitoring. Be precise and specific, use active voice and present tense, include quantitative details when possible, and distinguish between multiple people. For overlapping events, create separate entries. Each description must be self-contained and focus on observable facts. Output only timestamp-event pairs in the specified format."

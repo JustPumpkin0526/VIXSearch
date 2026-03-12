@@ -8,6 +8,7 @@ import logging
 import aiohttp
 from typing import Optional, List
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, Request, File, Form, UploadFile, HTTPException, Query, Body
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -17,7 +18,8 @@ from services.video_service import _save_summary_to_db
 from utils.helpers import (
     ensure_vss_client, get_via_model, get_recommended_chunk_size,
     create_summarize_prompt, build_query_prompt, build_summarize_params,
-    build_query_video_params, get_session, translate_to_korean, check_video_type
+    build_query_video_params, get_session, translate_to_korean, check_video_type,
+    get_text_embedding, cosine_similarity, translate_to_english
 )
 from utils.video_utils import parse_timestamps
 from config.settings import (
@@ -124,19 +126,14 @@ async def generate_clips(
     prompt: str = Form(...),
     user_id: Optional[str] = Form(None),
     video_ids: Optional[str] = Form(None),  # JSON 문자열로 전달: {"filename1": video_id1, "filename2": video_id2}
+    # 공통 파라미터 (query와 summarize 구분 없이 통일)
     chunk_size: Optional[int] = Form(None),
     top_k: Optional[int] = Form(None),
     top_p: Optional[float] = Form(None),
     temperature: Optional[float] = Form(None),
     max_new_tokens: Optional[int] = Form(None),
     seed: Optional[int] = Form(None),
-    # Summarize 파라미터
-    summarize_chunk_duration: Optional[int] = Form(None),
-    summarize_top_k: Optional[int] = Form(None),
-    summarize_top_p: Optional[float] = Form(None),
-    summarize_temperature: Optional[float] = Form(None),
-    summarize_max_new_tokens: Optional[int] = Form(None),
-    summarize_seed: Optional[int] = Form(None),
+    # Summarize 전용 파라미터
     summarize_num_frames_per_chunk: Optional[int] = Form(None),
     summarize_frame_width: Optional[int] = Form(None),
     summarize_frame_height: Optional[int] = Form(None),
@@ -188,13 +185,20 @@ async def generate_clips(
     # Ensure tmp directory exists
     TMP_DIR.mkdir(exist_ok=True)
     
+    # 임시 파일 추적을 위한 리스트
+    temp_files_to_cleanup = []
+    
     try:
         # video_ids 파싱 (JSON 문자열)
         video_id_map = {}
         if video_ids and user_id:
             try:
                 video_id_map = json.loads(video_ids) if isinstance(video_ids, str) else video_ids
-            except:
+            except json.JSONDecodeError as e:
+                logger.warning(f"video_ids JSON 파싱 실패: {e}, 빈 딕셔너리 사용")
+                video_id_map = {}
+            except Exception as e:
+                logger.warning(f"video_ids 처리 중 오류: {e}, 빈 딕셔너리 사용")
                 video_id_map = {}
         
         via_file_index = await fetch_via_file_index()
@@ -202,6 +206,7 @@ async def generate_clips(
         for upfile in upload_list:
             file_path = os.path.basename(upfile.filename)
             tmp_path = str(TMP_DIR / file_path)
+            temp_files_to_cleanup.append(tmp_path)  # 정리 목록에 추가
 
             await ensure_vss_client()
             model = await get_via_model()
@@ -251,10 +256,18 @@ async def generate_clips(
                     logger.info(f"VIA 서버에 업로드하여 video_id 획득: {video_id}")
 
             video_clips = []
-            # MoviePy에 파일 경로(문자열)로 전달
-            video = VideoFileClip(tmp_path)
-            duration = video.duration or 0
-            logger.info(f"Video duration: {duration} seconds for {tmp_path}")
+            video = None
+            try:
+                # MoviePy에 파일 경로(문자열)로 전달
+                video = VideoFileClip(tmp_path)
+                duration = video.duration or 0
+                logger.info(f"Video duration: {duration} seconds for {tmp_path}")
+            except Exception as video_error:
+                logger.error(f"비디오 파일 로드 실패: {tmp_path}, 오류: {video_error}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"비디오 파일을 로드할 수 없습니다: {file_path}. 오류: {str(video_error)}"
+                )
             
             # chunk_duration 계산
             chunk_duration = await get_recommended_chunk_size(duration)
@@ -318,13 +331,19 @@ async def generate_clips(
                     has_stored_summary = False
 
             if not has_stored_summary:
-                # Summarize 파라미터 설정 (제공되지 않으면 기본값 사용)
-                summarize_chunk = summarize_chunk_duration if summarize_chunk_duration is not None else chunk_duration
-                summarize_top_k_val = summarize_top_k if summarize_top_k is not None else DEFAULT_TOP_K
-                summarize_top_p_val = summarize_top_p if summarize_top_p is not None else DEFAULT_TOP_P
-                summarize_temp_val = summarize_temperature if summarize_temperature is not None else DEFAULT_TEMPERATURE
-                summarize_max_tokens_val = summarize_max_new_tokens if summarize_max_new_tokens is not None else DEFAULT_MAX_TOKENS
-                summarize_seed_val = summarize_seed if summarize_seed is not None else DEFAULT_SEED
+                # 공통 파라미터 사용 (query와 summarize 구분 없이 통일)
+                # chunk_size가 None이거나 -1이면 자동 계산된 chunk_duration 사용 (자동 지정 기능)
+                # chunk_size가 0이면 "Chunk 없음"으로 처리
+                if chunk_size is None or chunk_size == -1:
+                    summarize_chunk = chunk_duration
+                    logger.info(f"자동 지정: chunk_duration={chunk_duration} 사용")
+                else:
+                    summarize_chunk = chunk_size
+                summarize_top_k_val = top_k if top_k is not None else DEFAULT_TOP_K
+                summarize_top_p_val = top_p if top_p is not None else DEFAULT_TOP_P
+                summarize_temp_val = temperature if temperature is not None else DEFAULT_TEMPERATURE
+                summarize_max_tokens_val = max_new_tokens if max_new_tokens is not None else DEFAULT_MAX_TOKENS
+                summarize_seed_val = seed if seed is not None else DEFAULT_SEED
                 summarize_nfmc = summarize_num_frames_per_chunk if summarize_num_frames_per_chunk is not None else DEFAULT_NUM_FRAMES_PER_CHUNK
                 summarize_fw = summarize_frame_width if summarize_frame_width is not None else DEFAULT_FRAME_WIDTH
                 summarize_fh = summarize_frame_height if summarize_frame_height is not None else DEFAULT_FRAME_HEIGHT
@@ -421,18 +440,41 @@ async def generate_clips(
             # prompt를 질문으로 처리: VIA 서버의 query_video 사용
             try:
                 enhanced_prompt = await build_query_prompt(prompt)
+                # 영어로 번역된 쿼리 저장 (유사도 계산에 사용)
+                english_query = enhanced_prompt.split("Output matching scenes only as START-END=Description using numeric seconds")[0].strip() if "Output matching scenes only as START-END=Description using numeric seconds" in enhanced_prompt else enhanced_prompt
                 
-                enhanced_prompt = f"""{enhanced_prompt}. Output each match on a new line as START-END=Scene Description using real numeric seconds, in chronological order, with no extra text. Never output the placeholder SS.SSS-SS.SSS. If exact timestamps are unknown, omit that line. Only output scenes that are directly related to the requested content. Do not include scenes that are unrelated to the request. If none match, output nothing."""
+                enhanced_prompt = f"""{enhanced_prompt} Output matching scenes only as START-END=Description using numeric seconds (e.g., 10-20=Description or 10.5-20.3=Description)."""
                 
                 logger.info(f"enhanced_prompt: {enhanced_prompt}")
                 
                 # 설정값이 제공되지 않으면 기본값 사용
-                query_chunk_size = chunk_size if chunk_size is not None else chunk_duration
+                # chunk_size가 None이거나 -1이면 자동 계산된 chunk_duration 사용 (자동 지정 기능)
+                # chunk_size가 0이면 "Chunk 없음"으로 처리
+                if chunk_size is None or chunk_size == -1:
+                    # chunk_duration이 유효한 값인지 확인 (0 이상)
+                    if chunk_duration is None or chunk_duration < 0:
+                        logger.warning(f"chunk_duration이 유효하지 않습니다 ({chunk_duration}). 기본값 0 사용")
+                        query_chunk_size = 0
+                    else:
+                        query_chunk_size = chunk_duration
+                        logger.info(f"자동 지정: chunk_duration={chunk_duration} 사용")
+                else:
+                    query_chunk_size = chunk_size
+                    # chunk_size가 음수이면 0으로 보정
+                    if query_chunk_size < 0:
+                        logger.warning(f"chunk_size가 음수입니다 ({query_chunk_size}). 0으로 보정")
+                        query_chunk_size = 0
                 query_temperature = temperature if temperature is not None else DEFAULT_QUERY_TEMPERATURE
                 query_seed = seed if seed is not None else DEFAULT_QUERY_SEED
                 query_max_tokens = max_new_tokens if max_new_tokens is not None else DEFAULT_QUERY_MAX_TOKENS
                 query_top_p = top_p if top_p is not None else DEFAULT_QUERY_TOP_P
                 query_top_k = top_k if top_k is not None else DEFAULT_QUERY_TOP_K
+                
+                # temperature가 0이면 완전히 결정론적인 결과를 위해 top_k를 1로 설정
+                # top_k가 1보다 크면 상위 k개 토큰 중에서 샘플링하므로 랜덤성이 발생함
+                if query_temperature == 0.0 and query_top_k > 1:
+                    logger.info(f"temperature=0이므로 결정론적 결과를 위해 top_k를 {query_top_k}에서 1로 변경")
+                    query_top_k = 1
                 
                 query_params = build_query_video_params(
                     video_id=video_id,
@@ -459,53 +501,179 @@ async def generate_clips(
                 
                 # 추출된 타임스탬프를 파싱하여 클립 생성에 사용
                 # query_result는 이미 00:00-00:00=장면 설명 형태로 출력됨
-                timestamp_data = []
+                # "=" 다음에 "No"로 시작하는 줄은 클립 생성에서 제외
+                filtered_query_result = None
                 if query_result:
-                    timestamp_data = await parse_timestamps(query_result, duration)
+                    lines = str(query_result).split('\n')
+                    filtered_lines = []
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        # "=" 다음 부분이 "No"로 시작하는지 확인 (대소문자 구분 없음)
+                        if '=' in line:
+                            parts = line.split('=', 1)
+                            if len(parts) == 2:
+                                description = parts[1].strip()
+                                if description.lower().startswith('no '):
+                                    logger.info(f"'No'로 시작하는 결과 제외: {line}")
+                                    continue
+                        filtered_lines.append(line)
                     
-                # 타임스탬프 기반 클립 생성
+                    if filtered_lines:
+                        filtered_query_result = '\n'.join(filtered_lines)
+                    else:
+                        filtered_query_result = None
+                
+                timestamp_data = []
+                if filtered_query_result:
+                    timestamp_data = await parse_timestamps(filtered_query_result, duration)
+                    
+                # 타임스탬프 기반 클립 생성 (최적화: 병렬 처리)
                 base_name, _ = os.path.splitext(file_path)
                 timestamp_suffix = int(time.time() * 1000)
+                base = str(request.base_url).rstrip('/')
                 
                 if timestamp_data:
-                    clip_index = 0
+                    # 유효한 타임스탬프만 필터링
+                    # 타임스탬프가 유효한 숫자인지 확인 (SS.000 같은 잘못된 형식 제외)
+                    valid_timestamps = []
                     for start_time, end_time, sentence in timestamp_data:
-                        if end_time - start_time <= 0:
-                            logger.warning(f"타임스탬프 간격이 0초 이하인 클립을 건너뜁니다: {start_time} - {end_time}")
-                            continue
+                        # 타임스탬프가 숫자 타입이고 유효한 범위 내에 있는지 확인
+                        if (isinstance(start_time, (int, float)) and isinstance(end_time, (int, float)) and
+                            start_time >= 0 and end_time >= 0 and
+                            end_time - start_time > 0 and
+                            start_time < end_time):
+                            valid_timestamps.append((start_time, end_time, sentence))
+                        else:
+                            logger.warning(f"유효하지 않은 타임스탬프 제외: start={start_time}, end={end_time}, sentence={sentence}")
+                    
+                    if not valid_timestamps:
+                        logger.warning("유효한 타임스탬프가 없습니다.")
+                    else:
+                        logger.info(f"클립 생성 시작: {len(valid_timestamps)}개 클립 (병렬 처리)")
                         
-                        # sentence를 한국어로 변환
-                        translated_sentence = sentence
-                        if sentence and sentence.strip():
+                        # 1. 번역 작업 병렬 처리 (모든 sentence를 동시에 번역)
+                        sentences_to_translate = []
+                        for _, _, sentence in valid_timestamps:
+                            if sentence and sentence.strip():
+                                sentences_to_translate.append(sentence)
+                        
+                        translated_sentences = {}
+                        
+                        if sentences_to_translate:
+                            logger.info(f"번역 작업 시작: {len(sentences_to_translate)}개 문장 병렬 처리")
+                            translation_tasks = [translate_to_korean(sentence) for sentence in sentences_to_translate]
                             try:
-                                translated_sentence = await translate_to_korean(sentence)
+                                translated_results = await asyncio.gather(*translation_tasks, return_exceptions=True)
+                                for sentence, translated in zip(sentences_to_translate, translated_results):
+                                    if isinstance(translated, Exception):
+                                        logger.warning(f"sentence 한국어 번역 실패, 원본 사용: {translated}")
+                                        translated_sentences[sentence] = sentence
+                                    else:
+                                        translated_sentences[sentence] = translated
                             except Exception as e:
-                                logger.warning(f"sentence 한국어 번역 실패, 원본 사용: {e}")
-                                translated_sentence = sentence
+                                logger.warning(f"번역 작업 중 오류 발생: {e}, 원본 사용")
+                                for sentence in sentences_to_translate:
+                                    translated_sentences[sentence] = sentence
                         
-                        clip_filename = f"clip_{base_name}_{timestamp_suffix}_{clip_index+1}.mp4"
-                        clip_path = str(CLIPS_DIR / clip_filename)
-                        try:
-                            _get_subclip(video, start_time, end_time).write_videofile(
-                                clip_path,
-                                codec="libx264",
-                                audio=False
-                            )
-                            base = str(request.base_url).rstrip('/')
-                            clip_url = f"{base}/clips/{clip_filename}"
-                            video_clips.append({
-                                "id": f"{base_name}_{timestamp_suffix}_{clip_index}",
-                                "title": clip_filename,
-                                "url": clip_url,
-                                "start_time": start_time,
-                                "end_time": end_time,
-                                "search_query": prompt,
-                                "sentence": translated_sentence  # 한국어로 번역된 장면 설명 사용
-                            })
-                            clip_index += 1
-                        except Exception as e:
-                            logger.error(f"Error generating clip {clip_filename}: {e}")
-                        time.sleep(0.5)
+                        # 번역이 필요 없는 sentence도 매핑에 추가
+                        for _, _, sentence in valid_timestamps:
+                            if sentence not in translated_sentences:
+                                translated_sentences[sentence] = sentence
+                        
+                        # 2. 클립 생성 함수 (동기 함수를 비동기로 래핑)
+                        # 각 스레드에서 비디오 파일을 새로 열어야 함 (MoviePy는 스레드 안전하지 않음)
+                        def create_clip_sync(start_time, end_time, sentence, clip_index):
+                            """동기 클립 생성 함수 - 각 스레드에서 비디오 파일을 새로 엽니다"""
+                            clip_filename = f"clip_{base_name}_{timestamp_suffix}_{clip_index+1}.mp4"
+                            subclip = None
+                            local_video = None
+                            try:
+                                clip_path = str(CLIPS_DIR / clip_filename)
+                                
+                                # 각 스레드에서 비디오 파일을 새로 열기 (스레드 안전성 보장)
+                                local_video = VideoFileClip(tmp_path)
+                                
+                                # 비디오 클립 추출 및 저장 (최적화: 빠른 프리셋 사용)
+                                subclip = _get_subclip(local_video, start_time, end_time)
+                                subclip.write_videofile(
+                                    clip_path,
+                                    codec="libx264",
+                                    audio=False,
+                                    preset="ultrafast",  # 최적화: 빠른 인코딩
+                                    threads=4,  # 최적화: 멀티스레딩
+                                    logger=None  # 로그 비활성화로 성능 향상
+                                )
+                                
+                                clip_url = f"{base}/clips/{clip_filename}"
+                                translated_sentence = translated_sentences.get(sentence, sentence)
+                                
+                                result = {
+                                    "id": f"{base_name}_{timestamp_suffix}_{clip_index}",
+                                    "title": clip_filename,
+                                    "url": clip_url,
+                                    "start_time": start_time,
+                                    "end_time": end_time,
+                                    "search_query": prompt,
+                                    "sentence": translated_sentence
+                                }
+                                
+                                return result
+                            except Exception as e:
+                                logger.error(f"Error generating clip {clip_filename}: {e}")
+                                return None
+                            finally:
+                                # subclip 리소스 정리
+                                if subclip is not None:
+                                    try:
+                                        subclip.close()
+                                        import time
+                                        time.sleep(0.1)  # Windows에서 파일 핸들 해제 대기
+                                    except Exception as close_error:
+                                        logger.warning(f"Subclip 리소스 정리 중 오류: {close_error}")
+                                    finally:
+                                        del subclip
+                                # local_video 리소스 정리
+                                if local_video is not None:
+                                    try:
+                                        local_video.close()
+                                        import time
+                                        time.sleep(0.1)  # Windows에서 파일 핸들 해제 대기
+                                    except Exception as close_error:
+                                        logger.warning(f"Local video 리소스 정리 중 오류: {close_error}")
+                                    finally:
+                                        del local_video
+                        
+                        # 3. 클립 생성 병렬 처리 (ThreadPoolExecutor 사용)
+                        max_workers = min(5, len(valid_timestamps))  # 최대 5개 동시 처리
+                        logger.info(f"클립 생성 병렬 처리 시작: {max_workers}개 동시 처리")
+                        
+                        loop = asyncio.get_event_loop()
+                        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                            clip_tasks = [
+                                loop.run_in_executor(
+                                    executor,
+                                    create_clip_sync,
+                                    start_time,
+                                    end_time,
+                                    sentence,
+                                    idx
+                                )
+                                for idx, (start_time, end_time, sentence) in enumerate(valid_timestamps)
+                            ]
+                            
+                            # 모든 클립 생성 완료 대기
+                            clip_results = await asyncio.gather(*clip_tasks, return_exceptions=True)
+                            
+                            # 성공한 클립만 추가
+                            for result in clip_results:
+                                if isinstance(result, Exception):
+                                    logger.error(f"클립 생성 중 예외 발생: {result}")
+                                elif result is not None:
+                                    video_clips.append(result)
+                        
+                        logger.info(f"클립 생성 완료: {len(video_clips)}개 성공")
                 else:
                     logger.warning(f"타임스탬프를 찾을 수 없습니다. 검색어: '{prompt}'. VIA 서버 답변을 반환합니다.")
                     video_clips.append({
@@ -526,18 +694,205 @@ async def generate_clips(
                     detail=f"검색 실패: VIA 서버에서 장면 검색 중 오류가 발생했습니다. ({str(via_error)})"
                 )
             finally:
-                video.close()
-                del video
+                # 비디오 리소스 정리 (Windows에서 파일 잠금 해제를 위해 충분한 시간 확보)
+                if video is not None:
+                    try:
+                        video.close()
+                        # Windows에서 파일 핸들이 완전히 해제될 때까지 대기
+                        await asyncio.sleep(0.5)
+                    except Exception as close_error:
+                        logger.warning(f"비디오 리소스 정리 중 오류: {close_error}")
+                    finally:
+                        del video
+                        # 추가 가비지 컬렉션 대기 (Windows 파일 잠금 해제)
+                        await asyncio.sleep(0.2)
 
             grouped_clips.append({
                 "video": file_path,
                 "clips": video_clips
             })
 
+    except HTTPException:
+        # HTTPException은 그대로 전파
+        raise
     except Exception as e:
-        logger.error(f"Error processing uploaded video(s): {e}")
+        logger.error(f"Error processing uploaded video(s): {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing uploaded video(s): {e}")
+    finally:
+        # 임시 파일 정리 (재시도 로직 포함)
+        async def safe_delete_file(file_path: str, max_retries: int = 5, delay: float = 1.5):
+            """파일 삭제를 안전하게 재시도하는 함수 (Windows 파일 잠금 문제 대응)"""
+            for attempt in range(max_retries):
+                try:
+                    if os.path.exists(file_path):
+                        # Windows에서 파일이 사용 중일 수 있으므로 대기 후 시도
+                        if attempt > 0:
+                            # 재시도 횟수가 많을수록 더 오래 대기 (1.5초, 3초, 4.5초, 6초)
+                            await asyncio.sleep(delay * attempt)
+                        os.unlink(file_path)
+                        logger.debug(f"임시 파일 삭제 완료: {file_path}")
+                        return True
+                except (PermissionError, OSError) as e:
+                    # WinError 32는 OSError의 하위 클래스이므로 OSError도 처리
+                    error_code = getattr(e, 'winerror', None) or getattr(e, 'errno', None)
+                    # WinError 32: 파일이 다른 프로세스에 의해 사용 중
+                    if error_code == 32 or (isinstance(e, OSError) and "사용 중" in str(e)):
+                        if attempt < max_retries - 1:
+                            logger.debug(f"임시 파일 삭제 재시도 {attempt + 1}/{max_retries}: {file_path} (파일 사용 중)")
+                            continue
+                        else:
+                            logger.warning(f"임시 파일 삭제 실패 (최대 재시도 횟수 초과): {file_path}, 오류: {e}")
+                            # 파일이 사용 중이면 나중에 정리하도록 스케줄링 (백그라운드 작업)
+                            # Windows에서는 파일이 잠겨있을 수 있으므로 경고만 남기고 계속 진행
+                            return False
+                    else:
+                        # 다른 종류의 PermissionError나 OSError는 즉시 실패 처리
+                        logger.warning(f"임시 파일 삭제 실패: {file_path}, 오류: {e}")
+                        return False
+                except Exception as cleanup_error:
+                    logger.warning(f"임시 파일 삭제 실패: {file_path}, 오류: {cleanup_error}")
+                    return False
+            return False
+        
+        # 모든 임시 파일 삭제 시도
+        for tmp_file in temp_files_to_cleanup:
+            await safe_delete_file(tmp_file)
 
+    # 검색 결과와 질문 간의 유사도 필터링 (VERT/Ollama 임베딩 사용)
+    # TODO: 유사도 필터링 기능 임시 비활성화
+    """
+    if grouped_clips and len(grouped_clips) > 0:
+        logger.info(f"유사도 필터링 시작: {len(grouped_clips)}개 동영상의 검색 결과")
+        filtered_grouped_clips = []
+        similarity_threshold = 0.3  # 유사도 임계값 (0.0 ~ 1.0, 이하인 것만 포함)
+        
+        # 영어로 번역된 질문의 임베딩 생성 (한 번만 계산)
+        query_embedding = None
+        english_query_for_similarity = None
+        try:
+            # 검색 쿼리를 영어로 번역 (유사도 계산용)
+            english_query_for_similarity = await build_query_prompt(prompt)
+            # "Output matching scenes only..." 부분 제거
+            if "Output matching scenes only as START-END=Description using numeric seconds" in english_query_for_similarity:
+                english_query_for_similarity = english_query_for_similarity.split("Output matching scenes only as START-END=Description using numeric seconds")[0].strip()
+            query_embedding = await get_text_embedding(english_query_for_similarity)
+            if query_embedding:
+                logger.info(f"영어로 번역된 질문 임베딩 생성 완료: {english_query_for_similarity[:50]}...")
+        except Exception as e:
+            logger.warning(f"질문 임베딩 생성 실패, 유사도 필터링 건너뜀: {e}")
+        
+        if query_embedding:
+            total_clips_before = sum(len(group.get("clips", [])) for group in grouped_clips)
+            filtered_count = 0
+            
+            for group in grouped_clips:
+                video_path = group.get("video", "")
+                # 비디오 파일명 추출
+                video_filename = os.path.basename(video_path) if video_path else "알 수 없음"
+                
+                video_clips = group.get("clips", [])
+                if not video_clips:
+                    filtered_grouped_clips.append(group)
+                    continue
+                
+                filtered_clips = []
+                # 각 클립의 sentence와 질문 간 유사도 계산
+                similarity_tasks = []
+                for clip in video_clips:
+                    # sentence 필드가 있는 경우에만 유사도 계산
+                    sentence = clip.get("sentence") or clip.get("title") or ""
+                    if sentence and not clip.get("via_response"):
+                        similarity_tasks.append((clip, sentence))
+                    else:
+                        # sentence가 없거나 via_response인 경우는 그대로 포함
+                        filtered_clips.append(clip)
+                
+                # 유사도 계산 (병렬 처리)
+                if similarity_tasks:
+                    logger.info(f"[{video_filename}] 유사도 계산 중: {len(similarity_tasks)}개 클립")
+                    # 모든 sentence를 영어로 번역한 후 임베딩 생성 (병렬 처리)
+                    translation_tasks = [translate_to_english(sentence) for _, sentence in similarity_tasks]
+                    english_sentences = await asyncio.gather(*translation_tasks, return_exceptions=True)
+                    
+                    # 영어로 번역된 sentence의 임베딩을 병렬로 생성
+                    embedding_tasks = []
+                    for idx, english_sentence in enumerate(english_sentences):
+                        if isinstance(english_sentence, Exception):
+                            # 번역 실패 시 원본 sentence 사용
+                            original_sentence = similarity_tasks[idx][1]
+                            embedding_tasks.append(get_text_embedding(original_sentence))
+                        else:
+                            embedding_tasks.append(get_text_embedding(english_sentence))
+                    sentence_embeddings = await asyncio.gather(*embedding_tasks, return_exceptions=True)
+                    
+                    similarity_results = []
+                    for idx, ((clip, sentence), sentence_embedding) in enumerate(zip(similarity_tasks, sentence_embeddings)):
+                        try:
+                            if isinstance(sentence_embedding, Exception):
+                                logger.warning(f"[{video_filename}] 클립 임베딩 생성 실패: {sentence_embedding}, 클립 포함")
+                                similarity_results.append((clip, 0.5))
+                            elif sentence_embedding:
+                                similarity = cosine_similarity(query_embedding, sentence_embedding)
+                                similarity_results.append((clip, similarity))
+                            else:
+                                # 임베딩 생성 실패 시 포함 (안전 장치)
+                                similarity_results.append((clip, 0.5))
+                        except Exception as e:
+                            logger.warning(f"[{video_filename}] 클립 유사도 계산 실패: {e}, 클립 포함")
+                            similarity_results.append((clip, 0.5))
+                    
+                    # 비디오별 유사도 점수 출력
+                    if similarity_results:
+                        similarities = [sim for _, sim in similarity_results]
+                        avg_similarity = sum(similarities) / len(similarities) if similarities else 0.0
+                        max_similarity = max(similarities) if similarities else 0.0
+                        min_similarity = min(similarities) if similarities else 0.0
+                        logger.info(f"[{video_filename}] 유사도 점수 - 평균: {avg_similarity:.3f}, 최대: {max_similarity:.3f}, 최소: {min_similarity:.3f}, 클립 수: {len(similarity_results)}")
+                        
+                        # 각 클립별 유사도 점수 출력
+                        for idx, (clip, similarity) in enumerate(similarity_results):
+                            sentence_preview = (clip.get("sentence") or clip.get("title") or "")[:50]
+                            # 영어로 번역된 sentence도 출력 (디버깅용)
+                            if idx < len(english_sentences) and not isinstance(english_sentences[idx], Exception):
+                                english_preview = english_sentences[idx][:50] if english_sentences[idx] else ""
+                                logger.info(f"  - 유사도: {similarity:.3f} | 원문: {sentence_preview}... | 영문: {english_preview}...")
+                            else:
+                                logger.info(f"  - 유사도: {similarity:.3f} | {sentence_preview}...")
+                    
+                    # 유사도가 임계값 이하인 클립만 포함
+                    included_count = 0
+                    excluded_count = 0
+                    for clip, similarity in similarity_results:
+                        if similarity <= similarity_threshold:
+                            filtered_clips.append(clip)
+                            included_count += 1
+                        else:
+                            filtered_count += 1
+                            excluded_count += 1
+                            logger.debug(f"[{video_filename}] 유사도 높은 클립 제외: similarity={similarity:.3f}, sentence={clip.get('sentence', '')[:50]}...")
+                    
+                    logger.info(f"[{video_filename}] 필터링 결과 - 포함: {included_count}개, 제외: {excluded_count}개 (임계값 이하: {similarity_threshold})")
+                
+                if filtered_clips:
+                    filtered_grouped_clips.append({
+                        "video": group.get("video"),
+                        "clips": filtered_clips
+                    })
+                else:
+                    # 모든 클립이 필터링된 경우 빈 리스트로 추가
+                    logger.info(f"[{video_filename}] 모든 클립이 필터링되어 제외됨")
+                    filtered_grouped_clips.append({
+                        "video": group.get("video"),
+                        "clips": []
+                    })
+            
+            total_clips_after = sum(len(group.get("clips", [])) for group in filtered_grouped_clips)
+            logger.info(f"유사도 필터링 완료: {total_clips_before}개 → {total_clips_after}개 클립 ({filtered_count}개 제외)")
+            grouped_clips = filtered_grouped_clips
+        else:
+            logger.warning("질문 임베딩 생성 실패로 유사도 필터링을 건너뜁니다.")
+    """
+    
     # 클립 추출 여부 확인
     clips_extracted = False
     for group in grouped_clips:
@@ -579,19 +934,30 @@ async def vss_query(
     model = await get_via_model()
     from utils.helpers import vss_client
 
-    if file and not video_id:
-        TMP_DIR.mkdir(exist_ok=True)
-        file_path = str(TMP_DIR / file.filename)
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        video_id = await vss_client.upload_video(file_path)
-        
-        logger.info(
-            "[CA-RAG DEBUG] 파일 업로드 완료: video_id=%s",
-            video_id
-        )
-    elif not video_id:
-        raise HTTPException(status_code=400, detail="video_id 또는 file 중 하나는 필요합니다.")
+    temp_file_path = None
+    try:
+        if file and not video_id:
+            TMP_DIR.mkdir(exist_ok=True)
+            file_path = str(TMP_DIR / file.filename)
+            temp_file_path = file_path
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            video_id = await vss_client.upload_video(file_path)
+            
+            logger.info(
+                "[CA-RAG DEBUG] 파일 업로드 완료: video_id=%s",
+                video_id
+            )
+        elif not video_id:
+            raise HTTPException(status_code=400, detail="video_id 또는 file 중 하나는 필요합니다.")
+    finally:
+        # 임시 파일 정리
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+                logger.debug(f"임시 파일 삭제 완료: {temp_file_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"임시 파일 삭제 실패: {temp_file_path}, 오류: {cleanup_error}")
     
     logger.info(
         "[CA-RAG DEBUG] query_video 호출 전: video_id=%s",
@@ -600,6 +966,13 @@ async def vss_query(
     logger.info(
         "[CA-RAG DEBUG] ⚠️ 이 video_id에 대한 이전 summarize_video 호출 여부 확인 필요"
     )
+    
+    # temperature가 0이면 완전히 결정론적인 결과를 위해 top_k를 1로 설정
+    # top_k가 1보다 크면 상위 k개 토큰 중에서 샘플링하므로 랜덤성이 발생함
+    adjusted_top_k = top_k
+    if temperature == 0.0 and top_k > 1:
+        logger.info(f"temperature=0이므로 결정론적 결과를 위해 top_k를 {top_k}에서 1로 변경")
+        adjusted_top_k = 1
     
     query_params = build_query_video_params(
         video_id=video_id,
@@ -610,14 +983,24 @@ async def vss_query(
         seed=seed,
         max_new_tokens=max_new_tokens,
         top_p=top_p,
-        top_k=top_k
+        top_k=adjusted_top_k
     )
-    result = await vss_client.query_video(*query_params)
     
-    logger.info(
-        "[CA-RAG DEBUG] query_video 호출 완료: 결과 길이=%d",
-        len(result) if result else 0
-    )
+    try:
+        result = await vss_client.query_video(*query_params)
+        
+        logger.info(
+            "[CA-RAG DEBUG] query_video 호출 완료: 결과 길이=%d",
+            len(result) if result else 0
+        )
+    except HTTPException:
+        raise
+    except Exception as query_error:
+        logger.error(f"query_video 호출 실패: {query_error}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"동영상 검색 중 오류가 발생했습니다: {str(query_error)}"
+        )
     
     # "Audio transcript not available." 메시지 처리
     if result and "Audio transcript not available" in str(result):

@@ -1268,7 +1268,8 @@
                               <label class="block text-sm mb-1 text-gray-700 dark:text-gray-300">{{ settingStore.language === 'ko' ? 'Chunk Size' : 'Chunk Size' }}</label>
                               <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">{{ settingStore.language === 'ko' ? '동영상 추론에서 분할 단위를 설정합니다.' : 'Set the chunking unit for video inference.' }}</p>
                                 <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '동영상 추론에서 분할 단위를 설정합니다.' : 'Set the chunking unit for video inference.' }}</p>
-                                <select v-model.number="settingStore.queryChunk" class="border-2 border-blue-300 dark:border-blue-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all">
+                                <select v-model.number="settingStore.searchChunk" class="border-2 border-blue-300 dark:border-blue-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all">
+                                  <option value=-1>{{ settingStore.language === 'ko' ? '자동 지정' : 'Auto' }}</option>
                                   <option value=0>{{ settingStore.language === 'ko' ? 'Chunk 없음' : 'No chunking' }}</option>
                                   <option value=5>5 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
                                   <option value=10>10 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
@@ -1292,8 +1293,8 @@
                               <section class="rounded-lg border border-blue-200 dark:border-blue-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
                                 <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Top-k</h2>
                                 <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '최고 확률 어휘 토큰을 유지할 개수' : 'The number of highest probability vocabulary tokens to keep for top-k-filtering' }}</p>
-                                <input v-model.number="settingStore.queryTopk" type="number" min="1" max="1000" step="1"
-                                  @input="clampQueryValue('queryTopk', 1000, 1)"
+                                <input v-model.number="settingStore.searchTopK" type="number" min="1" max="1000" step="1"
+                                  @input="clampSearchValue('searchTopK', 1000, 1)"
                                   class="border-2 border-blue-300 dark:border-blue-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" />
                               </section>
 
@@ -1301,14 +1302,14 @@
                                 <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Top-p</h2>
                                 <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '텍스트 생성에 사용되는 top-p 샘플링 질량' : 'The top-p sampling mass used for text generation' }}</p>
                                 <div class="flex items-center gap-2 mb-2">
-                                  <input v-model.number="settingStore.queryTopp" type="number" min="0" max="1" step="0.1"
-                                    @input="clampQueryValue('queryTopp', 1, 0)"
+                                  <input v-model.number="settingStore.searchTopP" type="number" min="0" max="1" step="0.1"
+                                    @input="clampSearchValue('searchTopP', 1, 0)"
                                     class="border-2 border-blue-300 dark:border-blue-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" />
-                                  <button class="border-2 border-blue-300 dark:border-blue-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center" @click="resetQueryTopP">↺</button>
+                                  <button class="border-2 border-blue-300 dark:border-blue-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center" @click="resetSearchTopP">↺</button>
                                 </div>
                                 <div class="flex items-center gap-2 h-8">
                                   <span class="text-xs text-gray-400 w-8 text-center">0</span>
-                                  <input v-model.number="settingStore.queryTopp" type="range" min="0" max="1" step="0.05"
+                                <input v-model.number="settingStore.searchTopP" type="range" min="0" max="1" step="0.05"
                                     class="flex-1 border-blue-300 dark:border-blue-600" />
                                   <span class="text-xs text-gray-400 w-8 text-center">1</span>
                                 </div>
@@ -1318,14 +1319,14 @@
                                 <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Temperature</h2>
                                 <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '텍스트 생성에 사용되는 샘플링 온도' : 'The sampling temperature to use for text generation' }}</p>
                                 <div class="flex items-center gap-2 mb-2">
-                                  <input v-model.number="settingStore.queryTemp" type="number" min="0" max="2" step="0.1"
-                                    @input="clampQueryValue('queryTemp', 2, 0)"
+                                  <input v-model.number="settingStore.searchTemperature" type="number" min="0" max="2" step="0.1"
+                                    @input="clampSearchValue('searchTemperature', 2, 0)"
                                     class="border-2 border-blue-300 dark:border-blue-600 w-24 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" />
-                                  <button class="border-2 border-blue-300 dark:border-blue-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center" @click="resetQueryTemperature">↺</button>
+                                  <button class="border-2 border-blue-300 dark:border-blue-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center" @click="resetSearchTemperature">↺</button>
                                 </div>
                                 <div class="flex items-center gap-2 h-8">
                                   <span class="text-xs text-gray-400 w-8 text-center">0</span>
-                                  <input v-model.number="settingStore.queryTemp" type="range" min="0" max="2" step="0.1"
+                                <input v-model.number="settingStore.searchTemperature" type="range" min="0" max="2" step="0.1"
                                     class="flex-1 border-blue-300 dark:border-blue-600" />
                                   <span class="text-xs text-gray-400 w-8 text-center">2</span>
                                 </div>
@@ -1344,10 +1345,10 @@
                                     <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ settingStore.language === 'ko' ? '생성할 최대 토큰 수' : 'The maximum number of tokens to generate' }}</p>
                                   </div>
                                   <div class="flex items-center gap-2">
-                                    <input v-model.number="settingStore.queryMaxTokens" type="number" min="1" max="1024" step="1"
-                                      @input="clampQueryValue('queryMaxTokens', 1024, 1)"
+                                    <input v-model.number="settingStore.searchMaxTokens" type="number" min="1" max="1024" step="1"
+                                      @input="clampSearchValue('searchMaxTokens', 1024, 1)"
                                       class="border-2 border-blue-300 dark:border-blue-600 w-20 text-center rounded-lg px-2 py-2 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" />
-                                    <button class="border-2 border-blue-300 dark:border-blue-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center" @click="resetQueryMaxTokens">↺</button>
+                                    <button class="border-2 border-blue-300 dark:border-blue-600 w-8 h-8 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center" @click="resetSearchMaxTokens">↺</button>
                                   </div>
                                 </div>
                                 <div class="flex items-center gap-2 h-8 mt-3">
@@ -1361,8 +1362,8 @@
                               <section class="rounded-lg border border-blue-200 dark:border-blue-700 px-4 py-4 bg-white dark:bg-gray-800 shadow-sm">
                                 <h2 class="font-semibold mb-2 text-gray-800 dark:text-gray-200 text-base">Seed</h2>
                                 <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ settingStore.language === 'ko' ? '샘플링에 사용할 시드 값' : 'Seed value to use for sampling' }}</p>
-                                <input v-model.number="settingStore.querySeed" type="number" min="1" max="4294967295" step="1"
-                                  @input="clampQueryValue('querySeed', 4294967295, 1)"
+                                <input v-model.number="settingStore.searchSeed" type="number" min="1" max="4294967295" step="1"
+                                  @input="clampSearchValue('searchSeed', 4294967295, 1)"
                                   class="border-2 border-blue-300 dark:border-blue-600 rounded-lg px-4 py-2.5 w-full bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" />
                               </section>
                             </div>
@@ -1449,7 +1450,7 @@ import timeIcon from '@/assets/icons/time.png';
 
 // ==================== 상수 정의 ====================
 const API_BASE_URL = getApiBaseUrl();
-const UNSUPPORTED_VIDEO_FORMATS = ['avi', 'mkv', 'flv', 'wmv'];
+const UNSUPPORTED_VIDEO_FORMATS = ['avi', 'mkv', 'flv', 'wmv']; // 브라우저 호환성을 위해 .avi도 변환 필요
 const MAX_ERROR_RETRIES = 2;
 const UPLOAD_TIMEOUT = 1800000; // 30분
 const CONTEXT_MENU_SIZE = { width: 200, height: 200, margin: 10 };
@@ -3214,8 +3215,8 @@ const showSearchSettingModal = ref(false);
 const showQueryVlmParams = ref(true);
 const showSummarizeVlmParams = ref(true);
 
-// Query 파라미터 값 범위 제한 함수
-function clampQueryValue(paramName, maxValue, minValue = null) {
+// 공통 검색 파라미터 값 범위 제한 함수
+function clampSearchValue(paramName, maxValue, minValue = null) {
   const currentValue = settingStore[paramName];
   if (currentValue > maxValue) {
     settingStore[paramName] = maxValue;
@@ -3224,17 +3225,17 @@ function clampQueryValue(paramName, maxValue, minValue = null) {
   }
 }
 
-// Query 파라미터 리셋 함수들
-function resetQueryTopP() {
-  settingStore.queryTopp = 1.0;
+// 공통 검색 파라미터 리셋 함수들
+function resetSearchTopP() {
+  settingStore.searchTopP = 1.0;
 }
 
-function resetQueryTemperature() {
-  settingStore.queryTemp = 0.3;
+function resetSearchTemperature() {
+  settingStore.searchTemperature = 0.3;
 }
 
-function resetQueryMaxTokens() {
-  settingStore.queryMaxTokens = 1024;
+function resetSearchMaxTokens() {
+  settingStore.searchMaxTokens = 1024;
 }
 
 // Summarize 파라미터 값 범위 제한 함수
@@ -4034,21 +4035,49 @@ async function loadVideosFromStorage() {
       return;
     }
     
-    // file_url이 유효한 동영상만 필터링
-    const validVideos = data.videos.filter(v => v && v.file_url && v.file_url.trim() !== '');
+    // 모든 동영상 처리 (file_url이 비어있어도 포함)
+    const allVideos = data.videos.filter(v => v); // null이 아닌 동영상만 필터링
     
-    if (validVideos.length > 0) {
-      // 동기적으로 비디오 객체 생성 (변환 체크는 나중에)
-      const loadedItems = validVideos.map(v => {
+    if (allVideos.length > 0) {
+      // file_url이 비어있는 동영상 ID 목록 수집
+      const videosNeedingUrl = allVideos.filter(v => !v.file_url || v.file_url.trim() === '').map(v => v.id);
+      
+      // file_url이 비어있는 동영상이 있으면 서버에서 한 번에 조회
+      let urlMap = new Map();
+      if (videosNeedingUrl.length > 0) {
+        try {
+          const videoResponse = await fetch(`${API_BASE_URL}/videos?user_id=${userId}`);
+          if (videoResponse.ok) {
+            const videoData = await videoResponse.json();
+            if (videoData.success && videoData.videos) {
+              videoData.videos.forEach(sv => {
+                if (sv.file_url && sv.file_url.trim() !== '') {
+                  urlMap.set(sv.id, sv.file_url);
+                }
+              });
+            }
+          }
+        } catch (error) {
+          console.warn('동영상 URL 일괄 조회 실패:', error);
+        }
+      }
+      
+      // 비동기로 비디오 객체 생성
+      const loadedItems = allVideos.map(v => {
         // ISO 형식(2026-02-23T11:12:59)에서 날짜만 추출 (2026-02-23)
         const dateValue = v.created_at || v.date || '';
         const dateOnly = dateValue ? (dateValue.includes('T') ? dateValue.split('T')[0] : dateValue) : '';
         
+        // file_url이 비어있으면 urlMap에서 조회, 없으면 원본 file_url 사용
+        const fileUrl = v.file_url && v.file_url.trim() !== '' 
+          ? v.file_url 
+          : (urlMap.get(v.id) || '');
+        
         return createVideoObject({
           id: v.id,
           title: v.title,
-          originUrl: v.file_url,
-          displayUrl: v.file_url,
+          originUrl: fileUrl,
+          displayUrl: fileUrl,
           date: dateOnly,
           fileSize: v.file_size || v.fileSize || null,
           width: v.width || null,
@@ -4059,19 +4088,21 @@ async function loadVideosFromStorage() {
         });
       });
       
+      // file_url이 있는 동영상만 필터링 (최종적으로 URL이 있는 것만 표시)
+      const validItems = loadedItems.filter(item => item.originUrl && item.originUrl.trim() !== '');
+      
       // Vue 반응성 업데이트를 보장하기 위해 nextTick 사용
       await nextTick();
-      items.value = loadedItems;
+      items.value = validItems;
       
       // 지연 로딩: 지원하지 않는 형식의 동영상만 백그라운드에서 변환 체크
       // 초기 로딩 속도를 위해 requestIdleCallback 사용 (또는 setTimeout으로 폴백)
       const checkUnsupportedVideos = () => {
-        validVideos.forEach((v, index) => {
-          if (isUnsupportedFormat(v.title || '')) {
-            const videoObj = loadedItems[index];
+        validItems.forEach((videoObj) => {
+          if (isUnsupportedFormat(videoObj.title || '')) {
             // 비동기로 변환 요청 (완료를 기다리지 않음)
-            convertVideoToMp4(v.id, userId, videoObj).catch(err => {
-              console.warn(`동영상 변환 실패 (${v.title}):`, err);
+            convertVideoToMp4(videoObj.id, userId, videoObj).catch(err => {
+              console.warn(`동영상 변환 실패 (${videoObj.title}):`, err);
             });
           }
         });
@@ -4124,7 +4155,16 @@ async function loadVideosFromStorage() {
 }
 
 function loadFromLocalStorage() {
-  const stored = localStorage.getItem("videoItems");
+  const userId = localStorage.getItem("vss_user_id");
+  if (!userId) {
+    // 사용자 ID가 없으면 빈 배열 반환
+    items.value = [];
+    return;
+  }
+  
+  // 사용자별 localStorage 키 사용
+  const storageKey = `videoItems_${userId}`;
+  const stored = localStorage.getItem(storageKey);
   if (!stored) {
     items.value = [];
     return;
@@ -4172,7 +4212,15 @@ function loadFromLocalStorage() {
 }
 
 function persistToStorage() {
-  localStorage.setItem("videoItems", JSON.stringify(items.value.map(({ id, title, originUrl, displayUrl, date, fileSize, width, height }) => ({ 
+  const userId = localStorage.getItem("vss_user_id");
+  if (!userId) {
+    // 사용자 ID가 없으면 저장하지 않음
+    return;
+  }
+  
+  // 사용자별 localStorage 키 사용
+  const storageKey = `videoItems_${userId}`;
+  localStorage.setItem(storageKey, JSON.stringify(items.value.map(({ id, title, originUrl, displayUrl, date, fileSize, width, height }) => ({ 
     id, 
     title, 
     url: originUrl || displayUrl || '', 
@@ -5301,291 +5349,6 @@ async function collectSelectedFiles() {
     }
   }
   return results;
-}
-
-async function handleSearch() {
-  const query = searchInput.value.trim();
-  if (!query || isSearching.value) return;
-  if (chatSessions.value.length === 0) return;
-
-  const currentChat = chatSessions.value[currentChatIndex.value];
-
-  currentChat.messages.push({
-    content: query,
-    role: "user",
-    timestamp: getCurrentTime()
-  });
-
-  searchInput.value = '';
-  scrollToBottom();
-
-  isSearching.value = true;
-
-  try {
-    const fileEntries = await collectSelectedFiles();
-    if (fileEntries.length === 0) {
-      currentChat.messages.push({
-        role: 'assistant',
-        content: settingStore.language === 'ko' ? '선택된 동영상을 가져오지 못했습니다. 다시 시도해주세요.' : 'Failed to load selected videos. Please try again.',
-        timestamp: getCurrentTime()
-      });
-      return;
-    }
-
-    const userId = localStorage.getItem("vss_user_id");
-    
-    // 파일명과 video_id 매핑 생성
-    const videoIdMap = {};
-    fileEntries.forEach(({ file, video }) => {
-      const dbId = video.dbId || video.id;
-      if (dbId) {
-        videoIdMap[file.name] = dbId;
-      }
-    });
-
-    const formData = new FormData();
-    fileEntries.forEach(({ file }) => {
-      formData.append('files', file, file.name);
-      formData.append('prompt', query);
-    });
-    
-    // user_id와 video_ids 전달 (요약 결과 확인용)
-    if (userId) {
-      formData.append('user_id', userId);
-    }
-    if (Object.keys(videoIdMap).length > 0) {
-      formData.append('video_ids', JSON.stringify(videoIdMap));
-    }
-    
-    // NaN 방지 헬퍼
-    const safeNum = (val, fallback) => {
-      const n = Number(val);
-      return Number.isFinite(n) ? n : fallback;
-    };
-    
-    // Query 설정값 전달
-    formData.append('chunk_size', safeNum(settingStore.queryChunk, 10));
-    formData.append('top_k', safeNum(settingStore.queryTopk, 80));
-    formData.append('top_p', safeNum(settingStore.queryTopp, 1.0));
-    formData.append('temperature', safeNum(settingStore.queryTemp, 0.3));
-    formData.append('max_new_tokens', safeNum(settingStore.queryMaxTokens, 1024));
-    formData.append('seed', safeNum(settingStore.querySeed, 42));
-    
-    // Summarize 설정값 전달
-    formData.append('summarize_chunk_duration', safeNum(settingStore.summarizeChunk, 0));
-    formData.append('summarize_top_k', safeNum(settingStore.summarizeTopk, 80));
-    formData.append('summarize_top_p', safeNum(settingStore.summarizeTopp, 1.0));
-    formData.append('summarize_temperature', safeNum(settingStore.summarizeTemp, 0.4));
-    formData.append('summarize_max_new_tokens', safeNum(settingStore.summarizeMaxTokens, 512));
-    formData.append('summarize_seed', safeNum(settingStore.summarizeSeed, 1));
-    formData.append('summarize_num_frames_per_chunk', safeNum(settingStore.summarizeNumFramesPerChunk, 0));
-    formData.append('summarize_frame_width', safeNum(settingStore.summarizeFrameWidth, 1920));
-    formData.append('summarize_frame_height', safeNum(settingStore.summarizeFrameHeight, 1080));
-    formData.append('summarize_batch_size', safeNum(settingStore.summarizeBatchSize, 6));
-    formData.append('summarize_rag_batch_size', safeNum(settingStore.summarizeRagBatchSize, 1));
-    formData.append('summarize_rag_top_k', safeNum(settingStore.summarizeRagTopK, 5));
-    formData.append('summarize_summarize_top_p', safeNum(settingStore.summarizeSummarizeTopP, 0.7));
-    formData.append('summarize_summarize_temperature', safeNum(settingStore.summarizeSummarizeTemperature, 0.2));
-    formData.append('summarize_summarize_max_tokens', safeNum(settingStore.summarizeSummarizeMaxTokens, 2048));
-    formData.append('summarize_chat_top_p', safeNum(settingStore.summarizeChatTopP, 0.7));
-    formData.append('summarize_chat_temperature', safeNum(settingStore.summarizeChatTemperature, 0.2));
-    formData.append('summarize_chat_max_tokens', safeNum(settingStore.summarizeChatMaxTokens, 2048));
-    formData.append('summarize_notification_top_p', safeNum(settingStore.summarizeNotificationTopP, 0.7));
-    formData.append('summarize_notification_temperature', safeNum(settingStore.summarizeNotificationTemperature, 0.2));
-    formData.append('summarize_notification_max_tokens', safeNum(settingStore.summarizeNotificationMaxTokens, 2048));
-    formData.append('summarize_enable_audio', settingStore.summarizeEnableAudio ? 'true' : 'false');
-
-    // AbortController 생성 및 추적
-    const abortController = new AbortController();
-    abortControllers.value.push(abortController);
-
-    const searchModeResponse = await fetch(`${API_BASE_URL}/check-search-mode`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ query: query })
-    });
-
-    if (!searchModeResponse.ok) {
-      throw new Error(`HTTP error ${searchModeResponse.status}`);
-    }
-
-    const searchMode = await searchModeResponse.json();
-    console.log(searchMode.search_mode);
-
-    // gen_clip 모드: 장면 검색 기능 (기존 로직)
-    if (searchMode.search_mode === "gen_clip") {
-      const response = await fetch(`${API_BASE_URL}/generate-clips`, {
-        method: 'POST',
-        body: formData,
-        signal: abortController.signal
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}`);
-      }
-
-      const data = await response.json();
-      const clips_extracted = data.clips_extracted || false; // 클립 추출 여부
-      const groupedClipItems = (data.clips || []).map(group => ({
-        video: group.video,
-        clips: Array.isArray(group.clips) ? group.clips : []
-      }));
-
-      // 실제 URL이 있는 클립만 필터링 (via_response만 있는 것은 제외)
-      // 타임스탬프 간격이 0초인 클립도 제외
-      const validClips = groupedClipItems.flatMap(group =>
-        group.clips
-          .filter(clip => {
-            // url이 있고 via_response가 없는 것만
-            if (!clip.url || clip.via_response) return false;
-            // 타임스탬프 간격이 0초 이하인 클립 제외
-            if (clip.start_time !== undefined && clip.end_time !== undefined) {
-              if (clip.end_time - clip.start_time <= 0) return false;
-            }
-            return true;
-          })
-          .map(clip => ({
-            ...clip,
-            sourceVideo: group.video
-          }))
-      );
-
-      if (!clips_extracted || validClips.length === 0) {
-        // 클립이 추출되지 않았을 경우
-        currentChat.messages.push({
-          role: 'assistant',
-          content: t.value.noScenes,
-          timestamp: getCurrentTime()
-        });
-        return;
-      }
-
-      // 클립이 추출되었을 경우: 클립 동영상과 타임스탬프 표시
-      const foundMessage = settingStore.language === 'ko' 
-        ? `${groupedClipItems.length}${t.value.foundScenes} ${validClips.length}${t.value.foundClips}`
-        : `${validClips.length} ${t.value.foundClips} from ${groupedClipItems.length} ${t.value.foundScenes}`;
-      currentChat.messages.push({
-        role: 'assistant',
-        content: foundMessage,
-        clips: validClips,
-        groupedClips: groupedClipItems,
-        timestamp: getCurrentTime()
-      });
-    } 
-    // query 모드: Summarize.vue의 onAskConfirmed와 같은 기능
-    else {
-      // NaN 방지 헬퍼
-      const safeNum = (val, fallback) => {
-        const n = Number(val);
-        return Number.isFinite(n) ? n : fallback;
-      };
-
-      // 첫 번째 선택된 동영상 사용
-      const firstVideo = fileEntries[0]?.video;
-      if (!firstVideo) {
-        currentChat.messages.push({
-          role: 'assistant',
-          content: settingStore.language === 'ko' 
-            ? '동영상을 선택해주세요.' 
-            : 'Please select a video.',
-          timestamp: getCurrentTime()
-        });
-        return;
-      }
-
-      // DB에서 VIA 서버의 video_id 조회
-      let serverVideoIdForQuery = null;
-      if (userId && firstVideo.dbId) {
-        try {
-          const videosResponse = await fetch(`${API_BASE_URL}/videos?user_id=${userId}`);
-          if (videosResponse.ok) {
-            const videosData = await videosResponse.json();
-            if (videosData.success && videosData.videos) {
-              const video = videosData.videos.find(v => v.id === firstVideo.dbId);
-              if (video && video.video_id) {
-                serverVideoIdForQuery = video.video_id; // VIA 서버의 video_id
-              }
-            }
-          }
-        } catch (error) {
-          console.warn('VIA video_id 조회 실패:', error);
-        }
-      }
-
-      // query용 FormData 생성
-      const queryFormData = new FormData();
-      
-      if (serverVideoIdForQuery) {
-        queryFormData.append('video_id', serverVideoIdForQuery);
-      } else {
-        // video_id가 없으면 첫 번째 파일 사용
-        const firstFile = fileEntries[0]?.file;
-        if (!firstFile) {
-          currentChat.messages.push({
-            role: 'assistant',
-            content: settingStore.language === 'ko' 
-              ? '동영상 파일을 찾을 수 없습니다. 다시 업로드해주세요.' 
-              : 'Video file not found. Please upload again.',
-            timestamp: getCurrentTime()
-          });
-          return;
-        }
-        queryFormData.append('file', firstFile);
-      }
-
-      queryFormData.append('query', query);
-      queryFormData.append('chunk_size', safeNum(settingStore.queryChunk, 10));
-      queryFormData.append('top_k', safeNum(settingStore.queryTopk, 80));
-      queryFormData.append('top_p', safeNum(settingStore.queryTopp, 1.0));
-      queryFormData.append('temperature', safeNum(settingStore.queryTemp, 0.3));
-      queryFormData.append('max_new_tokens', safeNum(settingStore.queryMaxTokens, 1024));
-      queryFormData.append('seed', safeNum(settingStore.querySeed, 42));
-
-      const response = await fetch(`${API_BASE_URL}/vss-query`, {
-        method: 'POST',
-        body: queryFormData,
-        signal: abortController.signal
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}`);
-      }
-
-      const data = await response.json();
-      const markedanswer = marked.parse(data.summary || '');
-      const answerHtml = `<div class='font-semibold'>✅ ${settingStore.language === 'ko' ? '질의 응답' : 'Query Answered'}</div><br>${markedanswer}`;
-      
-      currentChat.messages.push({
-        role: 'assistant',
-        content: answerHtml,
-        timestamp: getCurrentTime()
-      });
-    }
-  } catch (error) {
-    // AbortError는 정상적인 취소이므로 무시
-    if (error.name === 'AbortError') {
-      isSearching.value = false;
-      return;
-    }
-    console.error('Search request failed:', error);
-    currentChat.messages.push({
-      role: 'assistant',
-      content: `${t.value.searchError} (${error.message})`,
-      timestamp: getCurrentTime()
-    });
-  } finally {
-    isSearching.value = false;
-    scrollToBottom();
-    // 완료된 AbortController 제거
-    if (typeof abortController !== 'undefined') {
-      const index = abortControllers.value.indexOf(abortController);
-      if (index > -1) {
-        abortControllers.value.splice(index, 1);
-      }
-    }
-  }
 }
 
 // 채팅 클립 확대용(그리드 비디오와 구분되는 최소 필드 구성)

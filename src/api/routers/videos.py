@@ -77,10 +77,40 @@ async def get_videos(request: Request, user_id: str = Query(...)):
                 else:
                     # 원본 파일이 없으면 변환된 MP4 확인
                     base_name = Path(original_filename).stem
-                    converted_filename = f"{base_name}.mp4"
-                    converted_file_path = CONVERTED_VIDEOS_DIR / converted_filename
                     
-                    if await asyncio.to_thread(converted_file_path.exists):
+                    # 변환된 파일명 후보들 (여러 형식 지원)
+                    converted_candidates = [
+                        f"{base_name}_converted.mp4",  # convert_video에서 생성하는 형식
+                        f"{base_name}.mp4",  # 간단한 형식
+                    ]
+                    
+                    # 실제 파일 시스템에서 변환된 파일 찾기
+                    converted_file_path = None
+                    converted_filename = None
+                    for candidate in converted_candidates:
+                        candidate_path = CONVERTED_VIDEOS_DIR / candidate
+                        if await asyncio.to_thread(candidate_path.exists):
+                            converted_file_path = candidate_path
+                            converted_filename = candidate
+                            break
+                    
+                    # 변환된 파일을 찾지 못한 경우, 디렉토리에서 직접 검색
+                    if not converted_file_path:
+                        try:
+                            # base_name으로 시작하는 모든 .mp4 파일 찾기
+                            if await asyncio.to_thread(CONVERTED_VIDEOS_DIR.exists):
+                                all_files = await asyncio.to_thread(list, CONVERTED_VIDEOS_DIR.iterdir())
+                                for file_path in all_files:
+                                    if file_path.is_file() and file_path.suffix.lower() == '.mp4':
+                                        # base_name이 파일명에 포함되어 있는지 확인
+                                        if base_name in file_path.stem:
+                                            converted_file_path = file_path
+                                            converted_filename = file_path.name
+                                            break
+                        except Exception as e:
+                            logger.warning(f"변환된 파일 검색 중 오류: {e}")
+                    
+                    if converted_file_path and converted_filename:
                         # 변환된 MP4가 존재하면 변환된 URL 사용
                         converted_url = f"/converted-videos/{converted_filename}"
                         valid_file_url = build_file_url(converted_url, request)
@@ -243,39 +273,63 @@ async def upload_video(
         
         # 4. 파일 저장
         file_size = 0
-        async with aiofiles.open(file_path, "wb") as buffer:
-            while True:
-                chunk = await file.read(FILE_BUFFER_SIZE)
-                if not chunk:
-                    break
-                await buffer.write(chunk)
-                file_size += len(chunk)
+        try:
+            async with aiofiles.open(file_path, "wb") as buffer:
+                while True:
+                    chunk = await file.read(FILE_BUFFER_SIZE)
+                    if not chunk:
+                        break
+                    await buffer.write(chunk)
+                    file_size += len(chunk)
+        except Exception as save_error:
+            logger.error(f"파일 저장 실패: {file_path}, 오류: {save_error}", exc_info=True)
+            # 파일 저장 실패 시 파일 삭제 시도
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                except:
+                    pass
+            raise DatabaseException(f"파일 저장 중 오류가 발생했습니다: {str(save_error)}")
         
         # 5. DB 저장
-        with get_db_connection() as cursor:
-            cursor.execute(
-                """INSERT INTO vss_videos 
-                   (USER_ID, FILE_NAME, FILE_PATH, FILE_SIZE, FILE_URL, WIDTH, HEIGHT, DURATION, VIDEO_ID) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (user_id, file.filename, str(file_path), file_size, file_url, None, None, None, None)
-            )
-            video_id = cursor.lastrowid
+        try:
+            with get_db_connection() as cursor:
+                cursor.execute(
+                    """INSERT INTO vss_videos 
+                       (USER_ID, FILE_NAME, FILE_PATH, FILE_SIZE, FILE_URL, WIDTH, HEIGHT, DURATION, VIDEO_ID) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (user_id, file.filename, str(file_path), file_size, file_url, None, None, None, None)
+                )
+                video_id = cursor.lastrowid
+        except Exception as db_error:
+            logger.error(f"DB 저장 실패: {db_error}", exc_info=True)
+            # DB 저장 실패 시 파일 삭제
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                except:
+                    pass
+            raise DatabaseException(f"데이터베이스 저장 중 오류가 발생했습니다: {str(db_error)}")
         
         # 6. VIA 서버 업로드 (동기적으로 처리하여 완전한 업로드 완료 보장)
         try:
             via_video_id = await upload_to_via_server_background(str(file_path), video_id, user_id)
             if via_video_id:
                 # DB에 VIDEO_ID 업데이트
-                with get_db_connection() as cursor:
-                    cursor.execute(
-                        "UPDATE vss_videos SET VIDEO_ID = ? WHERE ID = ? AND USER_ID = ?",
-                        (via_video_id, video_id, user_id)
-                    )
-                    # autocommit이 활성화되어 있으므로 명시적 커밋 불필요
-                file_type = "이미지" if is_image else "동영상"
-                logger.info(f"VIA 서버 {file_type} 업로드 완료: video_id={video_id}, via_video_id={via_video_id}")
+                try:
+                    with get_db_connection() as cursor:
+                        cursor.execute(
+                            "UPDATE vss_videos SET VIDEO_ID = ? WHERE ID = ? AND USER_ID = ?",
+                            (via_video_id, video_id, user_id)
+                        )
+                        # autocommit이 활성화되어 있으므로 명시적 커밋 불필요
+                    file_type = "이미지" if is_image else "동영상"
+                    logger.info(f"VIA 서버 {file_type} 업로드 완료: video_id={video_id}, via_video_id={via_video_id}")
+                except Exception as update_error:
+                    logger.warning(f"VIDEO_ID DB 업데이트 실패 (video_id={video_id}): {update_error}")
+                    # 업데이트 실패해도 계속 진행
         except Exception as e:
-            logger.warning(f"VIA 서버 업로드 실패 (video_id={video_id}): {e}")
+            logger.warning(f"VIA 서버 업로드 실패 (video_id={video_id}): {e}", exc_info=True)
             # VIA 업로드 실패해도 계속 진행 (나중에 재시도 가능)
         
         # 7. 메타데이터 추출은 백그라운드로 실행 (이미지는 제외, 동영상만)
@@ -368,16 +422,30 @@ async def convert_video(
         
         # 동영상 변환 실행
         logger.info(f"동영상 변환 시작: {file_path} -> {converted_file_path}")
-        success = convert_video_to_mp4(str(file_path), str(converted_file_path))
-        
-        if not success:
-            raise DatabaseException("동영상 변환에 실패했습니다.")
-        
-        return {
-            "success": True,
-            "converted_url": build_file_url(converted_url, request),
-            "message": "동영상이 MP4로 변환되었습니다."
-        }
+        try:
+            success = convert_video_to_mp4(str(file_path), str(converted_file_path))
+            
+            if not success:
+                raise DatabaseException("동영상 변환에 실패했습니다.")
+            
+            # 변환된 파일 존재 확인
+            if not converted_file_path.exists():
+                raise DatabaseException("변환된 파일이 생성되지 않았습니다.")
+            
+            return {
+                "success": True,
+                "converted_url": build_file_url(converted_url, request),
+                "message": "동영상이 MP4로 변환되었습니다."
+            }
+        except Exception as convert_error:
+            logger.error(f"동영상 변환 실패: {convert_error}", exc_info=True)
+            # 변환 실패 시 생성된 파일 정리
+            if converted_file_path.exists():
+                try:
+                    converted_file_path.unlink()
+                except:
+                    pass
+            raise DatabaseException(f"동영상 변환 중 오류가 발생했습니다: {str(convert_error)}")
     except HTTPException:
         raise
     except Exception as e:

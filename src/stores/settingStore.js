@@ -27,7 +27,7 @@ export const useSettingStore = defineStore('setting', () => {
   // 이미지용 프롬프트 (이미지 업로드 시 사용)
   const imageCaptionPrompt = ref("You will be given multiple captions produced from a multi-image comparison task, and your job is to merge them into a single clean comparison summary without using any timestamps or chronological language. Combine overlapping statements, remove any timeline-like phrasing, and preserve only information that directly supports the physique comparison between Image 1 and Image 2. Output exactly three labeled paragraphs in complete English sentences: “Image 1”, “Image 2”, and “Key Differences”, where “Key Differences” contains at least three clear contrast statements and does not introduce any new information not present in the captions.");
   const imageAggregationPrompt = ref("Based on the available comparison information, produce a short, user-friendly summary that explains how the people in Image 1 and Image 2 differ in body build and visible proportions, without referencing time, clips, or traffic reports. Format the result in Markdown with a clear heading and two sections: one bullet list summarizing “Image 1” and “Image 2” observations, and one bullet list titled “Differences” that contains at least three direct contrasts. Use complete English sentences, avoid sensitive inferences (age, identity, ethnicity, health), and keep the summary concise and focused on the comparison.");
-  const chunk = ref(0);
+  const chunk = ref(-1); // 자동 지정 기본값
   const nfmc = ref(0);
   const frameWidth = ref(0);
   const frameHeight = ref(0);
@@ -50,21 +50,16 @@ export const useSettingStore = defineStore('setting', () => {
   const A_MAX_TOKENS = ref(2048);
   const enableAudio = ref(false);
   
-  // Query 전용 파라미터 (검색 설정에서 사용)
-  const queryChunk = ref(10);
-  const queryTopk = ref(80);
-  const queryTopp = ref(1.0);
-  const queryTemp = ref(0.3);
-  const queryMaxTokens = ref(1024);
-  const querySeed = ref(42);
+  // 공통 파라미터 (query와 summarize 구분 없이 통일)
+  // -1: 자동 지정, 0: Chunk 없음, 그 외: 명시적 값
+  const searchChunk = ref(-1);
+  const searchTopK = ref(80);
+  const searchTopP = ref(1.0);
+  const searchTemperature = ref(0.3);
+  const searchMaxTokens = ref(1024);
+  const searchSeed = ref(42);
   
   // Summarize 전용 파라미터 (검색 설정에서 사용)
-  const summarizeChunk = ref(0);
-  const summarizeTopk = ref(80);
-  const summarizeTopp = ref(1.0);
-  const summarizeTemp = ref(0.4);
-  const summarizeMaxTokens = ref(512);
-  const summarizeSeed = ref(1);
   const summarizeNumFramesPerChunk = ref(0);
   const summarizeFrameWidth = ref(1920);
   const summarizeFrameHeight = ref(1080);
@@ -135,8 +130,7 @@ export const useSettingStore = defineStore('setting', () => {
     topk, topp, temp, maxTokens, seed, batch, RAG_batch, RAG_topk,
     S_TopP, S_TEMPERATURE, SMAX_TOKENS, C_TopP, C_TEMPERATURE, C_MAX_TOKENS,
     A_TopP, A_TEMPERATURE, A_MAX_TOKENS, enableAudio, theme, language,
-    queryChunk, queryTopk, queryTopp, queryTemp, queryMaxTokens, querySeed,
-    summarizeChunk, summarizeTopk, summarizeTopp, summarizeTemp, summarizeMaxTokens, summarizeSeed,
+    searchChunk, searchTopK, searchTopP, searchTemperature, searchMaxTokens, searchSeed,
     summarizeNumFramesPerChunk, summarizeFrameWidth, summarizeFrameHeight,
     summarizeBatchSize, summarizeRagBatchSize, summarizeRagTopK,
     summarizeSummarizeTopP, summarizeSummarizeTemperature, summarizeSummarizeMaxTokens,

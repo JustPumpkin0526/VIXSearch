@@ -265,16 +265,18 @@ async def parse_timestamps(timestamp_text, video_duration):
     parsed = parse_timestamps_regex(timestamp_text, video_duration)
     # 겹치거나(Overlap) 이어지는(Contiguous) 타임스탬프 구간 병합
     # - Search 메뉴의 Query 결과(예: 60.02-66.01, 63.03-66.01 ...)에서 중복 클립/결과를 방지
-    return await merge_timestamp_ranges(parsed, gap_tolerance_seconds=0.1)
+    # - 5초 마진을 두고 5초 이내의 결과가 있으면 합침
+    return await merge_timestamp_ranges(parsed, gap_tolerance_seconds=5.0)
 
 
-async def merge_timestamp_ranges(timestamps, gap_tolerance_seconds: float = 0.1):
+async def merge_timestamp_ranges(timestamps, gap_tolerance_seconds: float = 5.0):
     """
     (start, end, sentence) 구간 리스트를 정렬 후 병합합니다.
 
     병합 조건:
     - 다음 구간의 시작이 이전 구간의 끝보다 작거나 같으면(겹침) 병합
     - 또는 gap_tolerance_seconds 이내로 이어지면(거의 인접) 병합
+    - 기본값은 5초 마진을 사용하여 5초 이내의 결과를 합침
 
     sentence 병합:
     - 병합된 구간에 포함되는 문장들을 LLM을 사용하여 한 문장으로 요약합니다.
@@ -380,19 +382,41 @@ def parse_timestamps_regex(timestamp_text, video_duration):
     # 분:초 형식을 초로 변환하는 함수
     def parse_time_to_seconds(time_str):
         time_str = time_str.strip()
+        if not time_str:
+            return None
+        
+        # 숫자로만 구성된 타임스탬프인지 확인 (소수점, 음수 부호 허용)
+        # 패턴: 선택적 음수 부호 + 하나 이상의 숫자 + 선택적 소수점과 숫자
+        # SS.000 같은 잘못된 형식은 제외
+        numeric_pattern = r'^-?\d+(?:\.\d+)?$'
+        if not re.match(numeric_pattern, time_str):
+            return None
+        
         # 분:초 형식인지 확인 (MM:SS)
         if ':' in time_str:
             parts = time_str.split(':')
             if len(parts) == 2:
                 try:
+                    # 각 부분이 숫자 형식인지 확인
+                    if not (re.match(r'^-?\d+(?:\.\d+)?$', parts[0].strip()) and 
+                            re.match(r'^-?\d+(?:\.\d+)?$', parts[1].strip())):
+                        return None
                     minutes = float(parts[0])
                     seconds = float(parts[1])
+                    # 음수 시간은 허용하지 않음
+                    if minutes < 0 or seconds < 0:
+                        return None
                     return minutes * 60 + seconds
                 except ValueError:
                     return None
+        
         # 초 단위 형식
         try:
-            return float(time_str)
+            result = float(time_str)
+            # 음수 시간은 허용하지 않음
+            if result < 0:
+                return None
+            return result
         except ValueError:
             return None
     

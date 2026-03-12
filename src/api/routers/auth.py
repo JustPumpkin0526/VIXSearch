@@ -13,7 +13,7 @@ from services.email_service import (
     generate_verification_code, send_verification_email,
     cleanup_expired_codes, cleanup_expired_reset_codes
 )
-from config.settings import EMAIL_CODE_EXPIRY_MINUTES
+from config.settings import EMAIL_CODE_EXPIRY_MINUTES, ENABLE_EMAIL_VERIFICATION
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class User(BaseModel):
     username: str
     password: str
     email: str
-    verification_code: str
+    verification_code: str = ""  # 이메일 인증이 비활성화된 경우 빈 문자열 허용
 
 class SendResetPasswordCodeRequest(BaseModel):
     username: str
@@ -53,6 +53,11 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 # ==================== 엔드포인트 ====================
+@router.get("/email-verification-enabled")
+def get_email_verification_enabled():
+    """이메일 인증 활성화 여부 확인"""
+    return {"enabled": ENABLE_EMAIL_VERIFICATION}
+
 @router.post("/login")
 def login(data: LoginRequest = Body(...)):
     """로그인"""
@@ -202,28 +207,34 @@ def verify_email_code(request: VerifyEmailRequest):
 
 @router.post("/register")
 def register(user: User):
-    """회원가입 (이메일 인증 필수)"""
-    email = validate_email(user.email)
-    
-    # 이메일 인증 확인
-    cleanup_expired_codes()
-    if email not in email_verification_codes:
-        raise HTTPException(status_code=400, detail="이메일 인증이 필요합니다. 인증 코드를 먼저 요청해주세요.")
-    
-    verification_data = email_verification_codes[email]
-    
-    # 인증 코드 검증 확인
-    if not verification_data["verified"]:
-        raise HTTPException(status_code=400, detail="이메일 인증이 완료되지 않았습니다. 인증 코드를 먼저 검증해주세요.")
-    
-    # 인증 코드 만료 확인
-    if verification_data["expires_at"] < datetime.now():
-        del email_verification_codes[email]
-        raise HTTPException(status_code=400, detail="인증 코드가 만료되었습니다. 다시 요청해주세요.")
-    
-    # 최종 인증 코드 확인 (추가 보안)
-    if verification_data["code"] != user.verification_code.strip():
-        raise HTTPException(status_code=400, detail="인증 코드가 일치하지 않습니다.")
+    """회원가입 (이메일 인증 선택적)"""
+    # 이메일 인증이 활성화된 경우에만 이메일 검증 및 인증 확인
+    if ENABLE_EMAIL_VERIFICATION:
+        email = validate_email(user.email)
+        cleanup_expired_codes()
+        if email not in email_verification_codes:
+            raise HTTPException(status_code=400, detail="이메일 인증이 필요합니다. 인증 코드를 먼저 요청해주세요.")
+        
+        verification_data = email_verification_codes[email]
+        
+        # 인증 코드 검증 확인
+        if not verification_data["verified"]:
+            raise HTTPException(status_code=400, detail="이메일 인증이 완료되지 않았습니다. 인증 코드를 먼저 검증해주세요.")
+        
+        # 인증 코드 만료 확인
+        if verification_data["expires_at"] < datetime.now():
+            del email_verification_codes[email]
+            raise HTTPException(status_code=400, detail="인증 코드가 만료되었습니다. 다시 요청해주세요.")
+        
+        # 최종 인증 코드 확인 (추가 보안)
+        if verification_data["code"] != user.verification_code.strip():
+            raise HTTPException(status_code=400, detail="인증 코드가 일치하지 않습니다.")
+    else:
+        # 이메일 인증이 비활성화된 경우, 이메일이 있으면 검증하고 없으면 빈 문자열 허용
+        if user.email and user.email.strip():
+            email = validate_email(user.email)
+        else:
+            email = ""
     
     try:
         # 비밀번호를 bcrypt로 해시화
@@ -237,8 +248,9 @@ def register(user: User):
             )
             # autocommit이 활성화되어 있으므로 명시적 커밋 불필요
         
-        # 회원가입 성공 후 인증 코드 삭제
-        del email_verification_codes[email]
+        # 회원가입 성공 후 인증 코드 삭제 (이메일 인증이 활성화된 경우에만)
+        if ENABLE_EMAIL_VERIFICATION and email in email_verification_codes:
+            del email_verification_codes[email]
         
         logger.info(f"회원가입 성공: {user.username} ({email})")
         return {"message": "회원가입 성공"}

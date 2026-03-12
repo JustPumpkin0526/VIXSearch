@@ -119,7 +119,7 @@
           <div>
             <label for="email" class="block text-sm font-medium text-gray-700 mb-2">
               이메일
-              <span class="text-red-500">*</span>
+              <span v-if="emailVerificationEnabled.value" class="text-red-500">*</span>
             </label>
             <div class="flex gap-2">
               <div class="relative flex-1">
@@ -132,14 +132,15 @@
                   id="email"
                   v-model="email"
                   type="email"
-                  required
-                  :disabled="isLoading || isEmailVerified"
+                  :required="emailVerificationEnabled.value"
+                  :disabled="isLoading || (emailVerificationEnabled.value && isEmailVerified.value)"
                   class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed"
-                  placeholder="이메일을 입력하세요"
+                  :placeholder="emailVerificationEnabled.value ? '이메일을 입력하세요' : '이메일을 입력하세요 (선택사항)'"
                   @input="clearMessages"
                 />
               </div>
               <button
+                v-if="emailVerificationEnabled.value"
                 type="button"
                 :disabled="!isValidEmail || isSendingCode || isEmailVerified"
                 @click="sendVerificationCode"
@@ -148,10 +149,10 @@
                 <span v-if="isSendingCode">전송 중...</span>
                 <span v-else-if="isEmailVerified">인증 완료</span>
                 <span v-else>인증 코드 전송</span>
-      </button>
+              </button>
             </div>
             <p v-if="email && !isValidEmail" class="mt-1 text-xs text-red-600">올바른 이메일 형식이 아닙니다.</p>
-            <p v-if="isEmailVerified" class="mt-1 text-xs text-green-600 flex items-center gap-1">
+            <p v-if="emailVerificationEnabled.value && isEmailVerified" class="mt-1 text-xs text-green-600 flex items-center gap-1">
               <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                 <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
               </svg>
@@ -160,7 +161,7 @@
           </div>
 
           <!-- 이메일 인증 코드 입력 -->
-          <div v-if="codeSent && !isEmailVerified">
+          <div v-if="emailVerificationEnabled.value && codeSent && !isEmailVerified">
             <label for="verificationCode" class="block text-sm font-medium text-gray-700 mb-2">
               인증 코드
               <span class="text-red-500">*</span>
@@ -225,10 +226,10 @@
 </template>
 
 <script setup>
-import { ref, computed } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useErrorHandler } from "@/composables/useErrorHandler";
-import { usePost } from "@/composables/useApi";
+import { usePost, useGet } from "@/composables/useApi";
 import { validateEmail, validatePasswordStrength } from "@/composables/useFormValidation";
 
 const router = useRouter();
@@ -244,6 +245,7 @@ const isSendingCode = ref(false);
 const isVerifyingCode = ref(false);
 const codeSent = ref(false);
 const isEmailVerified = ref(false);
+const emailVerificationEnabled = ref(true); // 기본값은 true (기존 동작 유지)
 
 // 폼 검증
 const isValidId = computed(() => id.value.length >= 3);
@@ -278,9 +280,22 @@ const isFormValid = computed(() => {
          isValidPassword.value && 
          pw.value === confirmPw.value && 
          isValidEmail.value &&
-         isEmailVerified.value &&
+         (!emailVerificationEnabled.value || isEmailVerified.value) &&
          id.value.trim() !== "" &&
-         email.value.trim() !== "";
+         // 이메일 인증이 활성화된 경우에만 이메일 필수, 비활성화된 경우 선택
+         (!emailVerificationEnabled.value || email.value.trim() !== "");
+});
+
+// 이메일 인증 활성화 여부 확인
+const { execute: checkEmailVerificationEnabled } = useGet('/email-verification-enabled', {
+  onSuccess: (data) => {
+    emailVerificationEnabled.value = data?.enabled ?? true;
+  },
+  onError: () => {
+    // 에러 발생 시 기본값(true) 유지
+    emailVerificationEnabled.value = true;
+  },
+  showError: false
 });
 
 // API 호출
@@ -361,11 +376,14 @@ async function verifyEmailCode() {
 
 async function register() {
   if (!isFormValid.value) {
-    handleError(new Error("모든 필드를 올바르게 입력하고 이메일 인증을 완료해주세요."));
+    const errorMsg = emailVerificationEnabled.value 
+      ? "모든 필드를 올바르게 입력하고 이메일 인증을 완료해주세요."
+      : "모든 필드를 올바르게 입력해주세요.";
+    handleError(new Error(errorMsg));
     return;
   }
 
-  if (!isEmailVerified.value) {
+  if (emailVerificationEnabled.value && !isEmailVerified.value) {
     handleError(new Error("이메일 인증을 먼저 완료해주세요."));
     return;
   }
@@ -378,7 +396,7 @@ async function register() {
       username: id.value.trim(),
       password: pw.value,
       email: email.value.trim(),
-      verification_code: verificationCode.value.trim()
+      verification_code: emailVerificationEnabled.value ? verificationCode.value.trim() : ""
     });
   } catch (err) {
     // 에러는 usePost의 onError에서 처리됨
@@ -386,4 +404,9 @@ async function register() {
     isLoading.value = false;
   }
 }
+
+// 컴포넌트 마운트 시 이메일 인증 활성화 여부 확인
+onMounted(() => {
+  checkEmailVerificationEnabled();
+});
 </script>

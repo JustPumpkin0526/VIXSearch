@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import tempfile
+import asyncio
 from typing import Optional, List
 import json
 from fastapi import APIRouter, HTTPException, Form, UploadFile, Query
@@ -14,8 +15,10 @@ from utils.helpers import (
     get_via_model,
     build_summarize_params,
     check_video_type,
-    translate_to_korean
+    translate_to_korean,
+    get_recommended_chunk_size
 )
+from moviepy.video.io.VideoFileClip import VideoFileClip
 from database.connection import get_db_connection
 from exceptions import NotFoundException, DatabaseException, ValidationException
 
@@ -64,6 +67,7 @@ async def vss_summarize(
     alert_temperature: float = Form(...),
     alert_max_tokens: int = Form(...),
     enable_audio: bool = Form(...),
+    enable_chat_history: bool = Form(False),  # 채팅 히스토리 활성화 여부 (기본값: False)
     video_id: Optional[str] = Form(None),  # VIA 서버의 video_id (이미 업로드된 경우)
     user_id: str = Form(...),  # 사용자 ID (DB 저장용)
 ):
@@ -78,6 +82,9 @@ async def vss_summarize(
     # ========== CA-RAG 컨텍스트 디버깅 로그 끝 ==========
     
     # video_id가 제공되지 않은 경우 파일 업로드
+    temp_file_path = None
+    image_mode = False  # 기본값 초기화
+    
     if not video_id and file:
         # 파일 타입 확인 (이미지 모드 여부)
         image_mode = await check_video_type(file)
@@ -94,11 +101,11 @@ async def vss_summarize(
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
             content = await file.read()
             tmp_file.write(content)
-            tmp_file_path = tmp_file.name
+            temp_file_path = tmp_file.name
         
         try:
             # 모든 파일은 upload_video를 통해 업로드 (이미지/동영상 자동 감지)
-            video_id = await vss_client.upload_video(tmp_file_path)
+            video_id = await vss_client.upload_video(temp_file_path)
             file_type = "이미지" if image_mode else "비디오"
             logger.info(f"{file_type} 업로드 완료: video_id={video_id}")
             
@@ -107,10 +114,20 @@ async def vss_summarize(
                 file_type,
                 video_id
             )
+        except Exception as upload_error:
+            logger.error(f"VIA 서버 파일 업로드 실패: {upload_error}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"파일 업로드 중 오류가 발생했습니다: {str(upload_error)}"
+            )
         finally:
-            # 임시 파일 삭제
-            if os.path.exists(tmp_file_path):
-                os.unlink(tmp_file_path)
+            # 임시 파일 정리
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                    logger.debug(f"임시 파일 삭제 완료: {temp_file_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"임시 파일 삭제 실패: {temp_file_path}, 오류: {cleanup_error}")
     elif not video_id:
         raise HTTPException(status_code=400, detail="video_id 또는 file 중 하나는 필요합니다.")
     else:
@@ -123,12 +140,49 @@ async def vss_summarize(
             image_mode
         )
 
+    # 파라미터 검증
+    if not prompt or not prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt는 필수입니다.")
+    
+    # chunk_duration 자동 계산 (chunk_duration이 None이거나 -1인 경우)
+    final_chunk_duration = chunk_duration
+    if chunk_duration is None or chunk_duration == -1:
+        # 비디오 파일인 경우에만 duration 계산 (이미지 모드는 chunk_duration이 의미 없음)
+        if not image_mode and temp_file_path and os.path.exists(temp_file_path):
+            try:
+                video = VideoFileClip(temp_file_path)
+                duration = video.duration or 0
+                video.close()
+                del video
+                logger.info(f"Video duration: {duration} seconds for {temp_file_path}")
+                
+                if duration > 0:
+                    final_chunk_duration = await get_recommended_chunk_size(duration)
+                    logger.info(f"자동 지정: chunk_duration={final_chunk_duration} 사용 (영상 길이: {duration}초)")
+                else:
+                    logger.warning(f"영상 길이를 가져올 수 없습니다. 기본값 10 사용")
+                    final_chunk_duration = 10
+            except Exception as video_error:
+                logger.warning(f"비디오 파일 로드 실패: {temp_file_path}, 오류: {video_error}. 기본값 10 사용")
+                final_chunk_duration = 10
+        elif video_id and not image_mode:
+            # video_id만 있는 경우는 duration을 가져올 수 없으므로 기본값 사용
+            logger.warning(f"video_id만 제공되어 영상 길이를 가져올 수 없습니다. 기본값 10 사용")
+            final_chunk_duration = 10
+        else:
+            # 이미지 모드이거나 파일이 없는 경우 기본값 사용
+            logger.info(f"이미지 모드이거나 파일이 없어 기본값 10 사용")
+            final_chunk_duration = 10
+    elif chunk_duration < 0:
+        logger.warning(f"chunk_duration이 음수입니다 ({chunk_duration}). 기본값 10 사용")
+        final_chunk_duration = 10
+    
     try:
         # summarize_video 파라미터 준비 (Form으로 받은 모든 값 전달)
         summarize_params = build_summarize_params(
             image_mode=image_mode,
             video_id=video_id,
-            chunk_duration=chunk_duration,
+            chunk_duration=final_chunk_duration,
             model=model,
             prompt=prompt,
             cs_prompt=csprompt,
@@ -153,7 +207,8 @@ async def vss_summarize(
             notification_top_p=alert_top_p,
             notification_temperature=alert_temperature,
             notification_max_tokens=alert_max_tokens,
-            enable_audio=enable_audio
+            enable_audio=enable_audio,
+            enable_chat_history=enable_chat_history
         )
         from utils.helpers import vss_client
         
@@ -173,6 +228,12 @@ async def vss_summarize(
         logger.info(
             "[CA-RAG DEBUG] ⚠️ 이후 query_video 호출 시 CA-RAG 컨텍스트 상태 확인 필요"
         )
+        
+        # 다중 동영상 처리 시 VIA 서버 컨텍스트 정리를 위한 대기 시간
+        # VIA 서버가 이전 동영상의 컨텍스트를 정리할 시간을 확보하여 메모리 누수 방지
+        # 주의: 프론트엔드에서 순차적으로 호출하므로, 이 대기 시간은 VIA 서버 내부 정리를 위한 것
+        await asyncio.sleep(0.5)
+        logger.info(f"[MULTI-VIDEO] VIA 서버 컨텍스트 정리 대기 완료 (0.5초). video_id={video_id}")
 
         # 요약 결과를 한국어로 번역
         translated_result = result
@@ -195,6 +256,10 @@ async def vss_summarize(
     except HTTPException:
         # HTTPException은 그대로 전파
         raise
+    except ValueError as ve:
+        # 파라미터 검증 오류
+        logger.error(f"파라미터 검증 실패: {ve}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"잘못된 파라미터: {str(ve)}")
     except Exception as e:
         # 기타 예외 처리
         logger.error(f"vss_summarize 실행 중 오류: {e}", exc_info=True)
@@ -218,7 +283,7 @@ async def vss_summarize_multi(
     prompt: str = Form(...),
     csprompt: str = Form(...),
     saprompt: str = Form(...),
-    chunk_duration: int = Form(...),
+    chunk_duration: Optional[int] = Form(None),  # None이거나 -1이면 자동 계산
     num_frames_per_chunk: int = Form(...),
     frame_width: int = Form(...),
     frame_height: int = Form(...),
@@ -240,6 +305,7 @@ async def vss_summarize_multi(
     alert_temperature: float = Form(...),
     alert_max_tokens: int = Form(...),
     enable_audio: str = Form("false"),
+    enable_chat_history: str = Form("false"),  # 채팅 히스토리 활성화 여부 (기본값: False)
     user_id: str = Form(...),  # 사용자 ID (DB 저장용)
 ):
     """
@@ -264,13 +330,23 @@ async def vss_summarize_multi(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="video_ids는 유효한 JSON 배열이어야 합니다.")
     
+    # chunk_duration 자동 계산 (chunk_duration이 None이거나 -1인 경우)
+    # 멀티 이미지는 항상 이미지 모드이므로 chunk_duration이 의미 없지만, 일관성을 위해 기본값 사용
+    final_chunk_duration = chunk_duration
+    if chunk_duration is None or chunk_duration == -1:
+        logger.info(f"멀티 이미지 모드이므로 기본값 10 사용")
+        final_chunk_duration = 10
+    elif chunk_duration < 0:
+        logger.warning(f"chunk_duration이 음수입니다 ({chunk_duration}). 기본값 10 사용")
+        final_chunk_duration = 10
+    
     try:
         # summarize_video 파라미터 준비
         # 멀티 이미지의 경우 video_id를 리스트로 전달 (via-server.py의 id_list와 동일)
         summarize_params = build_summarize_params(
             image_mode=True,  # 멀티 이미지는 항상 이미지 모드
             video_id=video_id_list,  # 리스트로 전달 (VIA 서버의 SummarizationQuery.id 필드가 리스트 지원)
-            chunk_duration=chunk_duration,
+            chunk_duration=final_chunk_duration,
             model=model,
             prompt=prompt,
             cs_prompt=csprompt,
@@ -295,10 +371,15 @@ async def vss_summarize_multi(
             notification_top_p=alert_top_p,
             notification_temperature=alert_temperature,
             notification_max_tokens=alert_max_tokens,
-            enable_audio=(enable_audio.lower() == "true")
+            enable_audio=(enable_audio.lower() == "true"),
+            enable_chat_history=False
         )
         from utils.helpers import vss_client
         result = await vss_client.summarize_video(*summarize_params)
+        
+        # 다중 이미지 처리 시 VIA 서버 컨텍스트 정리를 위한 대기 시간
+        await asyncio.sleep(0.5)
+        logger.info(f"[MULTI-IMAGE] VIA 서버 컨텍스트 정리 대기 완료 (0.5초). video_ids={len(video_id_list)}개")
         
         # 요약 결과를 한국어로 번역
         translated_result = result

@@ -5,6 +5,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import FileResponse
+from starlette.requests import Request
 import logging
 
 # 로깅 설정 먼저 초기화
@@ -45,6 +47,57 @@ import utils.helpers as utils_helpers
 
 from contextlib import asynccontextmanager
 from exceptions import VSSException
+
+# CORS 헤더를 추가하는 커스텀 StaticFiles 클래스
+class CORSStaticFiles(StaticFiles):
+    """CORS 헤더를 추가하고 올바른 Content-Type을 설정하는 StaticFiles 클래스"""
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            # 응답을 가로채서 CORS 헤더 및 Content-Type 추가
+            async def send_wrapper(message):
+                if message["type"] == "http.response.start":
+                    # 기존 헤더 가져오기 (리스트의 리스트 형태)
+                    headers = list(message.get("headers", []))
+                    
+                    # 파일 경로에서 확장자 추출하여 Content-Type 설정
+                    path = scope.get("path", "")
+                    if path:
+                        import mimetypes
+                        # .avi 파일에 대한 올바른 MIME 타입 설정
+                        if path.lower().endswith('.avi'):
+                            # Content-Type 헤더가 이미 있는지 확인
+                            content_type_set = False
+                            for i, (key, value) in enumerate(headers):
+                                if key.lower() == b"content-type":
+                                    headers[i] = (b"content-type", b"video/x-msvideo")
+                                    content_type_set = True
+                                    break
+                            if not content_type_set:
+                                headers.append([b"content-type", b"video/x-msvideo"])
+                        else:
+                            # 다른 파일 형식에 대해서도 MIME 타입 설정
+                            content_type, _ = mimetypes.guess_type(path)
+                            if content_type:
+                                content_type_set = False
+                                for i, (key, value) in enumerate(headers):
+                                    if key.lower() == b"content-type":
+                                        headers[i] = (b"content-type", content_type.encode())
+                                        content_type_set = True
+                                        break
+                                if not content_type_set:
+                                    headers.append([b"content-type", content_type.encode()])
+                    
+                    # CORS 헤더 추가
+                    headers.append([b"access-control-allow-origin", b"*"])
+                    headers.append([b"access-control-allow-methods", b"GET, HEAD, OPTIONS"])
+                    headers.append([b"access-control-allow-headers", b"*"])
+                    headers.append([b"access-control-allow-credentials", b"true"])
+                    message["headers"] = headers
+                await send(message)
+            
+            await super().__call__(scope, receive, send_wrapper)
+        else:
+            await super().__call__(scope, receive, send)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -120,23 +173,23 @@ async def vss_exception_handler(request, exc: VSSException):
 
 # Serve generated clips as static files under /clips
 CLIPS_DIR.mkdir(exist_ok=True)
-app.mount("/clips", StaticFiles(directory=str(CLIPS_DIR.resolve())), name="clips")
+app.mount("/clips", CORSStaticFiles(directory=str(CLIPS_DIR.resolve())), name="clips")
 
 # Serve uploaded videos as static files under /video-files (API 엔드포인트와 충돌 방지)
 VIDEOS_DIR.mkdir(exist_ok=True)
-app.mount("/video-files", StaticFiles(directory=str(VIDEOS_DIR.resolve())), name="video-files")
+app.mount("/video-files", CORSStaticFiles(directory=str(VIDEOS_DIR.resolve())), name="video-files")
 
 # Serve converted videos as static files under /converted-videos
 CONVERTED_VIDEOS_DIR.mkdir(exist_ok=True)
-app.mount("/converted-videos", StaticFiles(directory=str(CONVERTED_VIDEOS_DIR.resolve())), name="converted-videos")
+app.mount("/converted-videos", CORSStaticFiles(directory=str(CONVERTED_VIDEOS_DIR.resolve())), name="converted-videos")
 
 # Serve profile images as static files under /profile-images
 PROFILE_IMAGES_DIR.mkdir(exist_ok=True)
-app.mount("/profile-images", StaticFiles(directory=str(PROFILE_IMAGES_DIR.resolve())), name="profile-images")
+app.mount("/profile-images", CORSStaticFiles(directory=str(PROFILE_IMAGES_DIR.resolve())), name="profile-images")
 
 # Serve reports as static files under /reports-files
 REPORTS_DIR.mkdir(exist_ok=True, parents=True)
-app.mount("/reports-files", StaticFiles(directory=str(REPORTS_DIR.resolve())), name="reports-files")
+app.mount("/reports-files", CORSStaticFiles(directory=str(REPORTS_DIR.resolve())), name="reports-files")
 
 # Serve sample videos as static files under /sample
 SAMPLE_DIR.mkdir(exist_ok=True, parents=True)
@@ -150,7 +203,7 @@ else:
     logger.warning(f"샘플 동영상은 해당 경로에 없습니다. : {sample_file}")
 
 try:
-    app.mount("/sample", StaticFiles(directory=str(SAMPLE_DIR.resolve())), name="sample")
+    app.mount("/sample", CORSStaticFiles(directory=str(SAMPLE_DIR.resolve())), name="sample")
     logger.info(f"/sample 엔드포인트를 {SAMPLE_DIR}에 성공적으로 마운트했습니다.")
 except Exception as e:
     logger.error(f"/sample 엔드포인트를 마운트하는데 실패했습니다. : {e}")

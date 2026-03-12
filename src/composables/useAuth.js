@@ -32,8 +32,48 @@ export function useAuth() {
       });
       
       if (response.data?.success) {
-        userId.value = username.trim();
-        localStorage.setItem('vss_user_id', username.trim());
+        // 이전 사용자 ID 확인
+        const previousUserId = localStorage.getItem('vss_user_id');
+        const newUserId = username.trim();
+        
+        // 사용자가 변경된 경우 이전 사용자의 세션 데이터 정리
+        if (previousUserId && previousUserId !== newUserId) {
+          // 이전 사용자의 localStorage 데이터 정리
+          // vss_user_id와 vss_user_role은 제외 (아래에서 새로 설정)
+          const keysToRemove = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            // 사용자별 데이터 키 패턴 확인 (예: vss_summarize_*, vss_search_*, vss_management_* 등)
+            if (key && (
+              key.startsWith('vss_summarize_') ||
+              key.startsWith('vss_search_') ||
+              key.startsWith('vss_management_') ||
+              key.startsWith('vss_storage_') ||
+              key === 'videoItems' || // 기존 공용 키
+              key === `videoItems_${previousUserId}` || // 이전 사용자별 키
+              (key.startsWith('vss_') && key !== 'vss_user_id' && key !== 'vss_user_role')
+            )) {
+              keysToRemove.push(key);
+            }
+          }
+          keysToRemove.forEach(key => localStorage.removeItem(key));
+          
+          // 기존 공용 videoItems 키도 정리 (사용자별 키로 마이그레이션)
+          if (localStorage.getItem('videoItems')) {
+            localStorage.removeItem('videoItems');
+          }
+          
+          // 로그아웃 이벤트 발생 (이전 사용자 세션 정리)
+          window.dispatchEvent(new Event('vss-logout'));
+        } else if (!previousUserId) {
+          // 신규 로그인 (이전 사용자가 없었던 경우)에도 기존 공용 videoItems 키 정리
+          if (localStorage.getItem('videoItems')) {
+            localStorage.removeItem('videoItems');
+          }
+        }
+        
+        userId.value = newUserId;
+        localStorage.setItem('vss_user_id', newUserId);
         
         if (response.data.role) {
           userRole.value = response.data.role;

@@ -124,7 +124,7 @@ class VSS:
             # 파일 핸들 닫기
             file_handle.close()
 
-    async def summarize_video(self, file_id, prompt, cs_prompt, sa_prompt, chunk_duration, model, num_frames_per_chunk, frame_width, frame_height, top_k, top_p, temperature, max_new_tokens, seed, batch_size, rag_batch_size, rag_top_k, summarize_top_p, summarize_temperature, summarize_max_tokens, chat_top_p, chat_temperature, chat_max_tokens, notification_top_p, notification_temperature, notification_max_tokens, enable_audio):
+    async def summarize_video(self, file_id, prompt, cs_prompt, sa_prompt, chunk_duration, model, num_frames_per_chunk, frame_width, frame_height, top_k, top_p, temperature, max_new_tokens, seed, batch_size, rag_batch_size, rag_top_k, summarize_top_p, summarize_temperature, summarize_max_tokens, chat_top_p, chat_temperature, chat_max_tokens, notification_top_p, notification_temperature, notification_max_tokens, enable_audio, enable_chat_history):
         """
         VIA 서버에 요약 요청 전송
         
@@ -184,6 +184,7 @@ class VSS:
             "rag_top_k": rag_top_k,
             "enable_chat": True,
             "enable_audio": enable_audio,
+            "enable_chat_history": enable_chat_history,
             "stream": False,  # 채팅 기능 활성화를 위해 stream: False 명시
         }
 
