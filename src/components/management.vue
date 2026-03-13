@@ -1586,6 +1586,7 @@ async function convertVideoToMp4(videoId, userId, videoObject) {
 
 // ==================== 다국어 지원 ====================
 const settingStore = useSettingStore();
+const videoFileStore = useVideoFileStore();
 
 const translations = {  
   ko: {

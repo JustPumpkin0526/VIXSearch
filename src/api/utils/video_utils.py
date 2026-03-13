@@ -263,6 +263,11 @@ async def parse_timestamps(timestamp_text, video_duration):
     """
     # 정규표현식 방식 사용
     parsed = parse_timestamps_regex(timestamp_text, video_duration)
+    
+    # 후처리 최적화: 타임스탬프가 1개 이하이거나 이미 non-overlapping이면 병합 생략
+    if len(parsed) <= 1:
+        return parsed
+    
     # 겹치거나(Overlap) 이어지는(Contiguous) 타임스탬프 구간 병합
     # - Search 메뉴의 Query 결과(예: 60.02-66.01, 63.03-66.01 ...)에서 중복 클립/결과를 방지
     # - 5초 마진을 두고 5초 이내의 결과가 있으면 합침
@@ -338,9 +343,17 @@ async def merge_timestamp_ranges(timestamps, gap_tolerance_seconds: float = 5.0)
             cur_end = max(cur_end, end)
             _add_sentence(cur_sentences, sentence)
         else:
-            # 문장이 여러 개인 경우 LLM으로 요약, 하나면 그대로 사용
-            if len(cur_sentences) > 1:
+            # 후처리 최적화: 문장이 2개 이하이거나 완전히 동일하면 요약 생략
+            if len(cur_sentences) > 2:
+                # 3개 이상일 때만 요약 수행
                 merged_sentence = await summarize_sentences(cur_sentences)
+            elif len(cur_sentences) == 2:
+                # 2개일 때는 완전히 동일한지 확인
+                if cur_sentences[0] == cur_sentences[1]:
+                    merged_sentence = cur_sentences[0]
+                else:
+                    # 다르면 첫 번째 문장 사용 (요약 생략)
+                    merged_sentence = cur_sentences[0]
             else:
                 merged_sentence = cur_sentences[0] if cur_sentences else ""
             merged.append((cur_start, cur_end, merged_sentence))
@@ -348,9 +361,14 @@ async def merge_timestamp_ranges(timestamps, gap_tolerance_seconds: float = 5.0)
             cur_sentences = []
             _add_sentence(cur_sentences, sentence)
 
-    # 마지막 구간 처리
-    if len(cur_sentences) > 1:
+    # 마지막 구간 처리 (동일한 최적화 적용)
+    if len(cur_sentences) > 2:
         merged_sentence = await summarize_sentences(cur_sentences)
+    elif len(cur_sentences) == 2:
+        if cur_sentences[0] == cur_sentences[1]:
+            merged_sentence = cur_sentences[0]
+        else:
+            merged_sentence = cur_sentences[0]
     else:
         merged_sentence = cur_sentences[0] if cur_sentences else ""
     merged.append((cur_start, cur_end, merged_sentence))
@@ -429,10 +447,12 @@ def parse_timestamps_regex(timestamp_text, video_duration):
         if not line:
             continue
         
-        # 00:00-00:00=장면 설명 패턴 찾기
-        # 패턴: MM:SS-MM:SS=장면 설명 또는 초단위-초단위=장면 설명
-        equals_pattern = r'(\d+(?:\.\d+)?(?::\d+(?:\.\d+)?)?)\s*[-~]\s*(\d+(?:\.\d+)?(?::\d+(?:\.\d+)?)?)\s*=\s*(.+)'
-        equals_match = re.search(equals_pattern, line)
+        # 엄격한 패턴만 허용: START-END=Description (줄 시작부터, 숫자-숫자=형식만)
+        # 예: "0.00-20.00=Description" (허용)
+        # 예: "109.57s에 등장..." (거부)
+        # 예: "60.01s - 60.01s : ..." (거부)
+        equals_pattern = r'^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*=\s*(.+)$'
+        equals_match = re.match(equals_pattern, line)
         
         if equals_match:
             # = 기호로 구분된 형태

@@ -9,6 +9,7 @@ import aiohttp
 import tempfile
 import aiofiles
 import subprocess
+import re
 from typing import Optional, List, Set, Tuple
 from pathlib import Path
 from datetime import datetime, timezone
@@ -867,9 +868,16 @@ async def generate_clips(
                 # 영어로 번역된 쿼리 저장 (유사도 계산에 사용)
                 english_query = enhanced_prompt
                 
-                # 타임스탬프 형식을 명확하게 지정: 숫자 초 단위로 시작 시간-끝 시간 형식
-                # 예시를 포함하여 LLM이 정확한 형식을 이해하도록 함
-                enhanced_prompt = f"""{enhanced_prompt} Output matching scenes only as START-END=Description using timestamp format SS-SS=Description. Do not repeat the same or similar descriptions for the same timestamp. Each timestamp should have a unique description."""
+                # 프롬프트 축약: 응답 시간 단축을 위해 최소한의 규칙만 포함
+                enhanced_prompt = f"""{enhanced_prompt}
+
+CRITICAL: 정확히 1개의 장면만 출력하세요. 여러 개 출력하지 마세요.
+출력 형식: "시작초-끝초=설명" (예: "0.00-20.00=여성이 걷고 있습니다")
+- 반드시 숫자-숫자=설명 형식만 사용 (START, END, s 접미사 금지)
+- 가장 정확도가 높은 장면 1개만 출력 (2개 이상 출력 금지)
+- 설명은 한국어로 작성
+- 결과 없으면 "No matching scenes found." 한 번만 출력
+- 부정 응답 반복 금지"""
                 logger.info(f"enhanced_prompt: {enhanced_prompt}")
                 
                 # 최적화: duration 계산을 검색 결과 확인 후로 지연
@@ -925,11 +933,18 @@ async def generate_clips(
                     if query_chunk_size < 0:
                         logger.warning(f"chunk_size가 음수입니다 ({query_chunk_size}). 0으로 보정")
                         query_chunk_size = 0
+                # 1개만 반환하도록 파라미터 최적화
                 query_temperature = temperature if temperature is not None else DEFAULT_QUERY_TEMPERATURE
                 query_seed = seed if seed is not None else DEFAULT_QUERY_SEED
-                query_max_tokens = max_new_tokens if max_new_tokens is not None else DEFAULT_QUERY_MAX_TOKENS
+                # max_new_tokens를 줄여서 응답 길이 제한 (1개 장면만 반환하도록 유도)
+                query_max_tokens = max_new_tokens if max_new_tokens is not None else min(DEFAULT_QUERY_MAX_TOKENS, 200)
                 query_top_p = top_p if top_p is not None else DEFAULT_QUERY_TOP_P
                 query_top_k = top_k if top_k is not None else DEFAULT_QUERY_TOP_K
+                
+                # temperature를 낮춰서 더 결정론적이고 일관된 결과 유도
+                if query_temperature > 0.2:
+                    query_temperature = 0.2
+                    logger.info(f"1개 장면만 반환하도록 temperature를 0.2로 조정")
                 
                 # temperature가 0이면 완전히 결정론적인 결과를 위해 top_k를 1로 설정
                 # top_k가 1보다 크면 상위 k개 토큰 중에서 샘플링하므로 랜덤성이 발생함
@@ -1028,8 +1043,13 @@ async def generate_clips(
                             logger.error(f"비디오 파일 로드 실패: {tmp_path}, 오류: {video_error}")
                             duration = 0
                     
+                    timestamp_data = []
                     if duration and duration > 0:
-                        timestamp_data = await parse_timestamps(filtered_query_result, duration)
+                        parsed_timestamps = await parse_timestamps(filtered_query_result, duration)
+                        # 파싱 직후 첫 번째 결과만 선택 (병합/요약 전에 제한하여 시간 절감)
+                        if parsed_timestamps:
+                            timestamp_data = [parsed_timestamps[0]]  # 첫 번째 결과만 사용
+                            logger.info(f"파싱된 타임스탬프 {len(parsed_timestamps)}개 중 첫 번째 결과만 선택 (1개)")
                     else:
                         logger.warning(f"duration이 유효하지 않아 타임스탬프 파싱을 건너뜁니다.")
                     
@@ -1056,7 +1076,8 @@ async def generate_clips(
                     if not valid_timestamps:
                         logger.warning("유효한 타임스탬프가 없습니다.")
                     else:
-                        logger.info(f"클립 생성 시작: {len(valid_timestamps)}개 클립 (병렬 처리)")
+                        # 이미 1개로 제한되었으므로 추가 제한 불필요
+                        logger.info(f"클립 생성 시작: 1개 클립 (가장 정확도 높은 장면만 선택)")
                         
                         # 1. 번역 작업 병렬 처리 (모든 sentence를 동시에 번역) - 주석 처리
                         # sentences_to_translate = []
@@ -1535,7 +1556,7 @@ async def query_and_generate_clips(
         logger.info(f"[최적화] 파일 저장 건너뛰기 (video_id 사용, 클립 생성 없음)")
 
         # 최적화: 여러 동영상을 병렬로 처리 (Query만)
-        async def process_single_video_query(upfile: UploadFile, index: int):
+        async def process_single_video_query(upfile: UploadFile, index: int, prompt_template: str):
             """단일 동영상 Query 처리 함수 (병렬 처리용, 요약 건너뛰기)"""
             file_path = os.path.basename(upfile.filename)
             
@@ -1583,10 +1604,8 @@ async def query_and_generate_clips(
 
                 # Query만 수행 (요약 건너뛰기)
                 try:
-                    # enhanced_prompt = await build_query_prompt(prompt)  # Ollama 번역 기능 주석 처리
-                    enhanced_prompt = prompt  # 번역 없이 원본 사용
-                    enhanced_prompt = f"""{enhanced_prompt} Output matching scenes only as START-END=Description using timestamp format SS-SS=Description. Output the description in Korean. Do not repeat the same or similar descriptions for the same timestamp. Each timestamp should have a unique description."""
-                    logger.info(f"enhanced_prompt: {enhanced_prompt}")
+                    # 공통 프롬프트 템플릿 사용 (사전 생성된 템플릿으로 중복 생성 방지)
+                    enhanced_prompt = prompt_template
                     
                     # duration 계산 (프론트엔드에서 전달받은 값 우선 사용, 없으면 DB에서 가져오기)
                     if duration is None:
@@ -1629,11 +1648,19 @@ async def query_and_generate_clips(
                     else:
                         query_chunk_size = max(0, chunk_size)
                     
+                    # 1개만 반환하도록 파라미터 최적화
                     query_temperature = temperature if temperature is not None else DEFAULT_QUERY_TEMPERATURE
                     query_seed = seed if seed is not None else DEFAULT_QUERY_SEED
-                    query_max_tokens = max_new_tokens if max_new_tokens is not None else DEFAULT_QUERY_MAX_TOKENS
+                    # max_new_tokens를 줄여서 응답 길이 제한 (1개 장면만 반환하도록 유도)
+                    # "시작초-끝초=설명" 형식이면 약 50-100 토큰이면 충분
+                    query_max_tokens = max_new_tokens if max_new_tokens is not None else min(DEFAULT_QUERY_MAX_TOKENS, 200)
                     query_top_p = top_p if top_p is not None else DEFAULT_QUERY_TOP_P
                     query_top_k = top_k if top_k is not None else DEFAULT_QUERY_TOP_K
+                    
+                    # temperature를 낮춰서 더 결정론적이고 일관된 결과 유도
+                    if query_temperature > 0.2:
+                        query_temperature = 0.2
+                        logger.info(f"1개 장면만 반환하도록 temperature를 0.2로 조정")
                     
                     if query_temperature == 0.0 and query_top_k > 1:
                         logger.info(f"temperature=0이므로 결정론적 결과를 위해 top_k를 {query_top_k}에서 1로 변경")
@@ -1662,23 +1689,68 @@ async def query_and_generate_clips(
                         if not query_result:
                             query_result = None
                     
+                    # 부정 응답 선차단: 조기 종료로 후처리 시간 절감
+                    if query_result:
+                        query_result_str = str(query_result).strip()
+                        query_result_lower = query_result_str.lower()
+                        
+                        # 부정 응답 패턴 확인
+                        negative_patterns = [
+                            "no matching scenes found",
+                            "여성이 등장하는 장면은 없습니다",
+                            "등장하는 장면은 없습니다",
+                            "등장하지 않습니다",
+                            "등장하지 않았습니다",
+                            "등장하지 않음",
+                            "없습니다",
+                            "not found",
+                            "no scenes"
+                        ]
+                        
+                        # 전체 응답이 부정 패턴이면 즉시 종료
+                        if any(pattern in query_result_lower for pattern in negative_patterns):
+                            # 타임스탬프 형식이 포함되어 있어도, 모든 줄이 부정 응답이면 제외
+                            lines = query_result_str.split('\n')
+                            valid_lines = [line for line in lines if re.search(r'\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?\s*=', line.strip())]
+                            
+                            # 유효한 타임스탬프 줄이 없거나, 모든 유효한 줄이 부정 응답이면 제외
+                            if not valid_lines:
+                                logger.info(f"부정 응답 감지, 조기 종료: {query_result_str[:100]}")
+                                query_result = None
+                            else:
+                                # 유효한 줄 중 부정 응답 비율 확인
+                                negative_count = sum(1 for line in valid_lines if any(pattern in line.lower() for pattern in ["등장하지 않", "없습니다", "not found", "no scenes"]))
+                                if negative_count == len(valid_lines):
+                                    logger.info(f"모든 타임스탬프가 부정 응답, 조기 종료: {query_result_str[:200]}")
+                                    query_result = None
+                    
                     # 타임스탬프 파싱 및 클립 생성 (기존 로직 재사용)
                     filtered_query_result = None
                     if query_result:
                         lines = str(query_result).split('\n')
                         filtered_lines = []
+                        negative_keywords = ["등장하지 않", "없습니다", "not found", "no scenes", "등장하지 않았습니다"]
+                        
                         for line in lines:
                             line = line.strip()
                             if not line:
                                 continue
-                            if '=' in line:
+                            
+                            # 엄격한 형식만 허용: 숫자-숫자=Description (줄 시작부터, s 접미사 없음)
+                            if re.match(r'^\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?\s*=.+$', line):
+                                # 부정 응답이 포함된 줄은 제외
+                                description = line.split('=', 1)[1] if '=' in line else ""
+                                if any(keyword in description.lower() for keyword in negative_keywords):
+                                    logger.debug(f"부정 응답 포함 줄 제외: {line[:100]}")
+                                    continue
+                                filtered_lines.append(line)
+                            elif '=' in line:
                                 parts = line.split('=', 1)
                                 if len(parts) == 2:
                                     description = parts[1].strip()
-                                    if description.lower().startswith('no '):
-                                        logger.info(f"'No'로 시작하는 결과 제외: {line}")
+                                    if description.lower().startswith('no ') or any(keyword in description.lower() for keyword in negative_keywords):
+                                        logger.debug(f"부정 응답 제외: {line[:100]}")
                                         continue
-                            filtered_lines.append(line)
                         
                         if filtered_lines:
                             filtered_query_result = '\n'.join(filtered_lines)
@@ -1686,7 +1758,11 @@ async def query_and_generate_clips(
                     timestamp_data = []
                     if filtered_query_result:
                         if duration and duration > 0:
-                            timestamp_data = await parse_timestamps(filtered_query_result, duration)
+                            parsed_timestamps = await parse_timestamps(filtered_query_result, duration)
+                            # 파싱 직후 첫 번째 결과만 선택 (병합/요약 전에 제한하여 시간 절감)
+                            if parsed_timestamps:
+                                timestamp_data = [parsed_timestamps[0]]  # 첫 번째 결과만 사용
+                                logger.info(f"파싱된 타임스탬프 {len(parsed_timestamps)}개 중 첫 번째 결과만 선택 (1개)")
                     
                     # 클립 생성 (기존 로직 재사용)
                     base_name, _ = os.path.splitext(file_path)
@@ -1702,8 +1778,9 @@ async def query_and_generate_clips(
                                 start_time < end_time):
                                 valid_timestamps.append((start_time, end_time, sentence))
                         
+                        # 이미 1개로 제한되었으므로 추가 제한 불필요
                         if valid_timestamps:
-                            logger.info(f"클립 생성 시작: {len(valid_timestamps)}개 클립 (병렬 처리)")
+                            logger.info(f"클립 생성 시작: 1개 클립 (가장 정확도 높은 장면만 선택)")
                             
                             # 번역 작업 병렬 처리 - 주석 처리
                             # sentences_to_translate = [s for _, _, s in valid_timestamps if s and s.strip()]
@@ -1810,9 +1887,20 @@ async def query_and_generate_clips(
                     "error": str(e)
                 }
 
+        # 병렬 발사 최적화: 공통 프롬프트 템플릿 사전 생성
+        prompt_template = f"""{prompt}
+
+CRITICAL: 정확히 1개의 장면만 출력하세요. 여러 개 출력하지 마세요.
+출력 형식: "시작초-끝초=설명" (예: "0.00-20.00=여성이 걷고 있습니다")
+- 반드시 숫자-숫자=설명 형식만 사용 (START, END, s 접미사 금지)
+- 가장 정확도가 높은 장면 1개만 출력 (2개 이상 출력 금지)
+- 설명은 한국어로 작성
+- 결과 없으면 "No matching scenes found." 한 번만 출력
+- 부정 응답 반복 금지"""
+        
         # 여러 동영상을 병렬로 처리
         logger.info(f"[QUERY-ONLY] {len(upload_list)}개 동영상 병렬 처리 시작")
-        process_tasks = [process_single_video_query(upfile, idx) for idx, upfile in enumerate(upload_list)]
+        process_tasks = [process_single_video_query(upfile, idx, prompt_template) for idx, upfile in enumerate(upload_list)]
         results = await asyncio.gather(*process_tasks, return_exceptions=True)
         
         # 결과 수집 및 클립 추출 여부 확인 (파일 삭제 전에 수행)

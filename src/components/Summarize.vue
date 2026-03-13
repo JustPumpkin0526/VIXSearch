@@ -916,12 +916,13 @@ const zoomCurrentTime = ref(0); // 확대 모달 현재 시간
 const zoomDuration = ref(0); // 확대 모달 전체 길이
 let modalMouseDownPos = { x: 0, y: 0 }; // 모달 배경 클릭 감지용
 const settingStore = useSettingStore();
+const summaryVideoStore = useSummaryVideoStore();
+const videoFileStore = useVideoFileStore();
 const videoFiles = ref([]); // Summarize 메뉴의 로컬 동영상 배열
 // 원래 프롬프트 값 저장 (이미지가 없을 때 복원용)
 const originalCaptionPrompt = ref(null);
 const originalAggregationPrompt = ref(null);
 // videoUrls 제거: 템플릿에서 사용되지 않아 메모리 관리 단순화
-const summaryVideoStore = useSummaryVideoStore();
 // 샘플 동영상 경로 (서버에서 제공하는 정적 파일 경로 사용)
 const sampleVideoPath = ref(null); // 동적으로 설정
 const sampleVideoRef = ref(null); // 샘플 동영상 ref
@@ -1396,8 +1397,12 @@ async function loadVideosFromStore(loadSummaries = true) {
           };
           
           // videoFileStore에도 File 객체 저장 (다른 메뉴에서 재사용)
-          if (hasFile && v.file instanceof File) {
-            videoFileStore.setFileByVideo(videoObj, v.file);
+          if (hasFile && v.file instanceof File && typeof videoFileStore !== 'undefined' && videoFileStore) {
+            try {
+              videoFileStore.setFileByVideo(videoObj, v.file);
+            } catch (error) {
+              console.warn('videoFileStore.setFileByVideo 실패:', error);
+            }
           }
           
           // 지원하지 않는 형식인 경우 MP4로 변환 요청
@@ -2301,8 +2306,12 @@ async function processUploadFiles(files, { insertAtTop = false } = {}) {
         const originUrl = v.originUrl || displayUrl;
         
         // videoFileStore에도 File 객체 저장 (다른 메뉴에서 재사용)
-        if (v.file instanceof File) {
-          videoFileStore.setFileByVideo(v, v.file);
+        if (v.file instanceof File && typeof videoFileStore !== 'undefined' && videoFileStore) {
+          try {
+            videoFileStore.setFileByVideo(v, v.file);
+          } catch (error) {
+            console.warn('videoFileStore.setFileByVideo 실패:', error);
+          }
         }
         
         return {
@@ -3299,6 +3308,12 @@ function updateSummaryVideoStore() {
     return;
   }
   
+  // videoFileStore가 정의되지 않은 경우 조기 반환
+  if (typeof videoFileStore === 'undefined') {
+    console.warn('videoFileStore가 정의되지 않았습니다. updateSummaryVideoStore를 건너뜁니다.');
+    return;
+  }
+  
   const userId = localStorage.getItem("vss_user_id");
   if (!userId) {
     return;
@@ -3325,8 +3340,12 @@ function updateSummaryVideoStore() {
     }
     
     // videoFileStore에도 File 객체 저장 (다른 메뉴에서 재사용)
-    if (v.file instanceof File) {
-      videoFileStore.setFileByVideo(v, v.file);
+    if (v.file instanceof File && videoFileStore) {
+      try {
+        videoFileStore.setFileByVideo(v, v.file);
+      } catch (error) {
+        console.warn('videoFileStore.setFileByVideo 실패:', error);
+      }
     }
     
     return {
@@ -3478,8 +3497,12 @@ function handleVideoError(videoId, event) {
         const originUrl = v.originUrl || displayUrl;
         
         // videoFileStore에도 File 객체 저장 (다른 메뉴에서 재사용)
-        if (v.file instanceof File) {
-          videoFileStore.setFileByVideo(v, v.file);
+        if (v.file instanceof File && typeof videoFileStore !== 'undefined' && videoFileStore) {
+          try {
+            videoFileStore.setFileByVideo(v, v.file);
+          } catch (error) {
+            console.warn('videoFileStore.setFileByVideo 실패:', error);
+          }
         }
         
         return {
