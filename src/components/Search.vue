@@ -358,10 +358,13 @@
                     </p>
                     <div v-for="clip in message.clips" :key="clip.id"
                       :class="message.role === 'assistant' ? 'flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded-xl transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-600' : 'flex items-center gap-3 p-3 bg-green-600/80 rounded-xl transition-all duration-200 hover:bg-green-600'">
-                      <video :src="getClipUrl(clip.url)" class="w-32 h-20 object-cover rounded cursor-pointer flex-shrink-0" preload="metadata"
+                      <video 
+                        :src="getClipThumbnailUrl(clip)" 
+                        class="w-32 h-20 object-cover rounded cursor-pointer flex-shrink-0" 
+                        preload="metadata"
                         @click.stop="zoomClip(clip)"
-                        @error="(e) => console.warn('clip thumbnail error', e, clip.url)"
-                        @loadedmetadata="(e) => { if (e.target) e.target.currentTime = 0.1; }"
+                        @error="(e) => console.warn('clip thumbnail error', e, clip)"
+                        @loadedmetadata="(e) => { if (e.target && clip.start_time !== undefined) e.target.currentTime = Math.max(0.1, clip.start_time || 0.1); else if (e.target) e.target.currentTime = 0.1; }"
                         crossorigin="anonymous"></video>
                       <div class="flex-1 min-w-0">
                         <p
@@ -757,6 +760,21 @@
           </div>
         </div>
       </Transition>
+    </Teleport>
+
+    <!-- 동영상 로딩 모달 (Management와 동일한 디자인) -->
+    <Teleport to="body">
+      <div v-if="showVideosLoadingModal" class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+        <div class="w-[20vw] h-[15vh] bg-white dark:bg-gray-900 rounded-2xl shadow-2xl px-10 py-8 flex flex-col items-center gap-4 animate-fade-in">
+          <svg class="w-14 h-14 text-emerald-500 animate-spin-slow" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+          </svg>
+          <div class="text-lg font-semibold text-gray-700 dark:text-gray-200 mt-2">
+            {{ settingStore.language === 'ko' ? '로딩 중...' : 'Loading...' }}
+          </div>
+        </div>
+      </div>
     </Teleport>
 
     <!-- 채팅 탭 컨텍스트 메뉴 -->
@@ -1640,6 +1658,7 @@
 import { ref, onMounted, onBeforeUnmount, onActivated, computed, nextTick, watch } from "vue";
 import { useRoute } from 'vue-router';
 import { useSettingStore } from '@/stores/settingStore';
+import { useVideoFileStore } from '@/stores/videoFileStore';
 import { getApiBaseUrl } from '@/utils/apiConfig';
 import { marked } from 'marked';
 import { formatTime, getCurrentTime } from '@/utils/formatUtils';
@@ -1656,6 +1675,7 @@ const VIDEO_LIST_ROWS_PER_PAGE = 8;
 
 // ==================== 스토어 및 라우터 ====================
 const settingStore = useSettingStore();
+const videoFileStore = useVideoFileStore();
 const route = useRoute();
 
 // ==================== 다국어 지원 ====================
@@ -1974,6 +1994,9 @@ const reportSubmenu = ref({ visible: false, messageIndex: null, x: 0, y: 0 });
 const reportListSubmenu = ref({ visible: false, messageIndex: null, x: 0, y: 0, reports: [] });
 // 보고서 생성 관련 상태
 const isCreatingReport = ref(false);
+
+// ==================== 로딩 모달 상태 ====================
+const showVideosLoadingModal = ref(false);
 const reportSuccess = ref(false);
 const reportLoadingMessage = ref('');
 const reportSuccessMessage = ref('');
@@ -2239,6 +2262,31 @@ function createNewChat(videos = selectedVideos.value, signature) {
   items.value = videoList.length > 0 ? [...videoList] : [];
   selectedIds.value = [];
 
+  // 최적화: 동영상 파일 객체를 미리 로드 (검색 실행 시 지연 방지)
+  if (videoList.length > 0) {
+    const preloadVideoFiles = () => {
+      const videosToPreload = items.value.filter(video => {
+        // File 객체가 없고 displayUrl이 있는 동영상만 로드
+        return !(video.file instanceof File) && video.displayUrl && !video.displayUrl.startsWith('blob:');
+      });
+      
+      if (videosToPreload.length > 0) {
+        console.log(`[Search] 새 채팅 생성 시 ${videosToPreload.length}개 동영상 파일 객체 미리 로드 시작`);
+        // 병렬로 파일 객체 로드 (블로킹하지 않음)
+        Promise.all(videosToPreload.map(video => ensureVideoFile(video))).then(results => {
+          const successCount = results.filter(r => r !== null).length;
+          console.log(`[Search] 파일 객체 미리 로드 완료: ${successCount}/${videosToPreload.length}개 성공`);
+        }).catch(err => {
+          console.warn('[Search] 파일 객체 미리 로드 중 오류:', err);
+        });
+      }
+    };
+    
+    // nextTick을 사용하여 items.value가 업데이트된 후 파일 객체 로드
+    nextTick(() => {
+      preloadVideoFiles();
+    });
+  }
 
   nextTick(() => {
     scrollToBottom();
@@ -2326,7 +2374,7 @@ function cancelEditChatName() {
   editingChatName.value = '';
 }
 
-function switchChat(index) {
+async function switchChat(index) {
   if (index >= 0 && index < chatSessions.value.length) {
     // 현재 채팅의 동영상 리스트를 저장
     const currentChat = chatSessions.value[currentChatIndex.value];
@@ -2354,6 +2402,60 @@ function switchChat(index) {
 
     currentChatIndex.value = index;
     
+    // 동영상이 있는 경우 로딩 모달 표시 및 파일 객체 로드
+    if (items.value.length > 0) {
+      // 로딩 모달 표시
+      showVideosLoadingModal.value = true;
+      
+      try {
+        // 파일 객체 로드
+        await nextTick();
+        
+        const videosToPreload = items.value.filter(video => {
+          // File 객체가 없고 displayUrl이 있는 동영상만 로드
+          return !(video.file instanceof File) && video.displayUrl && !video.displayUrl.startsWith('blob:');
+        });
+        
+        if (videosToPreload.length > 0) {
+          console.log(`[Search] 채팅창 전환 시 ${videosToPreload.length}개 동영상 파일 객체 미리 로드 시작`);
+          try {
+            // 병렬로 파일 객체 로드 (로딩 모달이 표시된 상태에서 대기)
+            const results = await Promise.all(videosToPreload.map(video => ensureVideoFile(video)));
+            const successCount = results.filter(r => r !== null).length;
+            console.log(`[Search] 파일 객체 미리 로드 완료: ${successCount}/${videosToPreload.length}개 성공`);
+          } catch (err) {
+            console.warn('[Search] 파일 객체 미리 로드 중 오류:', err);
+          }
+        }
+        
+        // 썸네일 로딩 완료 대기 (이미지가 모두 로드될 때까지)
+        await nextTick();
+        // videoListGridRef 내부의 이미지와 비디오 요소 찾기
+        if (videoListGridRef.value) {
+          const imageElements = videoListGridRef.value.querySelectorAll('img, video');
+          if (imageElements.length > 0) {
+            const imageLoadPromises = Array.from(imageElements).map(img => {
+              return new Promise((resolve) => {
+                if (img.complete || (img.tagName === 'VIDEO' && img.readyState >= 2)) {
+                  resolve();
+                } else {
+                  img.onload = resolve;
+                  img.onerror = resolve; // 에러가 나도 진행
+                  // 타임아웃 설정 (3초 후 강제 진행)
+                  setTimeout(resolve, 3000);
+                }
+              });
+            });
+            await Promise.all(imageLoadPromises);
+          }
+        }
+      } catch (error) {
+        console.error('[Search] switchChat 중 오류:', error);
+      } finally {
+        // 로딩 모달 숨김
+        showVideosLoadingModal.value = false;
+      }
+    }
     
     nextTick(() => {
       scrollToBottom();
@@ -3302,11 +3404,20 @@ function removeUploadedImage() {
 async function ensureVideoFile(video) {
   // 최적화: 이미 File 객체가 있으면 fetch를 건너뛰기
   if (video.file instanceof File) {
+    // Store에도 저장 (다른 메뉴에서 재사용)
+    videoFileStore.setFileByVideo(video, video.file);
     return video.file;
   }
 
   if (!video || !video.displayUrl) {
     return null;
+  }
+
+  // Store에서 먼저 확인 (다른 메뉴에서 이미 로드한 경우)
+  const cachedFile = videoFileStore.getFileByVideo(video);
+  if (cachedFile instanceof File) {
+    video.file = cachedFile;
+    return cachedFile;
   }
 
   // blob URL의 경우 fetch를 수행하지 않음 (반복 요청 방지)
@@ -3328,6 +3439,8 @@ async function ensureVideoFile(video) {
     const filename = video.title || `video-${video.id}.mp4`;
     const file = new File([blob], filename, { type: blob.type || 'video/mp4' });
     video.file = file;
+    // Store에 저장 (다른 메뉴에서 재사용)
+    videoFileStore.setFileByVideo(video, file);
     return file;
   } catch (error) {
     if (isAbortError(error)) {
@@ -3351,20 +3464,34 @@ async function collectSelectedFiles(videos = null) {
   const results = [];
   
   // 최적화: 이미 File 객체가 있는 비디오는 즉시 추가
-  // File 객체가 없는 비디오는 나중에 필요할 때만 fetch
+  const videosWithFile = [];
+  const videosWithoutFile = [];
+  
   for (const video of targetVideos) {
-    // 이미 File 객체가 있으면 즉시 사용
     if (video.file instanceof File) {
+      // 이미 File 객체가 있으면 즉시 추가
       results.push({ file: video.file, video });
-      continue;
-    }
-    
-    // File 객체가 없으면 fetch (검색에 필요하므로)
-    const file = await ensureVideoFile(video);
-    if (file) {
-      results.push({ file, video });
+    } else {
+      // File 객체가 없는 비디오는 별도로 수집
+      videosWithoutFile.push(video);
     }
   }
+  
+  // 최적화: File 객체가 없는 비디오들을 병렬로 fetch (순차 처리 → 병렬 처리)
+  if (videosWithoutFile.length > 0) {
+    const filePromises = videosWithoutFile.map(async (video) => {
+      const file = await ensureVideoFile(video);
+      return file ? { file, video } : null;
+    });
+    
+    const fetchedFiles = await Promise.all(filePromises);
+    fetchedFiles.forEach(item => {
+      if (item) {
+        results.push(item);
+      }
+    });
+  }
+  
   return results;
 }
 
@@ -3384,6 +3511,22 @@ async function handleSearch() {
   }
   
   if (chatSessions.value.length === 0) return;
+  
+  // 동영상이 선택되지 않은 경우 차단
+  if (selectedVideos.value.length === 0) {
+    const currentChat = chatSessions.value[currentChatIndex.value];
+    if (currentChat) {
+      currentChat.messages.push({
+        role: 'assistant',
+        content: settingStore.language === 'ko' 
+          ? '검색하려면 먼저 동영상을 선택해주세요.' 
+          : 'Please select at least one video to search.',
+        timestamp: getCurrentTime()
+      });
+      scrollToBottom();
+    }
+    return;
+  }
 
   const currentChat = chatSessions.value[currentChatIndex.value];
 
@@ -3427,65 +3570,42 @@ async function handleSearch() {
   isSearching.value = true;
 
   try {
-    // 최적화: 검색 전에는 이미 File 객체가 있는 비디오만 수집
-    // File 객체가 없는 비디오는 검색 결과가 나온 후에만 로드
-    const fileEntries = await collectSelectedFiles();
-    if (fileEntries.length === 0) {
-      currentChat.messages.push({
-        role: 'assistant',
-        content: settingStore.language === 'ko' ? '선택된 동영상을 가져오지 못했습니다. 다시 시도해주세요.' : 'Failed to load selected videos. Please try again.',
-        timestamp: getCurrentTime()
-      });
-      return;
-    }
+    // 최적화: 파일 객체가 이미 모두 로드되어 있는지 확인
+    // 모두 로드되어 있으면 동기적으로 처리 (collectSelectedFiles 호출 불필요)
+    const allFilesLoaded = selectedVideos.value.every(v => v.file instanceof File);
+    let fileEntries;
     
-    // 최적화: File 객체가 없는 비디오는 검색 결과 확인 후에만 로드
-    // 검색을 위해 최소한의 파일만 필요 (백엔드에서 video_id로 검색 가능)
-    const videosWithoutFile = selectedVideos.value.filter(v => !(v.file instanceof File));
-    if (videosWithoutFile.length > 0) {
-      console.log(`[최적화] File 객체가 없는 ${videosWithoutFile.length}개 비디오는 검색 결과 확인 후 로드됩니다.`);
+    if (allFilesLoaded) {
+      // 모든 파일 객체가 이미 로드되어 있으면 동기적으로 변환
+      console.log('[Search] 모든 파일 객체가 이미 로드됨, 동기 처리');
+      fileEntries = selectedVideos.value.map(video => ({
+        file: video.file,
+        video: video
+      }));
+    } else {
+      // 일부 파일 객체가 없으면 collectSelectedFiles 호출 (비동기)
+      console.log('[Search] 일부 파일 객체가 없음, 비동기 로드');
+      fileEntries = await collectSelectedFiles();
+      if (fileEntries.length === 0) {
+        currentChat.messages.push({
+          role: 'assistant',
+          content: settingStore.language === 'ko' ? '선택된 동영상을 가져오지 못했습니다. 다시 시도해주세요.' : 'Failed to load selected videos. Please try again.',
+          timestamp: getCurrentTime()
+        });
+        return;
+      }
     }
 
     const userId = localStorage.getItem("vss_user_id");
 
     const abortController = createAbortController();
 
-    // 상세 검색: 항상 generate-clips 사용 (클립 생성)
+    // 상세 검색: 요약 상태 확인 후 Summarize와 Query 분리 처리
     if (searchType.value === 'detailed') {
       // 저장된 검색어 사용 (searchInput.value는 이미 비워졌을 수 있음)
       const query = savedQuery || searchInput.value.trim();
       
-      console.log('[Search] 상세 검색: generate-clips 엔드포인트 사용');
-      
-      // 파일명과 video_id 매핑 생성
-      const videoIdMap = {};
-      fileEntries.forEach(({ file, video }) => {
-        const dbId = video.dbId || video.id;
-        if (dbId) {
-          videoIdMap[file.name] = dbId;
-        }
-      });
-      
-      const formData = new FormData();
-      fileEntries.forEach(({ file }) => {
-        formData.append('files', file, file.name);
-        formData.append('prompt', query);
-      });
-      
-      // 이미지가 업로드된 경우 FormData에 추가
-      if (uploadedImage.value) {
-        formData.append('image', uploadedImage.value, uploadedImage.value.name);
-        // 검색 후 이미지 초기화
-        removeUploadedImage();
-      }
-      
-      // user_id와 video_ids 전달 (요약 결과 확인용)
-      if (userId) {
-        formData.append('user_id', userId);
-      }
-      if (Object.keys(videoIdMap).length > 0) {
-        formData.append('video_ids', JSON.stringify(videoIdMap));
-      }
+      console.log('[Search] 상세 검색: 요약 상태 확인 후 Summarize와 Query 분리 처리');
       
       // NaN 방지 헬퍼
       const safeNum = (val, fallback) => {
@@ -3493,65 +3613,453 @@ async function handleSearch() {
         return Number.isFinite(n) ? n : fallback;
       };
       
-      // 공통 파라미터 전달 (query와 summarize 구분 없이 통일)
-      formData.append('chunk_size', safeNum(settingStore.searchChunk, 10));
-      formData.append('top_k', safeNum(settingStore.searchTopK, 80));
-      formData.append('top_p', safeNum(settingStore.searchTopP, 1.0));
-      formData.append('temperature', safeNum(settingStore.searchTemperature, 0.3));
-      formData.append('max_new_tokens', safeNum(settingStore.searchMaxTokens, 1024));
-      formData.append('seed', safeNum(settingStore.searchSeed, 42));
+      // 1단계: 요약 상태 확인 (배치 처리로 최적화)
+      const videosToSummarize = []; // 요약이 필요한 동영상 목록
+      const videosToQuery = []; // Query만 필요한 동영상 목록 (video_id 포함)
       
-      // Summarize 전용 파라미터 전달
-      formData.append('summarize_num_frames_per_chunk', safeNum(settingStore.summarizeNumFramesPerChunk, 0));
-      formData.append('summarize_frame_width', safeNum(settingStore.summarizeFrameWidth, 1920));
-      formData.append('summarize_frame_height', safeNum(settingStore.summarizeFrameHeight, 1080));
-      formData.append('summarize_batch_size', safeNum(settingStore.summarizeBatchSize, 6));
-      formData.append('summarize_rag_batch_size', safeNum(settingStore.summarizeRagBatchSize, 1));
-      formData.append('summarize_rag_top_k', safeNum(settingStore.summarizeRagTopK, 5));
-      formData.append('summarize_summarize_top_p', safeNum(settingStore.summarizeSummarizeTopP, 0.7));
-      formData.append('summarize_summarize_temperature', safeNum(settingStore.summarizeSummarizeTemperature, 0.2));
-      formData.append('summarize_summarize_max_tokens', safeNum(settingStore.summarizeSummarizeMaxTokens, 2048));
-      formData.append('summarize_chat_top_p', safeNum(settingStore.summarizeChatTopP, 0.7));
-      formData.append('summarize_chat_temperature', safeNum(settingStore.summarizeChatTemperature, 0.2));
-      formData.append('summarize_chat_max_tokens', safeNum(settingStore.summarizeChatMaxTokens, 2048));
-      formData.append('summarize_notification_top_p', safeNum(settingStore.summarizeNotificationTopP, 0.7));
-      formData.append('summarize_notification_temperature', safeNum(settingStore.summarizeNotificationTemperature, 0.2));
-      formData.append('summarize_notification_max_tokens', safeNum(settingStore.summarizeNotificationMaxTokens, 2048));
-      formData.append('summarize_enable_audio', settingStore.summarizeEnableAudio ? 'true' : 'false');
+      if (userId) {
+        try {
+          // 모든 선택된 동영상의 VIA 서버 video_id 조회
+          const videosResponse = await fetch(`${API_BASE_URL}/videos?user_id=${userId}`);
+          if (videosResponse.ok) {
+            const videosData = await videosResponse.json();
+            if (videosData.success && videosData.videos) {
+              // video_id 목록 수집
+              const videoIdList = [];
+              const videoIdToEntryMap = {}; // video_id -> {file, video} 매핑
+              
+              for (const { file, video } of fileEntries) {
+                const dbId = video.dbId || video.id;
+                if (dbId) {
+                  const videoInfo = videosData.videos.find(v => v.id === dbId);
+                  if (videoInfo && videoInfo.video_id) {
+                    videoIdList.push(videoInfo.video_id);
+                    videoIdToEntryMap[videoInfo.video_id] = { file, video };
+                  } else {
+                    // video_id가 없으면 요약 필요로 간주
+                    console.log(`[Search] 동영상 ${video.title || video.name}의 VIDEO_ID를 찾을 수 없음, 요약 필요로 간주`);
+                    videosToSummarize.push({ file, video, video_id: null });
+                  }
+                } else {
+                  // dbId가 없으면 요약 필요로 간주
+                  console.log(`[Search] 동영상 ${video.title || video.name}의 DB ID가 없음, 요약 필요로 간주`);
+                  videosToSummarize.push({ file, video, video_id: null });
+                }
+              }
+              
+              // 배치로 요약 상태 확인 (한 번의 API 호출)
+              if (videoIdList.length > 0) {
+                try {
+                  console.log(`[Search] 배치 요약 상태 확인 시작: ${videoIdList.length}개 동영상`);
+                  const batchSummaryResponse = await fetch(
+                    `${API_BASE_URL}/summaries/batch?video_ids=${encodeURIComponent(JSON.stringify(videoIdList))}&user_id=${userId}`
+                  );
+                  
+                  if (batchSummaryResponse.ok) {
+                    const batchSummaryData = await batchSummaryResponse.json();
+                    console.log('[Search] 배치 요약 상태 조회 결과:', batchSummaryData);
+                    
+                    if (batchSummaryData.success && batchSummaryData.results) {
+                      // 각 video_id에 대해 요약 상태 확인
+                      for (const video_id of videoIdList) {
+                        const entry = videoIdToEntryMap[video_id];
+                        if (!entry) continue;
+                        
+                        const { file, video } = entry;
+                        const result = batchSummaryData.results[video_id];
+                        
+                        // result가 있고 success가 true이고 summary가 있으면 요약됨
+                        if (result && result.success === true && result.summary && result.summary.video_id) {
+                          // 이미 요약된 동영상
+                          console.log(`[Search] ✅ 동영상 ${video.title || video.name}은 이미 요약됨 (VIDEO_ID: ${video_id})`);
+                          videosToQuery.push({ file, video, video_id });
+                        } else {
+                          // 요약이 필요한 동영상
+                          console.log(`[Search] ⚠️ 동영상 ${video.title || video.name}은 요약 필요 (VIDEO_ID: ${video_id}, result:`, result, ')');
+                          videosToSummarize.push({ file, video, video_id });
+                        }
+                      }
+                    } else {
+                      // 배치 조회 결과가 없으면 모든 동영상을 요약 필요로 간주
+                      console.warn('[Search] 배치 요약 상태 조회 결과가 없음, 모든 동영상을 요약 필요로 간주');
+                      for (const video_id of videoIdList) {
+                        const entry = videoIdToEntryMap[video_id];
+                        if (entry) {
+                          videosToSummarize.push({ ...entry, video_id });
+                        }
+                      }
+                    }
+                  } else {
+                    // 배치 조회 실패 시 모든 동영상을 요약 필요로 간주
+                    const errorText = await batchSummaryResponse.text();
+                    console.warn(`[Search] 배치 요약 상태 조회 실패 (${batchSummaryResponse.status}):`, errorText);
+                    for (const video_id of videoIdList) {
+                      const entry = videoIdToEntryMap[video_id];
+                      if (entry) {
+                        videosToSummarize.push({ ...entry, video_id });
+                      }
+                    }
+                  }
+                } catch (error) {
+                  console.error('[Search] 배치 요약 상태 확인 중 오류:', error);
+                  // 오류 발생 시 모든 동영상을 요약 필요로 간주
+                  for (const video_id of videoIdList) {
+                    const entry = videoIdToEntryMap[video_id];
+                    if (entry) {
+                      videosToSummarize.push({ ...entry, video_id });
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('[Search] 요약 상태 확인 중 오류:', error);
+          // 오류 발생 시 모든 동영상을 요약 필요로 간주
+          fileEntries.forEach(({ file, video }) => {
+            videosToSummarize.push({ file, video, video_id: null });
+          });
+        }
+      } else {
+        // userId가 없으면 모든 동영상을 요약 필요로 간주
+        fileEntries.forEach(({ file, video }) => {
+          videosToSummarize.push({ file, video, video_id: null });
+        });
+      }
       
-      const response = await fetch(`${API_BASE_URL}/generate-clips`, {
-        method: 'POST',
-        body: formData,
-        signal: abortController.signal
-      });
+      // 2단계: 요약되지 않은 동영상에 대해 Summarize 수행 (병렬 처리)
+      // 최적화: 이미 요약된 동영상은 바로 Query 목록에 추가되어 있으므로, 요약이 필요한 동영상만 처리
+      const summarizePromise = videosToSummarize.length > 0 ? (async () => {
+        console.log(`[Search] ${videosToSummarize.length}개 동영상 요약 시작 (병렬 처리)`);
+        
+        // 요약용 프롬프트 생성 (기본 프롬프트 사용)
+        const summarizePrompt = settingStore.language === 'ko' 
+          ? '동영상의 주요 내용을 요약해주세요.'
+          : 'Please summarize the main content of the video.';
+        
+        // 각 동영상에 대해 요약 수행 (병렬 처리)
+        const summarizePromises = videosToSummarize.map(async ({ file, video, video_id }) => {
+          try {
+            const summarizeFormData = new FormData();
+            
+            // video_id가 있으면 video_id만 전달, 없으면 파일 전달
+            if (video_id) {
+              summarizeFormData.append('video_id', video_id);
+            } else {
+              summarizeFormData.append('file', file, file.name);
+            }
+            
+            summarizeFormData.append('prompt', summarizePrompt);
+            summarizeFormData.append('csprompt', '');
+            summarizeFormData.append('saprompt', '');
+            summarizeFormData.append('chunk_duration', safeNum(settingStore.summarizeChunk, -1));
+            summarizeFormData.append('num_frames_per_chunk', safeNum(settingStore.summarizeNumFramesPerChunk, 0));
+            summarizeFormData.append('frame_width', safeNum(settingStore.summarizeFrameWidth, 1920));
+            summarizeFormData.append('frame_height', safeNum(settingStore.summarizeFrameHeight, 1080));
+            summarizeFormData.append('top_k', safeNum(settingStore.summarizeTopk, 80));
+            summarizeFormData.append('top_p', safeNum(settingStore.summarizeTopp, 1.0));
+            summarizeFormData.append('temperature', safeNum(settingStore.summarizeTemp, 0.3));
+            // VIA 서버 제약사항: max_tokens는 최대 1024까지만 허용
+            const maxTokensValue = safeNum(settingStore.summarizeMaxTokens, 2048);
+            summarizeFormData.append('max_tokens', Math.min(maxTokensValue, 1024));
+            summarizeFormData.append('seed', safeNum(settingStore.summarizeSeed, 42));
+            summarizeFormData.append('batch_size', safeNum(settingStore.summarizeBatchSize, 6));
+            summarizeFormData.append('rag_batch_size', safeNum(settingStore.summarizeRagBatchSize, 1));
+            summarizeFormData.append('rag_top_k', safeNum(settingStore.summarizeRagTopK, 5));
+            summarizeFormData.append('summary_top_p', safeNum(settingStore.summarizeSummarizeTopP, 0.7));
+            summarizeFormData.append('summary_temperature', safeNum(settingStore.summarizeSummarizeTemperature, 0.2));
+            summarizeFormData.append('summary_max_tokens', safeNum(settingStore.summarizeSummarizeMaxTokens, 2048));
+            summarizeFormData.append('chat_top_p', safeNum(settingStore.summarizeChatTopP, 0.7));
+            summarizeFormData.append('chat_temperature', safeNum(settingStore.summarizeChatTemperature, 0.2));
+            summarizeFormData.append('chat_max_tokens', safeNum(settingStore.summarizeChatMaxTokens, 2048));
+            summarizeFormData.append('alert_top_p', safeNum(settingStore.summarizeNotificationTopP, 0.7));
+            summarizeFormData.append('alert_temperature', safeNum(settingStore.summarizeNotificationTemperature, 0.2));
+            summarizeFormData.append('alert_max_tokens', safeNum(settingStore.summarizeNotificationMaxTokens, 2048));
+            summarizeFormData.append('enable_audio', settingStore.summarizeEnableAudio);
+            summarizeFormData.append('enable_chat_history', 'false');
+            summarizeFormData.append('user_id', userId);
+            
+            const summarizeResponse = await fetch(`${API_BASE_URL}/vss-summarize`, {
+              method: 'POST',
+              body: summarizeFormData,
+              signal: abortController.signal
+            });
+            
+            if (!summarizeResponse.ok) {
+              const errorText = await summarizeResponse.text();
+              console.error(`[Search] 동영상 ${video.title || video.name} 요약 실패 (${summarizeResponse.status}):`, errorText);
+              throw new Error(`Summarize HTTP error ${summarizeResponse.status}: ${errorText}`);
+            }
+            
+            const summarizeData = await summarizeResponse.json();
+            const summarizedVideoId = summarizeData.video_id || video_id;
+            
+            console.log(`[Search] ✅ 동영상 ${video.title || video.name} 요약 완료 (VIDEO_ID: ${summarizedVideoId})`);
+            
+            // 요약 완료 후 Query 목록에 추가
+            return { file, video, video_id: summarizedVideoId };
+          } catch (error) {
+            console.error(`[Search] ❌ 동영상 ${video.title || video.name} 요약 실패:`, error);
+            // 요약 실패 시에도 Query 시도 (video_id가 있으면)
+            if (video_id) {
+              console.log(`[Search] ⚠️ 요약 실패했지만 video_id가 있어 Query 시도: ${video_id}`);
+              return { file, video, video_id };
+            }
+            return null;
+          }
+        });
+        
+        // 모든 요약 작업 완료 대기 (병렬 처리)
+        const summarizeResults = await Promise.all(summarizePromises);
+        
+        // 성공한 요약 결과를 Query 목록에 추가
+        const successfulSummaries = summarizeResults.filter(r => r && r.video_id);
+        successfulSummaries.forEach(result => {
+          videosToQuery.push(result);
+        });
+        
+        console.log(`[Search] 요약 완료: ${successfulSummaries.length}/${videosToSummarize.length}개 성공`);
+        return successfulSummaries;
+      })() : Promise.resolve([]);
+      
+      // 3단계: 모든 동영상에 대해 Query 수행 (클립 생성 포함)
+      // 최적화: 이미 요약된 동영상은 바로 Query 시작, 요약이 필요한 동영상은 요약 완료 후 Query 시작
+      
+      // groupedClipItems와 clips_extracted를 상위 스코프에 선언
+      let groupedClipItems = [];
+      let clips_extracted = false;
+      
+      // 이미 요약된 동영상이 있으면 바로 Query 시작 (요약 완료를 기다리지 않음)
+      if (videosToQuery.length > 0) {
+        console.log(`[Search] ${videosToQuery.length}개 동영상 Query 시작 (이미 요약된 동영상)`);
+        
+        // 이미 요약된 동영상에 대한 Query를 먼저 시작 (요약 작업과 병렬 처리)
+        const queryForSummarizedVideos = async () => {
+          const queryFormData = new FormData();
+          const videoIdMap = {};
+          
+          const videoDurationMap = {}; // filename -> duration 매핑
+          videosToQuery.forEach(({ file, video, video_id }) => {
+            const dbId = video.dbId || video.id;
+            if (dbId) {
+              videoIdMap[file.name] = dbId;
+            }
+            // duration 값 추가 (프론트엔드에서 가져온 값)
+            if (video.duration && isFinite(video.duration) && video.duration > 0) {
+              videoDurationMap[file.name] = video.duration;
+            }
+            queryFormData.append('files', file, file.name);
+          });
+          
+          queryFormData.append('prompt', query);
+          
+          if (uploadedImage.value) {
+            queryFormData.append('image', uploadedImage.value, uploadedImage.value.name);
+            removeUploadedImage();
+          }
+          
+          if (userId) {
+            queryFormData.append('user_id', userId);
+          }
+          if (Object.keys(videoIdMap).length > 0) {
+            queryFormData.append('video_ids', JSON.stringify(videoIdMap));
+          }
+          if (Object.keys(videoDurationMap).length > 0) {
+            queryFormData.append('video_durations', JSON.stringify(videoDurationMap));
+          }
+          
+          queryFormData.append('chunk_size', safeNum(settingStore.searchChunk, 10));
+          queryFormData.append('top_k', safeNum(settingStore.searchTopK, 80));
+          queryFormData.append('top_p', safeNum(settingStore.searchTopP, 1.0));
+          queryFormData.append('temperature', safeNum(settingStore.searchTemperature, 0.3));
+          queryFormData.append('max_new_tokens', safeNum(settingStore.searchMaxTokens, 1024));
+          queryFormData.append('seed', safeNum(settingStore.searchSeed, 42));
+          queryFormData.append('skip_summarize', 'true');
+          queryFormData.append('skip_clip_generation', 'true'); // 클립 생성 건너뛰기 (원본 동영상 재생용)
+          
+          const response = await fetch(`${API_BASE_URL}/query-and-generate-clips`, {
+            method: 'POST',
+            body: queryFormData,
+            signal: abortController.signal
+          });
+          
+          if (!response.ok) {
+            throw new Error(`HTTP error ${response.status}`);
+          }
+          
+          return await response.json();
+        };
+        
+        // 요약 작업과 Query 작업을 병렬로 실행
+        const [summarizeResults, queryResults] = await Promise.all([
+          summarizePromise,
+          queryForSummarizedVideos()
+        ]);
+        
+        // 요약 완료된 동영상도 Query에 추가
+        if (summarizeResults && summarizeResults.length > 0) {
+          console.log(`[Search] ${summarizeResults.length}개 동영상 요약 완료, 추가 Query 시작`);
+          
+          // 요약 완료된 동영상에 대한 Query 수행
+          const queryFormDataForNewSummaries = new FormData();
+          const videoIdMapForNewSummaries = {};
+          
+          summarizeResults.forEach(({ file, video, video_id }) => {
+            const dbId = video.dbId || video.id;
+            if (dbId) {
+              videoIdMapForNewSummaries[file.name] = dbId;
+            }
+            queryFormDataForNewSummaries.append('files', file, file.name);
+          });
+          
+          queryFormDataForNewSummaries.append('prompt', query);
+          
+          if (userId) {
+            queryFormDataForNewSummaries.append('user_id', userId);
+          }
+          if (Object.keys(videoIdMapForNewSummaries).length > 0) {
+            queryFormDataForNewSummaries.append('video_ids', JSON.stringify(videoIdMapForNewSummaries));
+          }
+          
+          queryFormDataForNewSummaries.append('chunk_size', safeNum(settingStore.searchChunk, 10));
+          queryFormDataForNewSummaries.append('top_k', safeNum(settingStore.searchTopK, 80));
+          queryFormDataForNewSummaries.append('top_p', safeNum(settingStore.searchTopP, 1.0));
+          queryFormDataForNewSummaries.append('temperature', safeNum(settingStore.searchTemperature, 0.3));
+          queryFormDataForNewSummaries.append('max_new_tokens', safeNum(settingStore.searchMaxTokens, 1024));
+          queryFormDataForNewSummaries.append('seed', safeNum(settingStore.searchSeed, 42));
+          queryFormDataForNewSummaries.append('skip_summarize', 'true');
+          
+          const responseForNewSummaries = await fetch(`${API_BASE_URL}/query-and-generate-clips`, {
+            method: 'POST',
+            body: queryFormDataForNewSummaries,
+            signal: abortController.signal
+          });
+          
+          if (responseForNewSummaries.ok) {
+            const dataForNewSummaries = await responseForNewSummaries.json();
+            // 두 결과를 병합
+            queryResults.clips = [...(queryResults.clips || []), ...(dataForNewSummaries.clips || [])];
+            queryResults.clips_extracted = queryResults.clips_extracted || dataForNewSummaries.clips_extracted;
+          }
+        }
+        
+        const data = queryResults;
+        clips_extracted = data.clips_extracted || false;
+        groupedClipItems = (data.clips || []).map(group => ({
+          video: group.video,
+          clips: Array.isArray(group.clips) ? group.clips : []
+        }));
+      } else if (videosToSummarize.length > 0) {
+        // 요약이 필요한 동영상만 있는 경우: 요약 완료 후 Query 시작
+        console.log(`[Search] 요약이 필요한 동영상만 있음. 요약 완료 후 Query 시작`);
+        
+        const summarizeResults = await summarizePromise;
+        
+        if (summarizeResults && summarizeResults.length > 0) {
+          // 요약 완료된 동영상에 대한 Query 수행
+          const queryFormData = new FormData();
+          const videoIdMap = {};
+          const videoDurationMap = {}; // filename -> duration 매핑
+          
+          summarizeResults.forEach(({ file, video, video_id }) => {
+            const dbId = video.dbId || video.id;
+            if (dbId) {
+              videoIdMap[file.name] = dbId;
+            }
+            // duration 값 추가 (프론트엔드에서 가져온 값)
+            if (video.duration && isFinite(video.duration) && video.duration > 0) {
+              videoDurationMap[file.name] = video.duration;
+            }
+            queryFormData.append('files', file, file.name);
+          });
+          
+          queryFormData.append('prompt', query);
+          
+          if (uploadedImage.value) {
+            queryFormData.append('image', uploadedImage.value, uploadedImage.value.name);
+            removeUploadedImage();
+          }
+          
+          if (userId) {
+            queryFormData.append('user_id', userId);
+          }
+          if (Object.keys(videoIdMap).length > 0) {
+            queryFormData.append('video_ids', JSON.stringify(videoIdMap));
+          }
+          if (Object.keys(videoDurationMap).length > 0) {
+            queryFormData.append('video_durations', JSON.stringify(videoDurationMap));
+          }
+          
+          queryFormData.append('chunk_size', safeNum(settingStore.searchChunk, 10));
+          queryFormData.append('top_k', safeNum(settingStore.searchTopK, 80));
+          queryFormData.append('top_p', safeNum(settingStore.searchTopP, 1.0));
+          queryFormData.append('temperature', safeNum(settingStore.searchTemperature, 0.3));
+          queryFormData.append('max_new_tokens', safeNum(settingStore.searchMaxTokens, 1024));
+          queryFormData.append('seed', safeNum(settingStore.searchSeed, 42));
+          queryFormData.append('skip_summarize', 'true');
+          queryFormData.append('skip_clip_generation', 'true'); // 클립 생성 건너뛰기 (원본 동영상 재생용)
+          
+          const response = await fetch(`${API_BASE_URL}/query-and-generate-clips`, {
+            method: 'POST',
+            body: queryFormData,
+            signal: abortController.signal
+          });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}`);
+          if (!response.ok) {
+            throw new Error(`HTTP error ${response.status}`);
+          }
+
+          const data = await response.json();
+          clips_extracted = data.clips_extracted || false;
+          groupedClipItems = (data.clips || []).map(group => ({
+            video: group.video,
+            clips: Array.isArray(group.clips) ? group.clips : []
+          }));
+        } else {
+          // 요약 실패
+          currentChat.messages.push({
+            role: 'assistant',
+            content: settingStore.language === 'ko' 
+              ? '동영상 요약에 실패했습니다. 다시 시도해주세요.' 
+              : 'Failed to summarize videos. Please try again.',
+            timestamp: getCurrentTime()
+          });
+          return;
+        }
+      } else {
+        // Query할 동영상이 없음
+        currentChat.messages.push({
+          role: 'assistant',
+          content: settingStore.language === 'ko' 
+            ? '검색할 동영상이 없습니다. 동영상을 선택해주세요.' 
+            : 'No videos to search. Please select videos.',
+          timestamp: getCurrentTime()
+        });
+        return;
       }
 
-      const data = await response.json();
-      const clips_extracted = data.clips_extracted || false; // 클립 추출 여부
-      const groupedClipItems = (data.clips || []).map(group => ({
-        video: group.video,
-        clips: Array.isArray(group.clips) ? group.clips : []
-      }));
-
-      // 실제 URL이 있는 클립만 필터링 (via_response만 있는 것은 제외)
-      // 타임스탬프 간격이 0초인 클립도 제외
+      // 타임스탬프가 있는 클립 필터링 (url이 없어도 타임스탬프가 있으면 유효)
+      // via_response만 있는 것은 제외, 타임스탬프 간격이 0초인 클립도 제외
       const validClips = groupedClipItems.flatMap(group =>
         group.clips
           .filter(clip => {
-            // url이 있고 via_response가 없는 것만
-            if (!clip.url || clip.via_response) return false;
-            // 타임스탬프 간격이 0초 이하인 클립 제외
+            // via_response만 있는 것은 제외
+            if (clip.via_response && !clip.start_time && !clip.end_time) return false;
+            
+            // 타임스탬프가 있는 경우 (url이 없어도 타임스탬프가 있으면 유효)
             if (clip.start_time !== undefined && clip.end_time !== undefined) {
+              // 타임스탬프 간격이 0초 이하인 클립 제외
               if (clip.end_time - clip.start_time <= 0) return false;
+              return true; // 타임스탬프가 유효하면 통과
             }
+            
+            // 타임스탬프가 없으면 url이 있어야 함 (기존 로직)
+            if (!clip.url) return false;
             return true;
           })
           .map(clip => ({
             ...clip,
-            sourceVideo: group.video
+            sourceVideo: clip.source_video_filename || group.video || clip.sourceVideo
           }))
       );
 
@@ -3559,10 +4067,17 @@ async function handleSearch() {
       const videosWithResults = new Set();
       groupedClipItems.forEach(group => {
         const hasValidClips = group.clips.some(clip => {
-          if (!clip.url || clip.via_response) return false;
+          // via_response만 있는 것은 제외
+          if (clip.via_response && !clip.start_time && !clip.end_time) return false;
+          
+          // 타임스탬프가 있는 경우 (url이 없어도 타임스탬프가 있으면 유효)
           if (clip.start_time !== undefined && clip.end_time !== undefined) {
             if (clip.end_time - clip.start_time <= 0) return false;
+            return true; // 타임스탬프가 유효하면 통과
           }
+          
+          // 타임스탬프가 없으면 url이 있어야 함
+          if (!clip.url) return false;
           return true;
         });
         if (hasValidClips) {
@@ -3700,20 +4215,24 @@ async function handleSearch() {
         clips: Array.isArray(group.clips) ? group.clips : []
       }));
 
-      // 실제 URL이 있는 클립만 필터링
+      // 타임스탬프가 있는 클립 필터링 (url이 없어도 타임스탬프가 있으면 유효)
       const validClips = groupedClipItems.flatMap(group =>
         group.clips
           .filter(clip => {
-            if (!clip.url) return false;
-            // 타임스탬프 간격이 0초 이하인 클립 제외
+            // 타임스탬프가 있는 경우 (url이 없어도 타임스탬프가 있으면 유효)
             if (clip.start_time !== undefined && clip.end_time !== undefined) {
+              // 타임스탬프 간격이 0초 이하인 클립 제외
               if (clip.end_time - clip.start_time <= 0) return false;
+              return true; // 타임스탬프가 유효하면 통과
             }
+            
+            // 타임스탬프가 없으면 url이 있어야 함 (기존 로직)
+            if (!clip.url) return false;
             return true;
           })
           .map(clip => ({
             ...clip,
-            sourceVideo: group.video
+            sourceVideo: clip.source_video_filename || group.video || clip.sourceVideo
           }))
       );
 
@@ -3863,6 +4382,33 @@ async function handleSearch() {
 
 // 채팅 클립 확대용(그리드 비디오와 구분되는 최소 필드 구성)
 // 클립 URL을 정규화하는 함수 (상대 경로인 경우 API_BASE_URL 추가)
+// 클립 썸네일 URL 가져오기 (url이 없으면 원본 동영상 URL 사용)
+function getClipThumbnailUrl(clip) {
+  // url이 있으면 기존 로직 사용
+  if (clip.url) {
+    return getClipUrl(clip.url);
+  }
+  
+  // url이 없으면 원본 동영상 URL 찾기
+  const sourceVideoFilename = clip.source_video_filename || clip.sourceVideo || '';
+  if (sourceVideoFilename) {
+    // items에서 원본 동영상 찾기 (파일명으로 매칭)
+    const originalVideo = items.value.find(video => {
+      const videoFilename = video.title || video.name || '';
+      return videoFilename === sourceVideoFilename || 
+             videoFilename.includes(sourceVideoFilename) ||
+             sourceVideoFilename.includes(videoFilename);
+    });
+    
+    if (originalVideo && originalVideo.displayUrl) {
+      return originalVideo.displayUrl;
+    }
+  }
+  
+  // 찾지 못하면 빈 문자열 반환
+  return '';
+}
+
 function getClipUrl(url) {
   if (!url) return '';
   // 이미 전체 URL인 경우 (http:// 또는 https://로 시작)
@@ -3878,33 +4424,82 @@ function getClipUrl(url) {
 }
 
 function zoomClip(clip) {
+  // 원본 동영상 URL 찾기 (클립 생성 없이 원본 동영상 사용)
+  let originalVideoUrl = null;
+  const sourceVideoFilename = clip.sourceVideo || '';
+  
+  if (sourceVideoFilename) {
+    // items에서 원본 동영상 찾기 (파일명으로 매칭)
+    const originalVideo = items.value.find(video => {
+      const videoFilename = video.title || video.name || '';
+      return videoFilename === sourceVideoFilename || 
+             videoFilename.includes(sourceVideoFilename) ||
+             sourceVideoFilename.includes(videoFilename);
+    });
+    
+    if (originalVideo && originalVideo.displayUrl) {
+      originalVideoUrl = originalVideo.displayUrl;
+    }
+  }
+  
+  // 원본 동영상 URL이 없으면 기존 클립 URL 사용 (폴백)
+  const videoUrl = originalVideoUrl || getClipUrl(clip.url);
+  
   // clip 객체를 확대 모달이 사용하는 형태로 매핑
   zoomedVideo.value = {
     id: `clip-${clip.id}`,
     title: clip.title || '클립',
-    displayUrl: getClipUrl(clip.url),
+    displayUrl: videoUrl,
     progress: 0
   };
-  // 클립 정보 저장 (sentence 포함)
+  // 클립 정보 저장 (sentence, start_time, end_time 포함)
   zoomedClip.value = clip;
   showSentencePopup.value = true; // 팝업 표시
   isZoomed.value = true;
   zoomPlaying.value = false;
   zoomProgress.value = 0;
   zoomCurrentTime.value = 0;
-  zoomDuration.value = 0;
+  // 클립 길이 계산 (타임스탬프가 있으면 클립 길이, 없으면 전체 동영상 길이)
+  const clipDuration = (clip.start_time !== undefined && clip.end_time !== undefined) 
+    ? (clip.end_time - clip.start_time) 
+    : 0;
+  zoomDuration.value = clipDuration;
+  
   nextTick(() => {
     const el = zoomVideoRef.value;
     if (!el) return;
+    
+    // 타임스탬프 범위 재생을 위한 설정
+    const startTime = clip.start_time !== undefined ? clip.start_time : 0;
+    const endTime = clip.end_time !== undefined ? clip.end_time : null;
+    
     // 메타데이터가 준비될 때까지 기다린 뒤 재생
-    if (!isFinite(el.duration)) {
-      el.addEventListener('loadedmetadata', () => {
+    const setupPlayback = () => {
+      if (endTime !== null && startTime < endTime) {
+        // 타임스탬프 범위가 있으면 클립 길이로 duration 설정
+        zoomDuration.value = endTime - startTime;
+        // 시작 시간으로 이동
+        el.currentTime = startTime;
+      } else {
+        // 타임스탬프가 없으면 전체 동영상 길이 사용
         zoomDuration.value = el.duration || 0;
-        try { el.currentTime = 0; el.play(); zoomPlaying.value = true; } catch (e) { console.warn('클립 모달 재생 실패:', e); }
+        el.currentTime = 0;
+      }
+      
+      try {
+        el.play();
+        zoomPlaying.value = true;
+      } catch (e) {
+        console.warn('클립 모달 재생 실패:', e);
+      }
+    };
+    
+    if (!isFinite(el.duration) || el.duration === 0) {
+      el.addEventListener('loadedmetadata', () => {
+        setupPlayback();
       }, { once: true });
     } else {
-      zoomDuration.value = el.duration || 0;
-      try { el.currentTime = 0; el.play(); zoomPlaying.value = true; } catch (e) { console.warn('클립 모달 재생 실패:', e); }
+      setupPlayback();
     }
   });
 }
@@ -3941,18 +4536,46 @@ function togglePlay(videoId) {
     return;
   }
   
-  if (!zoomPlaying.value) {
-    zoomVideoRef.value.play().then(() => {
-      zoomPlaying.value = true;
-    }).catch(e => {
-      console.warn('video play failed:', e);
-    });
+  // 클립의 타임스탬프 범위가 있으면 범위 내에서만 재생
+  if (zoomedClip.value && 
+      zoomedClip.value.start_time !== undefined && 
+      zoomedClip.value.end_time !== undefined) {
+    const startTime = zoomedClip.value.start_time;
+    const endTime = zoomedClip.value.end_time;
+    
+    if (!zoomPlaying.value) {
+      // 재생 시작: 현재 시간이 범위 밖이면 start_time으로 이동
+      if (zoomVideoRef.value.currentTime < startTime || zoomVideoRef.value.currentTime >= endTime) {
+        zoomVideoRef.value.currentTime = startTime;
+      }
+      zoomVideoRef.value.play().then(() => {
+        zoomPlaying.value = true;
+      }).catch(e => {
+        console.warn('video play failed:', e);
+      });
+    } else {
+      try {
+        zoomVideoRef.value.pause();
+        zoomPlaying.value = false;
+      } catch (e) {
+        console.warn('video pause failed:', e);
+      }
+    }
   } else {
-    try {
-      zoomVideoRef.value.pause();
-      zoomPlaying.value = false;
-    } catch (e) {
-      console.warn('video pause failed:', e);
+    // 타임스탬프가 없으면 전체 동영상 재생
+    if (!zoomPlaying.value) {
+      zoomVideoRef.value.play().then(() => {
+        zoomPlaying.value = true;
+      }).catch(e => {
+        console.warn('video play failed:', e);
+      });
+    } else {
+      try {
+        zoomVideoRef.value.pause();
+        zoomPlaying.value = false;
+      } catch (e) {
+        console.warn('video pause failed:', e);
+      }
     }
   }
 }
@@ -3961,10 +4584,35 @@ function togglePlay(videoId) {
 function onZoomTimeUpdate(event) {
   if (!event.target) return;
   const video = event.target;
-  if (isFinite(video.duration) && video.duration > 0) {
-    zoomCurrentTime.value = video.currentTime || 0;
-    zoomDuration.value = video.duration || 0;
-    zoomProgress.value = (zoomCurrentTime.value / zoomDuration.value) * 100;
+  
+  // 클립의 타임스탬프 범위가 있으면 해당 범위만 재생
+  if (zoomedClip.value && 
+      zoomedClip.value.start_time !== undefined && 
+      zoomedClip.value.end_time !== undefined) {
+    const startTime = zoomedClip.value.start_time;
+    const endTime = zoomedClip.value.end_time;
+    const clipDuration = endTime - startTime;
+    
+    // 현재 재생 시간이 end_time을 초과하면 정지하고 start_time으로 돌아가기
+    if (video.currentTime >= endTime) {
+      video.pause();
+      video.currentTime = startTime;
+      zoomPlaying.value = false;
+      return;
+    }
+    
+    // 클립 범위 내의 상대 시간 계산 (0부터 clipDuration까지)
+    const relativeTime = Math.max(0, video.currentTime - startTime);
+    zoomCurrentTime.value = relativeTime;
+    zoomDuration.value = clipDuration;
+    zoomProgress.value = clipDuration > 0 ? (relativeTime / clipDuration) * 100 : 0;
+  } else {
+    // 타임스탬프가 없으면 전체 동영상 재생
+    if (isFinite(video.duration) && video.duration > 0) {
+      zoomCurrentTime.value = video.currentTime || 0;
+      zoomDuration.value = video.duration || 0;
+      zoomProgress.value = (zoomCurrentTime.value / zoomDuration.value) * 100;
+    }
   }
 }
 
@@ -3988,6 +4636,10 @@ function startDragging(videoId, event) {
   isDragging.value = true;
   draggedVideoId.value = videoId;
   
+  // 드래그 중 currentTime 업데이트를 쓰로틀링하기 위한 변수
+  let lastSeekTime = 0;
+  const SEEK_THROTTLE_MS = 100; // 100ms마다만 실제 시크 수행
+  
   const updateProgress = (e) => {
     if (!zoomProgressBarRef.value || !isDragging.value) return;
     const rect = zoomProgressBarRef.value.getBoundingClientRect();
@@ -3995,9 +4647,49 @@ function startDragging(videoId, event) {
     const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
     zoomProgress.value = percent;
     
-    if (zoomVideoRef.value && isFinite(zoomDuration.value) && zoomDuration.value > 0) {
-      zoomVideoRef.value.currentTime = (percent / 100) * zoomDuration.value;
-      zoomCurrentTime.value = zoomVideoRef.value.currentTime;
+    if (!zoomVideoRef.value) return;
+    
+    // 드래그 중에는 UI만 업데이트하고, 실제 currentTime 변경은 쓰로틀링
+    const now = Date.now();
+    const shouldSeek = (now - lastSeekTime) >= SEEK_THROTTLE_MS;
+    
+    // 클립의 타임스탬프 범위가 있으면 범위 내에서만 시크
+    if (zoomedClip.value && 
+        zoomedClip.value.start_time !== undefined && 
+        zoomedClip.value.end_time !== undefined) {
+      const startTime = zoomedClip.value.start_time;
+      const endTime = zoomedClip.value.end_time;
+      const clipDuration = endTime - startTime;
+      
+      if (clipDuration > 0) {
+        // 클립 범위 내의 상대 시간 계산
+        const relativeTime = (percent / 100) * clipDuration;
+        // 실제 동영상의 절대 시간으로 변환
+        const absoluteTime = startTime + relativeTime;
+        
+        // UI 업데이트는 항상 수행
+        zoomCurrentTime.value = relativeTime;
+        
+        // 실제 currentTime 변경은 쓰로틀링 (HTTP 요청 방지)
+        if (shouldSeek) {
+          zoomVideoRef.value.currentTime = Math.max(startTime, Math.min(endTime, absoluteTime));
+          lastSeekTime = now;
+        }
+      }
+    } else {
+      // 타임스탬프가 없으면 전체 동영상 시크
+      if (isFinite(zoomDuration.value) && zoomDuration.value > 0) {
+        const seekTime = (percent / 100) * zoomDuration.value;
+        
+        // UI 업데이트는 항상 수행
+        zoomCurrentTime.value = seekTime;
+        
+        // 실제 currentTime 변경은 쓰로틀링 (HTTP 요청 방지)
+        if (shouldSeek) {
+          zoomVideoRef.value.currentTime = seekTime;
+          lastSeekTime = now;
+        }
+      }
     }
   };
   
@@ -4040,6 +4732,31 @@ function startDragging(videoId, event) {
 function stopDragging() {
   if (!isDragging.value) return;
   
+  // 드래그 종료 시 최종 위치로 정확히 시크 (마지막 HTTP 요청 한 번만)
+  if (zoomVideoRef.value && zoomProgressBarRef.value) {
+    const percent = zoomProgress.value;
+    
+    if (zoomedClip.value && 
+        zoomedClip.value.start_time !== undefined && 
+        zoomedClip.value.end_time !== undefined) {
+      const startTime = zoomedClip.value.start_time;
+      const endTime = zoomedClip.value.end_time;
+      const clipDuration = endTime - startTime;
+      
+      if (clipDuration > 0) {
+        const relativeTime = (percent / 100) * clipDuration;
+        const absoluteTime = startTime + relativeTime;
+        zoomVideoRef.value.currentTime = Math.max(startTime, Math.min(endTime, absoluteTime));
+        zoomCurrentTime.value = relativeTime;
+      }
+    } else {
+      if (isFinite(zoomDuration.value) && zoomDuration.value > 0) {
+        zoomVideoRef.value.currentTime = (percent / 100) * zoomDuration.value;
+        zoomCurrentTime.value = zoomVideoRef.value.currentTime;
+      }
+    }
+  }
+  
   isDragging.value = false;
   draggedVideoId.value = null;
   
@@ -4067,9 +4784,28 @@ function seekVideo(videoId, event) {
   const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
   zoomProgress.value = percent;
   
-  if (isFinite(zoomDuration.value) && zoomDuration.value > 0) {
-    zoomVideoRef.value.currentTime = (percent / 100) * zoomDuration.value;
-    zoomCurrentTime.value = zoomVideoRef.value.currentTime;
+  // 클립의 타임스탬프 범위가 있으면 범위 내에서만 시크
+  if (zoomedClip.value && 
+      zoomedClip.value.start_time !== undefined && 
+      zoomedClip.value.end_time !== undefined) {
+    const startTime = zoomedClip.value.start_time;
+    const endTime = zoomedClip.value.end_time;
+    const clipDuration = endTime - startTime;
+    
+    if (clipDuration > 0) {
+      // 클립 범위 내의 상대 시간 계산
+      const relativeTime = (percent / 100) * clipDuration;
+      // 실제 동영상의 절대 시간으로 변환
+      const absoluteTime = startTime + relativeTime;
+      zoomVideoRef.value.currentTime = Math.max(startTime, Math.min(endTime, absoluteTime));
+      zoomCurrentTime.value = relativeTime;
+    }
+  } else {
+    // 타임스탬프가 없으면 전체 동영상 시크
+    if (isFinite(zoomDuration.value) && zoomDuration.value > 0) {
+      zoomVideoRef.value.currentTime = (percent / 100) * zoomDuration.value;
+      zoomCurrentTime.value = zoomVideoRef.value.currentTime;
+    }
   }
 }
 
@@ -4756,7 +5492,12 @@ async function processSelectedVideosFromHistory(ignoreIfStateRestored = false) {
   // 하지만 management.vue에서 검색 버튼을 클릭한 경우에는 항상 처리해야 함
   if (history.state && history.state.selectedVideos && Array.isArray(history.state.selectedVideos) && history.state.selectedVideos.length > 0) {
     console.log('[Search] history.state.selectedVideos 발견:', history.state.selectedVideos.length, '개 동영상');
-    // ignoreIfStateRestored가 true이고 상태가 복원된 경우 스킵
+    
+    // 로딩 모달 표시
+    showVideosLoadingModal.value = true;
+    
+    try {
+      // ignoreIfStateRestored가 true이고 상태가 복원된 경우 스킵
     if (ignoreIfStateRestored) {
       const stateRestored = loadSearchState();
       if (stateRestored) {
@@ -4843,7 +5584,50 @@ async function processSelectedVideosFromHistory(ignoreIfStateRestored = false) {
       createNewChat(mappedVideos, selectionSignature);
     }
     
-    // 지원하지 않는 형식의 동영상 변환 체크
+    // 최적화: 동영상 파일 객체를 미리 로드 (검색 실행 시 지연 방지)
+    // items.value에 추가된 후 파일 객체를 로드하고, 완료될 때까지 로딩 모달 표시
+    await nextTick();
+    
+    const videosToPreload = items.value.filter(video => {
+      // File 객체가 없고 displayUrl이 있는 동영상만 로드
+      return !(video.file instanceof File) && video.displayUrl && !video.displayUrl.startsWith('blob:');
+    });
+    
+    if (videosToPreload.length > 0) {
+      console.log(`[Search] ${videosToPreload.length}개 동영상 파일 객체 미리 로드 시작`);
+      try {
+        // 병렬로 파일 객체 로드 (로딩 모달이 표시된 상태에서 대기)
+        const results = await Promise.all(videosToPreload.map(video => ensureVideoFile(video)));
+        const successCount = results.filter(r => r !== null).length;
+        console.log(`[Search] 파일 객체 미리 로드 완료: ${successCount}/${videosToPreload.length}개 성공`);
+      } catch (err) {
+        console.warn('[Search] 파일 객체 미리 로드 중 오류:', err);
+      }
+    }
+    
+    // 썸네일 로딩 완료 대기 (이미지가 모두 로드될 때까지)
+    await nextTick();
+    // videoListGridRef 내부의 이미지와 비디오 요소 찾기
+    if (videoListGridRef.value) {
+      const imageElements = videoListGridRef.value.querySelectorAll('img, video');
+      if (imageElements.length > 0) {
+        const imageLoadPromises = Array.from(imageElements).map(img => {
+          return new Promise((resolve) => {
+            if (img.complete || (img.tagName === 'VIDEO' && img.readyState >= 2)) {
+              resolve();
+            } else {
+              img.onload = resolve;
+              img.onerror = resolve; // 에러가 나도 진행
+              // 타임아웃 설정 (3초 후 강제 진행)
+              setTimeout(resolve, 3000);
+            }
+          });
+        });
+        await Promise.all(imageLoadPromises);
+      }
+    }
+    
+      // 지원하지 않는 형식의 동영상 변환 체크
     if (currentUserId) {
       const checkUnsupportedVideos = () => {
         mappedVideos.forEach((video) => {
@@ -4865,15 +5649,24 @@ async function processSelectedVideosFromHistory(ignoreIfStateRestored = false) {
       }
     }
     
-    // history.state에서 selectedVideos 제거 (중복 처리 방지)
-    const currentState = history.state || {};
-    if (currentState.selectedVideos) {
-      const newState = { ...currentState };
-      delete newState.selectedVideos;
-      history.replaceState(newState, '');
+      // history.state에서 selectedVideos 제거 (중복 처리 방지)
+      const currentState = history.state || {};
+      if (currentState.selectedVideos) {
+        const newState = { ...currentState };
+        delete newState.selectedVideos;
+        history.replaceState(newState, '');
+      }
+      
+      // 로딩 모달 숨김
+      showVideosLoadingModal.value = false;
+      
+      return true; // 동영상이 처리되었음을 반환
+    } catch (error) {
+      console.error('[Search] processSelectedVideosFromHistory 오류:', error);
+      // 에러가 발생해도 로딩 모달 숨김
+      showVideosLoadingModal.value = false;
+      return false;
     }
-    
-    return true; // 동영상이 처리되었음을 반환
   }
   return false; // 동영상이 처리되지 않았음을 반환
 }
@@ -5126,6 +5919,26 @@ watch(items, () => {
 watch(selectedIds, () => {
   if (!isSaving) {
     autoSaveSearchState();
+  }
+  
+  // 최적화: 선택된 동영상의 파일 객체를 미리 로드 (검색 실행 시 지연 방지)
+  const selectedVideosList = selectedVideos.value;
+  if (selectedVideosList.length > 0) {
+    const videosToPreload = selectedVideosList.filter(video => {
+      // File 객체가 없고 displayUrl이 있는 동영상만 로드
+      return !(video.file instanceof File) && video.displayUrl && !video.displayUrl.startsWith('blob:');
+    });
+    
+    if (videosToPreload.length > 0) {
+      console.log(`[Search] 선택된 ${videosToPreload.length}개 동영상 파일 객체 미리 로드 시작`);
+      // 병렬로 파일 객체 로드 (블로킹하지 않음)
+      Promise.all(videosToPreload.map(video => ensureVideoFile(video))).then(results => {
+        const successCount = results.filter(r => r !== null).length;
+        console.log(`[Search] 선택된 동영상 파일 객체 미리 로드 완료: ${successCount}/${videosToPreload.length}개 성공`);
+      }).catch(err => {
+        console.warn('[Search] 선택된 동영상 파일 객체 미리 로드 중 오류:', err);
+      });
+    }
   }
 }, { deep: true });
 

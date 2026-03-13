@@ -606,6 +606,7 @@
 import { ref, onMounted, onUnmounted, onActivated, computed, nextTick, watch, reactive } from "vue";
 import { useSummaryVideoStore } from '@/stores/summaryVideoStore';
 import { useSettingStore } from '@/stores/settingStore';
+import { useVideoFileStore } from '@/stores/videoFileStore';
 import { marked } from 'marked';
 import Setting from '@/components/Setting.vue';
 import settingIcon from '@/assets/icons/setting.png';
@@ -1023,19 +1024,31 @@ async function fetchRecommendedChunkSize(videoLength) {
  * 동영상에 대해 추천 chunk_size를 가져와서 설정 스토어에 저장
  */
 async function updateRecommendedChunkSize(videoId) {
-  const videoElement = videoRefs.value[videoId];
-  if (!videoElement) return;
-
-  const duration = await RecommendChunkSize(videoElement);
+  // durationMap에서 duration 가져오기 (이미 메타데이터가 로드된 경우)
+  let duration = durationMap.value[videoId];
+  
+  // durationMap에 없으면 videoElement에서 가져오기 시도
   if (!duration) {
-    console.warn(`동영상 ${videoId}의 길이를 가져올 수 없습니다.`);
-    return;
+    const videoElement = videoRefs.value[videoId];
+    if (!videoElement) {
+      console.warn(`동영상 ${videoId}의 엘리먼트를 찾을 수 없습니다.`);
+      return;
+    }
+    
+    duration = await RecommendChunkSize(videoElement);
+    if (!duration) {
+      console.warn(`동영상 ${videoId}의 길이를 가져올 수 없습니다.`);
+      return;
+    }
   }
 
   const recommendedChunkSize = await fetchRecommendedChunkSize(duration);
-  if (recommendedChunkSize !== null && settingStore) {
+  if (recommendedChunkSize !== null && recommendedChunkSize > 0 && settingStore) {
     // 추천된 chunk_size를 설정 스토어에 저장
     settingStore.chunk = recommendedChunkSize;
+    console.log(`[Chunk Size] 동영상 ${videoId}의 추천 chunk_size: ${recommendedChunkSize}초 (영상 길이: ${duration}초)`);
+  } else {
+    console.warn(`[Chunk Size] 동영상 ${videoId}의 추천 chunk_size를 가져올 수 없습니다.`);
   }
 }
 
@@ -1143,6 +1156,8 @@ function onVideoMetadataLoaded(videoId, event) {
     }
     if (duration && isFinite(duration)) {
       durationMap.value[videoId] = duration;
+      // 메타데이터가 로드된 직후 chunk size 자동 업데이트
+      updateRecommendedChunkSize(videoId);
     }
   }
 }
@@ -1380,6 +1395,11 @@ async function loadVideosFromStore(loadSummaries = true) {
             _isConverting: false // 변환 중 상태 추적
           };
           
+          // videoFileStore에도 File 객체 저장 (다른 메뉴에서 재사용)
+          if (hasFile && v.file instanceof File) {
+            videoFileStore.setFileByVideo(videoObj, v.file);
+          }
+          
           // 지원하지 않는 형식인 경우 MP4로 변환 요청
           if (isUnsupportedFormat(v.name || v.title || '')) {
             await convertVideoToMp4(videoObj.dbId, userId, videoObj);
@@ -1394,19 +1414,34 @@ async function loadVideosFromStore(loadSummaries = true) {
         // 초기 로딩 후 File 객체가 null인 항목 복원 시도 (세션 재진입, localStorage 경유 케스)
         restoreAllMissingFiles();
 
-        // Video Storage에서 넘어온 동영상들에 대해 추천 chunk_size 계산
-        nextTick(() => {
-          setTimeout(() => {
-            videoFiles.value.forEach(video => {
-              updateRecommendedChunkSize(video.id);
-            });
-        }, CHUNK_SIZE_UPDATE_DELAY);
-        });
-        
         // DB에서 저장된 요약 결과 로드 (shouldLoadSummariesForNewVideos가 true일 때만)
         if (shouldLoadSummariesForNewVideos) {
           await loadSummariesFromDB();
         }
+        
+        // Video Storage에서 넘어온 동영상들에 대해 추천 chunk_size 계산
+        // 비디오가 렌더링되고 메타데이터가 로드될 때까지 기다린 후 업데이트
+        await nextTick();
+        // 메타데이터 로드를 기다리기 위해 더 긴 지연 시간 사용
+        setTimeout(() => {
+          videoFiles.value.forEach(video => {
+            // durationMap에 이미 duration이 있으면 바로 업데이트
+            if (durationMap.value[video.id]) {
+              updateRecommendedChunkSize(video.id);
+            } else {
+              // duration이 없으면 비디오 엘리먼트에서 확인
+              const videoElement = videoRefs.value[video.id];
+              if (videoElement) {
+                if (videoElement.duration && isFinite(videoElement.duration)) {
+                  // 이미 메타데이터가 로드된 경우
+                  durationMap.value[video.id] = videoElement.duration;
+                  updateRecommendedChunkSize(video.id);
+                }
+                // 메타데이터가 아직 로드되지 않은 경우, onVideoMetadataLoaded에서 자동으로 업데이트됨
+              }
+            }
+          });
+        }, 1000); // 1초로 증가하여 메타데이터 로드 시간 확보
         
         // summaryVideoStore 업데이트 (management.vue에서 썸네일 표시를 위해)
         updateSummaryVideoStore();
@@ -1523,6 +1558,22 @@ watch(() => summaryVideoStore.videos, async (newVideos, oldVideos) => {
       // watch에서는 동영상이 변경되었을 때도 요약 결과를 로드해야 함
       shouldLoadSummaries.value = true;
       await loadVideosFromStore(true);
+      
+      // 동영상 로드 후 청크 크기 업데이트 (loadVideosFromStore 내부에서도 처리되지만, 추가 보장)
+      await nextTick();
+      setTimeout(() => {
+        videoFiles.value.forEach(video => {
+          if (durationMap.value[video.id]) {
+            updateRecommendedChunkSize(video.id);
+          } else {
+            const videoElement = videoRefs.value[video.id];
+            if (videoElement && videoElement.duration && isFinite(videoElement.duration)) {
+              durationMap.value[video.id] = videoElement.duration;
+              updateRecommendedChunkSize(video.id);
+            }
+          }
+        });
+      }, 1000);
     }
   } else if (newVideos.length === 0 && videoFiles.value.length > 0) {
     // summaryVideoStore가 비어있는데 videoFiles에 동영상이 있으면 초기화
@@ -2249,6 +2300,11 @@ async function processUploadFiles(files, { insertAtTop = false } = {}) {
           : (v.displayUrl || v.originUrl || '');
         const originUrl = v.originUrl || displayUrl;
         
+        // videoFileStore에도 File 객체 저장 (다른 메뉴에서 재사용)
+        if (v.file instanceof File) {
+          videoFileStore.setFileByVideo(v, v.file);
+        }
+        
         return {
           id: v.id,
           title: v.name,
@@ -2269,11 +2325,8 @@ async function processUploadFiles(files, { insertAtTop = false } = {}) {
       streaming.value = true;
 
       // 업로드된 동영상에 대해 추천 chunk_size 계산
-      nextTick(() => {
-        setTimeout(() => {
-          updateRecommendedChunkSize(newVideo.id);
-        }, UPLOAD_PROCESSING_DELAY);
-      });
+      // 메타데이터가 로드되면 onVideoMetadataLoaded에서 자동으로 업데이트되므로
+      // 여기서는 제거 (중복 호출 방지)
     } catch (error) {
       if (error.message === '업로드 취소됨') {
         const uploadItemIndex = uploadProgress.value.findIndex(u => u.id === uploadId);
@@ -3271,6 +3324,11 @@ function updateSummaryVideoStore() {
       displayUrl = '';
     }
     
+    // videoFileStore에도 File 객체 저장 (다른 메뉴에서 재사용)
+    if (v.file instanceof File) {
+      videoFileStore.setFileByVideo(v, v.file);
+    }
+    
     return {
       id: v.id,
       title: v.name,
@@ -3417,23 +3475,28 @@ function handleVideoError(videoId, event) {
       const displayUrl = (v.displayUrl && v.displayUrl.startsWith('blob:')) 
         ? (v.originUrl || '') 
         : (v.displayUrl || v.originUrl || '');
-      const originUrl = v.originUrl || displayUrl;
-      
-      return {
-        id: v.id,
-        title: v.name,
-        name: v.name,
-        url: originUrl || displayUrl,
-        originUrl: originUrl,
-        displayUrl: displayUrl,
-        objectUrl: v.summaryObjectUrl,
-        date: v.date,
-        file: v.file,
-        summary: v.summary || '',
-        dbId: v.dbId
-      };
-    });
-    summaryVideoStore.setVideos(storeVideos);
+        const originUrl = v.originUrl || displayUrl;
+        
+        // videoFileStore에도 File 객체 저장 (다른 메뉴에서 재사용)
+        if (v.file instanceof File) {
+          videoFileStore.setFileByVideo(v, v.file);
+        }
+        
+        return {
+          id: v.id,
+          title: v.name,
+          name: v.name,
+          url: originUrl || displayUrl,
+          originUrl: originUrl,
+          displayUrl: displayUrl,
+          objectUrl: v.summaryObjectUrl,
+          date: v.date,
+          file: v.file,
+          summary: v.summary || '',
+          dbId: v.dbId
+        };
+      });
+      summaryVideoStore.setVideos(storeVideos);
   }
   saveStateToLocalStorage();
 }

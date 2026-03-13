@@ -489,10 +489,26 @@ async def summarize_sentences(sentences: list) -> str:
         # 문장들을 하나의 텍스트로 합치기
         combined_text = " ".join(filtered_sentences)
         
-        # Ollama API 호출을 위한 프롬프트 구성
-        ollama_prompt = f"""
-                    {combined_text}
-                    summarize the sentences into one concise sentence"""
+        # 입력 언어 감지 (간단한 휴리스틱: 한글이 포함되어 있으면 한국어로 간주)
+        has_korean = any('\uAC00' <= char <= '\uD7A3' for char in combined_text)
+        
+        # Ollama API 호출을 위한 프롬프트 구성 (입력 언어에 맞춰 작성)
+        if has_korean:
+            ollama_prompt = f"""
+다음 문장들을 자연스럽게 하나의 문장으로 합쳐주세요. 입력 언어(한국어)를 그대로 유지해주세요.
+
+문장들:
+{combined_text}
+
+요약된 하나의 문장만 출력해주세요. 설명이나 추가 텍스트는 포함하지 마세요."""
+            
+            system_prompt = "당신은 텍스트 요약 전문가입니다. 여러 문장을 하나의 자연스러운 문장으로 합치는 것이 당신의 임무입니다. 입력된 언어를 그대로 유지하여 요약된 문장만 출력하세요. 설명, 지시사항, 추가 내용은 포함하지 마세요."
+        else:
+            ollama_prompt = f"""
+{combined_text}
+summarize the sentences into one concise sentence"""
+            
+            system_prompt = "You are a text summarizer. Your task is to combine multiple sentences into one concise sentence. Output ONLY the summarized sentence without any explanations, instructions, or additional content. Do not include any text other than the summary result. Maintain the same language as the input."
         
         # Ollama API 호출 (aiohttp 사용)
         session = await get_session()
@@ -502,7 +518,7 @@ async def summarize_sentences(sentences: list) -> str:
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a text summarizer. Your task is to combine multiple sentences into one concise sentence. Output ONLY the summarized sentence without any explanations, instructions, or additional content. Do not include any text other than the summary result."
+                    "content": system_prompt
                 },
                 {
                     "role": "user",

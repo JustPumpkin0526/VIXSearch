@@ -1439,6 +1439,7 @@ import { ref, onMounted, onActivated, onDeactivated, computed, nextTick, watch, 
 import { useRouter, onBeforeRouteLeave } from 'vue-router';
 import { useSummaryVideoStore } from '@/stores/summaryVideoStore';
 import { useSettingStore } from '@/stores/settingStore';
+import { useVideoFileStore } from '@/stores/videoFileStore';
 import { getApiBaseUrl } from '@/utils/apiConfig';
 import { marked } from 'marked';
 import { formatTime, formatFileSize, getCurrentTime } from '@/utils/formatUtils';
@@ -5293,12 +5294,22 @@ async function closeAllChatTabs() {
 }
 
 async function ensureVideoFile(video) {
+  // 최적화: 이미 File 객체가 있으면 fetch를 건너뛰기
   if (video.file instanceof File) {
+    // Store에도 저장 (다른 메뉴에서 재사용)
+    videoFileStore.setFileByVideo(video, video.file);
     return video.file;
   }
 
   if (!video.displayUrl) {
     return null;
+  }
+
+  // Store에서 먼저 확인 (다른 메뉴에서 이미 로드한 경우)
+  const cachedFile = videoFileStore.getFileByVideo(video);
+  if (cachedFile instanceof File) {
+    video.file = cachedFile;
+    return cachedFile;
   }
 
   // blob URL의 경우 fetch를 수행하지 않음 (반복 요청 방지)
@@ -5323,6 +5334,8 @@ async function ensureVideoFile(video) {
     const filename = video.title || `video-${video.id}.mp4`;
     const file = new File([blob], filename, { type: blob.type || 'video/mp4' });
     video.file = file;
+    // Store에 저장 (다른 메뉴에서 재사용)
+    videoFileStore.setFileByVideo(video, file);
     return file;
   } catch (error) {
     // AbortError는 정상적인 취소이므로 무시

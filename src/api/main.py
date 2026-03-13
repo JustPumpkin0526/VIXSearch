@@ -237,5 +237,25 @@ logger.info("모든 엔드포인트가 라우터로 마이그레이션되었습�
 
 if __name__ == "__main__":
     import uvicorn
+    import logging
+    import time
+    
+    # uvicorn access logger에 타임스탬프 포맷 설정
+    # uvicorn이 시작되면 자동으로 핸들러가 추가되므로, 핸들러 추가 시 포맷터를 적용하도록 설정
+    access_logger = logging.getLogger("uvicorn.access")
+    access_formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    
+    # 핸들러가 추가될 때마다 포맷터를 적용하도록 설정
+    original_addHandler = access_logger.addHandler
+    def add_handler_with_formatter(handler):
+        handler.setFormatter(access_formatter)
+        return original_addHandler(handler)
+    access_logger.addHandler = add_handler_with_formatter
+    
+    # 기존 핸들러가 있다면 포맷터 적용
+    for handler in access_logger.handlers:
+        handler.setFormatter(access_formatter)
+    
+    # uvicorn 실행
     uvicorn.run(app, host="0.0.0.0", port=8001)
 

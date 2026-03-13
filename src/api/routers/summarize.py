@@ -144,6 +144,11 @@ async def vss_summarize(
     if not prompt or not prompt.strip():
         raise HTTPException(status_code=400, detail="prompt는 필수입니다.")
     
+    # VIA 서버 제약사항: max_tokens는 최대 1024까지만 허용
+    if max_tokens > 1024:
+        logger.warning(f"max_tokens가 1024를 초과합니다 ({max_tokens}). 1024로 제한합니다.")
+        max_tokens = 1024
+    
     # chunk_duration 자동 계산 (chunk_duration이 None이거나 -1인 경우)
     final_chunk_duration = chunk_duration
     if chunk_duration is None or chunk_duration == -1:
@@ -409,6 +414,123 @@ async def vss_summarize_multi(
         raise HTTPException(status_code=500, detail=f"멀티 이미지 요약 생성 중 오류가 발생했습니다: {error_msg}")
 
 
+@router.get("/summaries/batch")
+def get_summaries_batch(
+    video_ids: str = Query(...),  # JSON 배열 문자열: ["id1", "id2", ...]
+    user_id: str = Query(...)
+):
+    """여러 동영상의 요약 상태를 한 번에 조회 (배치 처리)"""
+    logger.info(f"[get_summaries_batch] 배치 요약 상태 조회 요청: USER_ID={user_id}, VIDEO_IDS={video_ids}")
+    try:
+        # JSON 문자열을 리스트로 파싱
+        try:
+            video_id_list = json.loads(video_ids) if isinstance(video_ids, str) else video_ids
+            if not isinstance(video_id_list, list):
+                raise ValueError("video_ids must be a list")
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"[get_summaries_batch] video_ids 파싱 실패: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid video_ids format: {str(e)}")
+        
+        # 사용자 존재 확인
+        with get_db_connection() as cursor:
+            cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
+            if not cursor.fetchone():
+                logger.warning(f"[get_summaries_batch] 사용자를 찾을 수 없음: USER_ID={user_id}")
+                raise NotFoundException("사용자", user_id)
+        
+        # 배치로 요약 상태 조회
+        summary_map = {}  # video_id -> summary 정보 매핑
+        if video_id_list:
+            with get_db_connection() as cursor:
+                # 중복 제거
+                unique_video_ids = list(set(video_id_list))
+                placeholders = ','.join(['?'] * len(unique_video_ids))
+                params = unique_video_ids + [user_id]
+                cursor.execute(
+                    f"""SELECT VIDEO_ID, ID, PROMPT, SUMMARY_TEXT, CREATED_AT, UPDATED_AT
+                       FROM vss_summaries
+                       WHERE VIDEO_ID IN ({placeholders}) AND USER_ID = ?""",
+                    params
+                )
+                for row in cursor.fetchall():
+                    video_id = row[0]
+                    summary_map[video_id] = {
+                        "id": row[1],
+                        "video_id": video_id,
+                        "user_id": user_id,
+                        "prompt": row[2],
+                        "summary_text": row[3],
+                        "created_at": _format_datetime(row[4]),
+                        "updated_at": _format_datetime(row[5])
+                    }
+        
+        # 모든 video_id에 대해 응답 생성 (요약이 없는 것도 포함)
+        results = {}
+        for video_id in video_id_list:
+            if video_id in summary_map:
+                results[video_id] = {
+                    "success": True,
+                    "summary": summary_map[video_id]
+                }
+            else:
+                results[video_id] = {
+                    "success": False,
+                    "message": "요약 결과가 없습니다."
+                }
+        
+        logger.info(f"[get_summaries_batch] 배치 요약 상태 조회 완료: {len([r for r in results.values() if r['success']])}개 요약 존재, {len([r for r in results.values() if not r['success']])}개 요약 없음")
+        return {
+            "success": True,
+            "results": results
+        }
+    except NotFoundException:
+        raise
+    except Exception as e:
+        logger.error(f"[get_summaries_batch] 배치 요약 상태 조회 실패: {e}", exc_info=True)
+        raise DatabaseException(f"배치 요약 상태 조회 중 오류가 발생했습니다: {str(e)}")
+
+@router.get("/summaries")
+def get_summaries(user_id: str = Query(...)):
+    """사용자 요약 결과 목록 조회"""
+    try:
+        # 사용자 존재 확인
+        with get_db_connection() as cursor:
+            cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
+            if not cursor.fetchone():
+                raise NotFoundException("사용자", user_id)
+        with get_db_connection() as cursor:
+            cursor.execute(
+                """SELECT ID, VIDEO_ID, USER_ID, PROMPT, SUMMARY_TEXT, CREATED_AT, UPDATED_AT
+                   FROM vss_summaries
+                   WHERE USER_ID = ?
+                   ORDER BY UPDATED_AT DESC""",
+                (user_id,)
+            )
+            rows = cursor.fetchall()
+
+        summaries = [
+            {
+                "id": row[0],
+                "video_id": row[1],
+                "user_id": row[2],
+                "prompt": row[3],
+                "summary_text": row[4],
+                "created_at": _format_datetime(row[5]),
+                "updated_at": _format_datetime(row[6])
+            }
+            for row in rows
+        ]
+
+        return {
+            "success": True,
+            "summaries": summaries
+        }
+    except NotFoundException:
+        raise
+    except Exception as e:
+        logger.error(f"요약 목록 조회 실패: {e}")
+        raise DatabaseException(f"요약 목록 조회 중 오류가 발생했습니다: {str(e)}")
+
 @router.get("/summaries/{video_id}")
 def get_summary(
     video_id: str,
@@ -456,49 +578,6 @@ def get_summary(
     except Exception as e:
         logger.error(f"[get_summary] 요약 결과 조회 실패: VIDEO_ID={video_id}, USER_ID={user_id}, 오류={e}")
         raise DatabaseException(f"요약 결과 조회 중 오류가 발생했습니다: {str(e)}")
-
-
-@router.get("/summaries")
-def get_summaries(user_id: str = Query(...)):
-    """사용자 요약 결과 목록 조회"""
-    try:
-        # 사용자 존재 확인
-        with get_db_connection() as cursor:
-            cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
-            if not cursor.fetchone():
-                raise NotFoundException("사용자", user_id)
-        with get_db_connection() as cursor:
-            cursor.execute(
-                """SELECT ID, VIDEO_ID, USER_ID, PROMPT, SUMMARY_TEXT, CREATED_AT, UPDATED_AT
-                   FROM vss_summaries
-                   WHERE USER_ID = ?
-                   ORDER BY UPDATED_AT DESC""",
-                (user_id,)
-            )
-            rows = cursor.fetchall()
-
-        summaries = [
-            {
-                "id": row[0],
-                "video_id": row[1],
-                "user_id": row[2],
-                "prompt": row[3],
-                "summary_text": row[4],
-                "created_at": _format_datetime(row[5]),
-                "updated_at": _format_datetime(row[6])
-            }
-            for row in rows
-        ]
-
-        return {
-            "success": True,
-            "summaries": summaries
-        }
-    except NotFoundException:
-        raise
-    except Exception as e:
-        logger.error(f"요약 목록 조회 실패: {e}")
-        raise DatabaseException(f"요약 목록 조회 중 오류가 발생했습니다: {str(e)}")
 
 @router.delete("/summaries")
 async def delete_summaries(request: DeleteSummaryRequest):

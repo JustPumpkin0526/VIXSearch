@@ -76,6 +76,15 @@ def setup_logging():
     uvicorn_access_logger = logging.getLogger("uvicorn.access")
     uvicorn_error_logger = logging.getLogger("uvicorn.error")
     
+    # uvicorn access logger의 콘솔 핸들러에 타임스탬프 포맷 설정
+    access_formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    
+    # uvicorn.access 로거의 기존 핸들러에 포맷터 적용
+    # uvicorn이 시작되기 전에는 핸들러가 없을 수 있으므로, 핸들러가 추가될 때 포맷터를 적용하도록 설정
+    if uvicorn_access_logger.handlers:
+        for handler in uvicorn_access_logger.handlers:
+            handler.setFormatter(access_formatter)
+    
     # uvicorn 로그도 파일에 기록
     uvicorn_file_handler = TimedRotatingFileHandler(
         filename=str(uvicorn_log_file),
