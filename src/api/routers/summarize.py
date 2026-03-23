@@ -79,6 +79,25 @@ async def vss_summarize(
     logger.info(
         "[CA-RAG DEBUG] ====== /vss-summarize 엔드포인트 호출 ======"
     )
+    
+    # 프론트엔드에서 전달받은 파라미터 로그 출력
+    logger.info(f"[VSS-SUMMARIZE] 받은 파라미터:")
+    logger.info(f"  - top_k: {top_k}")
+    logger.info(f"  - top_p: {top_p}")
+    logger.info(f"  - temperature: {temperature}")
+    logger.info(f"  - max_tokens: {max_tokens}")
+    logger.info(f"  - seed: {seed}")
+    logger.info(f"  - summary_top_p: {summary_top_p}")
+    logger.info(f"  - summary_temperature: {summary_temperature}")
+    logger.info(f"  - summary_max_tokens: {summary_max_tokens}")
+    logger.info(f"  - chat_top_p: {chat_top_p}")
+    logger.info(f"  - chat_temperature: {chat_temperature}")
+    logger.info(f"  - chat_max_tokens: {chat_max_tokens}")
+    logger.info(f"  - alert_top_p: {alert_top_p}")
+    logger.info(f"  - alert_temperature: {alert_temperature}")
+    logger.info(f"  - alert_max_tokens: {alert_max_tokens}")
+    logger.info(f"  - rag_top_k: {rag_top_k}")
+    
     # ========== CA-RAG 컨텍스트 디버깅 로그 끝 ==========
     
     # video_id가 제공되지 않은 경우 파일 업로드

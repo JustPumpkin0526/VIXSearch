@@ -53,11 +53,11 @@ export const useSettingStore = defineStore('setting', () => {
   // 공통 파라미터 (query와 summarize 구분 없이 통일)
   // -1: 자동 지정, 0: Chunk 없음, 그 외: 명시적 값
   const searchChunk = ref(-1);
-  const searchTopK = ref(80);
+  const searchTopK = ref(50);
   const searchTopP = ref(1.0);
-  const searchTemperature = ref(0.3);
+  const searchTemperature = ref(0.4);
   const searchMaxTokens = ref(1024);
-  const searchSeed = ref(42);
+  const searchSeed = ref(1);
   
   // Summarize 전용 파라미터 (검색 설정에서 사용)
   const summarizeNumFramesPerChunk = ref(0);

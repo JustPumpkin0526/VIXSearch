@@ -151,6 +151,25 @@ class VSS:
         logger.info(
             "[CA-RAG DEBUG] enable_chat: True, stream: False (설정됨)"
         )
+        
+        # Summarize 파라미터 로그 출력
+        logger.info(f"[SUMMARIZE-VIDEO] 파라미터:")
+        logger.info(f"  - top_k: {top_k}")
+        logger.info(f"  - top_p: {top_p}")
+        logger.info(f"  - temperature: {temperature}")
+        logger.info(f"  - max_new_tokens: {max_new_tokens}")
+        logger.info(f"  - seed: {seed}")
+        logger.info(f"  - summarize_top_p: {summarize_top_p}")
+        logger.info(f"  - summarize_temperature: {summarize_temperature}")
+        logger.info(f"  - summarize_max_tokens: {summarize_max_tokens}")
+        logger.info(f"  - chat_top_p: {chat_top_p}")
+        logger.info(f"  - chat_temperature: {chat_temperature}")
+        logger.info(f"  - chat_max_tokens: {chat_max_tokens}")
+        logger.info(f"  - notification_top_p: {notification_top_p}")
+        logger.info(f"  - notification_temperature: {notification_temperature}")
+        logger.info(f"  - notification_max_tokens: {notification_max_tokens}")
+        logger.info(f"  - rag_top_k: {rag_top_k}")
+        
         # ========== CA-RAG 컨텍스트 디버깅 로그 끝 ==========
         
         # VIA 서버의 SummarizationQuery 모델은 id 필드가 Union[UUID, List[UUID]]를 지원
@@ -326,6 +345,12 @@ class VSS:
             video_id,
             query
         )
+        logger.info(f"chunk_size: {chunk_size}")
+        logger.info(f"temperature: {temperature}")
+        logger.info(f"seed: {seed}")
+        logger.info(f"max_new_tokens: {max_new_tokens}")
+        logger.info(f"top_p: {top_p}")
+        logger.info(f"top_k: {top_k}")
         logger.info(
             "[CA-RAG DEBUG] 이전에 summarize_video가 호출되었는지 확인 필요"
         )

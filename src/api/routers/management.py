@@ -530,7 +530,9 @@ async def generate_clips(
                     timestamp_data = await parse_timestamps(filtered_query_result, duration)
                     
                 # 타임스탬프 기반 클립 생성 (최적화: 병렬 처리)
-                base_name, _ = os.path.splitext(file_path)
+                # 파일 경로에서 파일명만 추출 후 확장자 제거
+                file_basename = os.path.basename(file_path)
+                base_name, _ = os.path.splitext(file_basename)
                 timestamp_suffix = int(time.time() * 1000)
                 base = str(request.base_url).rstrip('/')
                 

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, Request, File, Form, UploadFile, HTTPException, Query, Body, BackgroundTasks
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from moviepy.video.io.VideoFileClip import VideoFileClip
 try:
     import cv2
@@ -32,6 +32,68 @@ from utils.helpers import (
     calculate_similarity, get_text_embedding, cosine_similarity, translate_to_english
 )
 from utils.video_utils import parse_timestamps
+
+# 부정적인 표현 패턴 (한국어 및 영어)
+# 실제 부정적인 의미를 나타내는 패턴만 필터링
+# "강도", "범죄" 등의 단어 자체는 제외하고, 실제로 "없다", "등장하지 않" 등의 부정 표현만 필터링
+NEGATIVE_PATTERNS = [
+    # 부정 표현 (없음, 안 나옴 등)
+    "등장하지 않", "없습니다", "등장하지 않았습니다", "찾을 수 없", "발생하지 않",
+    "발견되지 않", "나타나지 않", "보이지 않", "없었습니다", "없었음",
+    "not found", "no scenes", "not appear", "not present", "not exist",
+    "no such", "cannot find", "unable to find", "does not exist",
+    # 부정적인 의미를 명확히 나타내는 표현
+    "등장하지 않았", "나타나지 않았", "보이지 않았", "발견되지 않았",
+]
+
+def contains_negative_words(text: str) -> bool:
+    """
+    텍스트에 부정적인 표현이 포함되어 있는지 확인
+    단순 키워드가 아닌 실제 부정적인 의미를 나타내는 패턴만 검사
+    예: "강도가 등장하는" -> 포함 (중요한 보안 장면)
+        "강도가 등장하지 않" -> 제외 (부정 표현)
+    
+    Args:
+        text: 검사할 텍스트
+        
+    Returns:
+        bool: 부정적인 표현이 포함되어 있으면 True
+    """
+    if not text:
+        return False
+    
+    text_lower = text.lower()
+    
+    # 부정 패턴 검사
+    for pattern in NEGATIVE_PATTERNS:
+        if pattern.lower() in text_lower:
+            logger.info(f"부정적인 표현 감지: '{pattern}' in '{text[:100]}'")
+            return True
+    
+    return False
+
+def filter_negative_timestamps(timestamp_data: List[Tuple[float, float, str]]) -> List[Tuple[float, float, str]]:
+    """
+    타임스탬프 데이터에서 부정적인 단어가 포함된 항목을 필터링
+    
+    Args:
+        timestamp_data: (start_time, end_time, sentence) 튜플 리스트
+        
+    Returns:
+        필터링된 타임스탬프 데이터
+    """
+    if not timestamp_data:
+        return []
+    
+    filtered = []
+    for start_time, end_time, sentence in timestamp_data:
+        if not contains_negative_words(sentence):
+            filtered.append((start_time, end_time, sentence))
+        else:
+            logger.info(f"부정적인 단어로 인해 클립 제외: {start_time}-{end_time}={sentence[:100]}")
+    
+    return filtered
+
 from config.settings import (
     CLIPS_DIR, TMP_DIR, CLIP_CLEANUP_AGE, DEFAULT_SUMMARIZE_PROMPT,
     OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, VIA_SERVER_URL, CV_EVENT_DETECTOR_API_URL,
@@ -129,6 +191,27 @@ def create_clip_with_ffmpeg(input_path: str, output_path: str, start_time: float
 # ==================== 요청 모델 ====================
 class RecommendedChunkSizeRequest(BaseModel):
     video_length: float
+
+class RecommendedConfig(BaseModel):
+    """VIA 서버의 /recommended_config API에 사용되는 요청 모델"""
+    video_length: int = Field(
+        ge=1,
+        le=24 * 60 * 60 * 10000,
+        description="The video length in seconds.",
+    )
+    target_response_time: int = Field(
+        ge=1,
+        le=86400,
+        description="The target response time of VIA in seconds.",
+    )
+    usecase_event_duration: int = Field(
+        ge=1,
+        le=86400,
+        description=(
+            "The duration of the target event user wants to detect;"
+            " example: it will take a box-falling event 3 seconds to happen."
+        ),
+    )
 
 class RemoveMediaRequest(BaseModel):
     media_ids: List[str]
@@ -872,12 +955,16 @@ async def generate_clips(
                 enhanced_prompt = f"""{enhanced_prompt}
 
 CRITICAL: 정확히 1개의 장면만 출력하세요. 여러 개 출력하지 마세요.
-출력 형식: "시작초-끝초=설명" (예: "0.00-20.00=여성이 걷고 있습니다")
+출력 형식: "시작초-끝초=설명"
 - 반드시 숫자-숫자=설명 형식만 사용 (START, END, s 접미사 금지)
 - 가장 정확도가 높은 장면 1개만 출력 (2개 이상 출력 금지)
-- 설명은 한국어로 작성
+- 설명은 한국어로 작성하며, 장면에서 발생하는 내용을 자세하고 구체적으로 설명하세요
+  * 등장 인물의 특징, 행동, 위치, 의상 등을 포함
+  * 발생하는 사건이나 상황을 구체적으로 묘사
+  * 시각적으로 확인 가능한 세부사항을 포함하여 설명
 - 결과 없으면 "No matching scenes found." 한 번만 출력
-- 부정 응답 반복 금지"""
+- 부정 응답 반복 금지
+"""
                 logger.info(f"enhanced_prompt: {enhanced_prompt}")
                 
                 # 최적화: duration 계산을 검색 결과 확인 후로 지연
@@ -940,17 +1027,6 @@ CRITICAL: 정확히 1개의 장면만 출력하세요. 여러 개 출력하지 �
                 query_max_tokens = max_new_tokens if max_new_tokens is not None else min(DEFAULT_QUERY_MAX_TOKENS, 200)
                 query_top_p = top_p if top_p is not None else DEFAULT_QUERY_TOP_P
                 query_top_k = top_k if top_k is not None else DEFAULT_QUERY_TOP_K
-                
-                # temperature를 낮춰서 더 결정론적이고 일관된 결과 유도
-                if query_temperature > 0.2:
-                    query_temperature = 0.2
-                    logger.info(f"1개 장면만 반환하도록 temperature를 0.2로 조정")
-                
-                # temperature가 0이면 완전히 결정론적인 결과를 위해 top_k를 1로 설정
-                # top_k가 1보다 크면 상위 k개 토큰 중에서 샘플링하므로 랜덤성이 발생함
-                if query_temperature == 0.0 and query_top_k > 1:
-                    logger.info(f"temperature=0이므로 결정론적 결과를 위해 top_k를 {query_top_k}에서 1로 변경")
-                    query_top_k = 1
                 
                 # Query 파라미터 로그 출력
                 logger.info(
@@ -1055,7 +1131,14 @@ CRITICAL: 정확히 1개의 장면만 출력하세요. 여러 개 출력하지 �
                     
                 # 타임스탬프 기반 클립 생성 (최적화: 병렬 처리)
                 # 최적화: 검색 결과가 있는 영상만 클립 생성
-                base_name, _ = os.path.splitext(file_path)
+                # 클립 생성 전 마지막 단계: 부정적인 단어 필터링
+                timestamp_data = filter_negative_timestamps(timestamp_data)
+                if not timestamp_data:
+                    logger.info(f"부정적인 단어 필터링 후 클립 생성할 항목이 없습니다: {file_path}")
+                
+                # 파일 경로에서 파일명만 추출 후 확장자 제거
+                file_basename = os.path.basename(file_path)
+                base_name, _ = os.path.splitext(file_basename)
                 timestamp_suffix = int(time.time() * 1000)
                 base = str(request.base_url).rstrip('/')
                 
@@ -1069,7 +1152,16 @@ CRITICAL: 정확히 1개의 장면만 출력하세요. 여러 개 출력하지 �
                             start_time >= 0 and end_time >= 0 and
                             end_time - start_time > 0 and
                             start_time < end_time):
-                            valid_timestamps.append((start_time, end_time, sentence))
+                            # 타임스탬프 길이가 5초 이하이면 앞뒤로 3초씩 마진 추가
+                            clip_duration = end_time - start_time
+                            if clip_duration <= 5.0:
+                                margin = 3.0
+                                adjusted_start = max(0, start_time - margin)
+                                adjusted_end = min(duration, end_time + margin)
+                                logger.info(f"타임스탬프 길이 {clip_duration:.2f}초가 5초 이하이므로 마진 추가: {start_time:.2f}-{end_time:.2f} → {adjusted_start:.2f}-{adjusted_end:.2f}")
+                                valid_timestamps.append((adjusted_start, adjusted_end, sentence))
+                            else:
+                                valid_timestamps.append((start_time, end_time, sentence))
                         else:
                             logger.warning(f"유효하지 않은 타임스탬프 제외: start={start_time}, end={end_time}, sentence={sentence}")
                     
@@ -1441,6 +1533,15 @@ async def query_and_generate_clips(
     """Query만 수행하고 클립 생성 (요약은 건너뛰기)"""
     CLIPS_DIR.mkdir(exist_ok=True)
     
+    # 프론트엔드에서 전달받은 파라미터 로그 출력
+    logger.info(f"[QUERY-AND-GENERATE-CLIPS] 받은 파라미터:")
+    logger.info(f"  - chunk_size: {chunk_size}")
+    logger.info(f"  - top_k: {top_k}")
+    logger.info(f"  - top_p: {top_p}")
+    logger.info(f"  - temperature: {temperature}")
+    logger.info(f"  - max_new_tokens: {max_new_tokens}")
+    logger.info(f"  - seed: {seed}")
+    
     # 최적화: 오래된 클립 파일 정리를 백그라운드 작업으로 이동
     background_tasks.add_task(cleanup_old_clips)
 
@@ -1507,8 +1608,9 @@ async def query_and_generate_clips(
                 video_duration_map.get(os.path.basename(upfile.filename))
             )
         
-        # DB 조회 최적화: 모든 동영상의 video_id를 배치로 조회
+        # DB 조회 최적화: 모든 동영상의 video_id와 duration을 배치로 조회
         video_id_batch_map = {}  # db_internal_id -> video_id 매핑
+        duration_batch_map = {}  # video_id -> duration 매핑
         
         if user_id and video_id_map:
             try:
@@ -1531,6 +1633,21 @@ async def query_and_generate_clips(
                     )
                     for row in cursor.fetchall():
                         video_id_batch_map[row[0]] = row[1]
+                    
+                    # 배치로 duration 조회 (video_id 목록이 있는 경우)
+                    if video_id_batch_map:
+                        video_ids_list = list(video_id_batch_map.values())
+                        unique_video_ids = list(set(video_ids_list))
+                        duration_placeholders = ','.join(['?'] * len(unique_video_ids))
+                        duration_params = unique_video_ids + [user_id]
+                        cursor.execute(
+                            f"SELECT VIDEO_ID, DURATION FROM vss_videos WHERE VIDEO_ID IN ({duration_placeholders}) AND USER_ID = ?",
+                            duration_params
+                        )
+                        for row in cursor.fetchall():
+                            if row[1]:  # duration이 None이 아닌 경우만
+                                duration_batch_map[row[0]] = float(row[1])
+                        logger.info(f"[최적화] 배치 duration 조회 완료: {len(duration_batch_map)}개")
             except Exception as e:
                 logger.warning(f"배치 DB 조회 중 오류: {e}")
         
@@ -1561,7 +1678,7 @@ async def query_and_generate_clips(
             file_path = os.path.basename(upfile.filename)
             
             try:
-                logger.info(f"[QUERY-ONLY] 동영상 처리 시작: {file_path} ({index + 1}/{len(upload_list)})")
+                logger.debug(f"[QUERY-ONLY] 동영상 처리 시작: {file_path} ({index + 1}/{len(upload_list)})")
                 
                 await ensure_vss_client()
                 model = await get_via_model()
@@ -1573,14 +1690,14 @@ async def query_and_generate_clips(
                     db_internal_id = get_db_internal_id(upfile)
                     if db_internal_id and db_internal_id in video_id_batch_map:
                         video_id = video_id_batch_map[db_internal_id]
-                        logger.info(f"배치 조회에서 VIDEO_ID {video_id} 발견 (파일명: {file_path})")
+                        logger.debug(f"[QUERY-ONLY] 배치 조회에서 VIDEO_ID {video_id} 발견 (파일명: {file_path})")
                 
                 # video_id가 없으면 VIA 서버 파일 목록에서 확인
                 if not video_id:
                     existing_id = via_file_index.get(file_path)
                     if existing_id:
                         video_id = existing_id
-                        logger.info(f"VIA 서버에 이미 존재하는 파일 사용: {file_path} -> {video_id}")
+                        logger.debug(f"[QUERY-ONLY] VIA 서버에 이미 존재하는 파일 사용: {file_path} -> {video_id}")
                     else:
                         # video_id가 없으면 에러 반환 (파일 저장 없이 업로드 불가)
                         logger.error(f"VIDEO_ID를 획득하지 못했습니다. 파일: {file_path} (DB에 video_id가 없고 VIA 서버에도 없음)")
@@ -1607,7 +1724,7 @@ async def query_and_generate_clips(
                     # 공통 프롬프트 템플릿 사용 (사전 생성된 템플릿으로 중복 생성 방지)
                     enhanced_prompt = prompt_template
                     
-                    # duration 계산 (프론트엔드에서 전달받은 값 우선 사용, 없으면 DB에서 가져오기)
+                    # duration 계산 (프론트엔드에서 전달받은 값 우선 사용, 없으면 배치 조회 결과 사용)
                     if duration is None:
                         # 1순위: 프론트엔드에서 전달받은 duration 사용
                         frontend_duration = get_video_duration(upfile)
@@ -1615,30 +1732,20 @@ async def query_and_generate_clips(
                             try:
                                 duration = float(frontend_duration)
                                 if duration > 0:
-                                    logger.info(f"프론트엔드에서 duration 가져옴: {duration}초 (파일명: {file_path})")
+                                    logger.debug(f"프론트엔드에서 duration 가져옴: {duration}초 (파일명: {file_path})")
                             except (ValueError, TypeError) as e:
                                 logger.warning(f"프론트엔드 duration 변환 실패: {e}")
                                 duration = None
                         
-                        # 2순위: DB에서 가져오기
+                        # 2순위: 배치 조회 결과에서 가져오기 (개별 DB 쿼리 제거)
+                        if duration is None and video_id in duration_batch_map:
+                            duration = duration_batch_map[video_id]
+                            logger.debug(f"배치 조회에서 duration 가져옴: {duration}초 (VIDEO_ID: {video_id})")
+                        
+                        # 3순위: 기본값 사용 (배치 조회에서도 찾지 못한 경우)
                         if duration is None:
-                            try:
-                                ensure_db_connection()
-                                cursor.execute(
-                                    "SELECT DURATION FROM vss_videos WHERE VIDEO_ID = ? AND USER_ID = ?",
-                                    (video_id, user_id)
-                                )
-                                row = cursor.fetchone()
-                                if row and row[0]:
-                                    duration = float(row[0])
-                                    logger.info(f"DB에서 duration 가져옴: {duration}초 (VIDEO_ID: {video_id})")
-                                else:
-                                    # DB에 duration이 없으면 기본값 사용
-                                    logger.warning(f"DB에 duration이 없음 (VIDEO_ID: {video_id}), 기본값 0 사용")
-                                    duration = 0
-                            except Exception as e:
-                                logger.warning(f"DB에서 duration 가져오기 실패: {e}")
-                                duration = 0
+                            duration = 0
+                            logger.debug(f"duration을 찾지 못해 기본값 0 사용 (VIDEO_ID: {video_id})")
                     
                     chunk_duration = await get_recommended_chunk_size(duration) if duration and duration > 0 else 0
                     
@@ -1657,14 +1764,11 @@ async def query_and_generate_clips(
                     query_top_p = top_p if top_p is not None else DEFAULT_QUERY_TOP_P
                     query_top_k = top_k if top_k is not None else DEFAULT_QUERY_TOP_K
                     
-                    # temperature를 낮춰서 더 결정론적이고 일관된 결과 유도
-                    if query_temperature > 0.2:
-                        query_temperature = 0.2
-                        logger.info(f"1개 장면만 반환하도록 temperature를 0.2로 조정")
-                    
-                    if query_temperature == 0.0 and query_top_k > 1:
-                        logger.info(f"temperature=0이므로 결정론적 결과를 위해 top_k를 {query_top_k}에서 1로 변경")
-                        query_top_k = 1
+                    logger.info(f"[QUERY-AND-GENERATE-CLIPS] 파라미터 처리:")
+                    logger.info(f"  - 프론트엔드에서 받은 top_k: {top_k}")
+                    logger.info(f"  - 프론트엔드에서 받은 temperature: {temperature}")
+                    logger.info(f"  - 처리 후 query_top_k: {query_top_k}")
+                    logger.info(f"  - 처리 후 query_temperature: {query_temperature}")
                     
                     query_params = build_query_video_params(
                         video_id=video_id,
@@ -1678,9 +1782,9 @@ async def query_and_generate_clips(
                         top_k=query_top_k
                     )
                     
-                    logger.info(f"[QUERY-ONLY] query_video 호출: VIDEO_ID={video_id}")
+                    logger.debug(f"[QUERY-ONLY] query_video 호출: VIDEO_ID={video_id}")
                     query_result = await vss_client.query_video(*query_params)
-                    logger.info(f"[QUERY-ONLY] query_video 호출 완료: file_path={file_path}, video_id={video_id}")
+                    logger.debug(f"[QUERY-ONLY] query_video 호출 완료: file_path={file_path}, video_id={video_id}")
                     
                     # "Audio transcript not available." 메시지 처리
                     if query_result and "Audio transcript not available" in str(query_result):
@@ -1762,10 +1866,17 @@ async def query_and_generate_clips(
                             # 파싱 직후 첫 번째 결과만 선택 (병합/요약 전에 제한하여 시간 절감)
                             if parsed_timestamps:
                                 timestamp_data = [parsed_timestamps[0]]  # 첫 번째 결과만 사용
-                                logger.info(f"파싱된 타임스탬프 {len(parsed_timestamps)}개 중 첫 번째 결과만 선택 (1개)")
+                                logger.debug(f"파싱된 타임스탬프 {len(parsed_timestamps)}개 중 첫 번째 결과만 선택 (1개)")
                     
                     # 클립 생성 (기존 로직 재사용)
-                    base_name, _ = os.path.splitext(file_path)
+                    # 클립 생성 전 마지막 단계: 부정적인 단어 필터링
+                    timestamp_data = filter_negative_timestamps(timestamp_data)
+                    if not timestamp_data:
+                        logger.info(f"부정적인 단어 필터링 후 클립 생성할 항목이 없습니다: {file_path}")
+                    
+                    # 파일 경로에서 파일명만 추출 후 확장자 제거
+                    file_basename = os.path.basename(file_path)
+                    base_name, _ = os.path.splitext(file_basename)
                     timestamp_suffix = int(time.time() * 1000)
                     base = str(request.base_url).rstrip('/')
                     
@@ -1776,11 +1887,20 @@ async def query_and_generate_clips(
                                 start_time >= 0 and end_time >= 0 and
                                 end_time - start_time > 0 and
                                 start_time < end_time):
-                                valid_timestamps.append((start_time, end_time, sentence))
+                                # 타임스탬프 길이가 5초 이하이면 앞뒤로 3초씩 마진 추가
+                                clip_duration = end_time - start_time
+                                if clip_duration <= 5.0:
+                                    margin = 3.0
+                                    adjusted_start = max(0, start_time - margin)
+                                    adjusted_end = min(duration, end_time + margin)
+                                    logger.debug(f"[QUERY-ONLY] 타임스탬프 길이 {clip_duration:.2f}초가 5초 이하이므로 마진 추가: {start_time:.2f}-{end_time:.2f} → {adjusted_start:.2f}-{adjusted_end:.2f}")
+                                    valid_timestamps.append((adjusted_start, adjusted_end, sentence))
+                                else:
+                                    valid_timestamps.append((start_time, end_time, sentence))
                         
                         # 이미 1개로 제한되었으므로 추가 제한 불필요
                         if valid_timestamps:
-                            logger.info(f"클립 생성 시작: 1개 클립 (가장 정확도 높은 장면만 선택)")
+                            logger.debug(f"클립 생성 시작: 1개 클립 (가장 정확도 높은 장면만 선택)")
                             
                             # 번역 작업 병렬 처리 - 주석 처리
                             # sentences_to_translate = [s for _, _, s in valid_timestamps if s and s.strip()]
@@ -1808,7 +1928,7 @@ async def query_and_generate_clips(
                             # 클립 생성 건너뛰기 옵션 확인
                             if skip_clip_generation:
                                 # 클립 생성 없이 타임스탬프 정보만 반환 (원본 동영상 재생용)
-                                logger.info(f"클립 생성 건너뛰기: {len(valid_timestamps)}개 타임스탬프만 반환")
+                                logger.debug(f"클립 생성 건너뛰기: {len(valid_timestamps)}개 타임스탬프만 반환")
                                 for idx, (start_time, end_time, sentence) in enumerate(valid_timestamps):
                                     translated_sentence = translated_sentences.get(sentence, sentence)
                                     # 원본 동영상 정보 반환 (클립 URL 없음, 원본 동영상 식별 정보 포함)
@@ -1824,7 +1944,7 @@ async def query_and_generate_clips(
                                         "video_id": video_id,  # VIA 서버 video_id (프론트엔드 매칭용)
                                         "db_id": db_internal_id  # 내부 DB ID (프론트엔드 매칭용)
                                     })
-                                logger.info(f"타임스탬프 정보 반환 완료: {len(video_clips)}개 (클립 생성 없음)")
+                                logger.debug(f"타임스탬프 정보 반환 완료: {len(video_clips)}개 (클립 생성 없음)")
                             else:
                                 # 클립 생성은 더 이상 지원하지 않음 (파일 저장 없이 처리하므로)
                                 # skip_clip_generation=False인 경우에도 타임스탬프만 반환
@@ -1844,7 +1964,7 @@ async def query_and_generate_clips(
                                         "video_id": video_id,  # VIA 서버 video_id (프론트엔드 매칭용)
                                         "db_id": db_internal_id  # 내부 DB ID (프론트엔드 매칭용)
                                     })
-                                logger.info(f"타임스탬프 정보 반환 완료: {len(video_clips)}개 (클립 생성 불가, 파일 저장 없음)")
+                                logger.debug(f"타임스탬프 정보 반환 완료: {len(video_clips)}개 (클립 생성 불가, 파일 저장 없음)")
                     else:
                         logger.warning(f"타임스탬프를 찾을 수 없습니다. 검색어: '{prompt}'.")
                         video_clips.append({
@@ -1888,15 +2008,11 @@ async def query_and_generate_clips(
                 }
 
         # 병렬 발사 최적화: 공통 프롬프트 템플릿 사전 생성
-        prompt_template = f"""{prompt}
-
-CRITICAL: 정확히 1개의 장면만 출력하세요. 여러 개 출력하지 마세요.
-출력 형식: "시작초-끝초=설명" (예: "0.00-20.00=여성이 걷고 있습니다")
-- 반드시 숫자-숫자=설명 형식만 사용 (START, END, s 접미사 금지)
-- 가장 정확도가 높은 장면 1개만 출력 (2개 이상 출력 금지)
-- 설명은 한국어로 작성
-- 결과 없으면 "No matching scenes found." 한 번만 출력
-- 부정 응답 반복 금지"""
+        prompt_template = f"""{prompt} 출력 형식: SS.SSS-SS.SSS=설명
+- 설명은 한국어로 작성하며, 장면에서 발생하는 내용을 자세하고 구체적으로 설명하세요
+- 오직 한 문장만 출력해주세요.
+- 문장을 반복적으로 출력하지 마세요.
+- 관련 없는 내용이나 부정적인 문장 앞에는 타임스탬프가 출력되지 않게 해주세요."""
         
         # 여러 동영상을 병렬로 처리
         logger.info(f"[QUERY-ONLY] {len(upload_list)}개 동영상 병렬 처리 시작")
@@ -1967,6 +2083,8 @@ async def vss_query(
     from utils.helpers import vss_client
 
     temp_file_path = None
+    duration = 0  # chunk_size 자동 지정을 위해 duration 저장
+    
     try:
         if file and not video_id:
             TMP_DIR.mkdir(exist_ok=True)
@@ -1980,6 +2098,18 @@ async def vss_query(
                 "[CA-RAG DEBUG] 파일 업로드 완료: video_id=%s",
                 video_id
             )
+            
+            # chunk_size 자동 지정을 위해 duration 가져오기 (파일 삭제 전에 수행)
+            if chunk_size is None or chunk_size == -1 or chunk_size < 0:
+                try:
+                    video = VideoFileClip(file_path)
+                    duration = video.duration or 0
+                    video.close()
+                    del video
+                    logger.info(f"[vss-query] 동영상 duration: {duration}초")
+                except Exception as video_error:
+                    logger.warning(f"[vss-query] 동영상 duration 가져오기 실패: {video_error}")
+                    duration = 0
         elif not video_id:
             raise HTTPException(status_code=400, detail="video_id 또는 file 중 하나는 필요합니다.")
     finally:
@@ -1990,6 +2120,26 @@ async def vss_query(
                 logger.debug(f"임시 파일 삭제 완료: {temp_file_path}")
             except Exception as cleanup_error:
                 logger.warning(f"임시 파일 삭제 실패: {temp_file_path}, 오류: {cleanup_error}")
+    
+    # chunk_size 자동 지정 처리 (-1이거나 음수인 경우)
+    final_chunk_size = chunk_size
+    if chunk_size is None or chunk_size == -1 or chunk_size < 0:
+        # 자동 지정: 동영상 duration을 가져와서 추천 chunk_size 계산
+        if duration and duration > 0:
+            try:
+                final_chunk_size = await get_recommended_chunk_size(duration)
+                logger.info(f"[vss-query] 자동 지정: chunk_size={final_chunk_size} (영상 길이: {duration}초)")
+            except Exception as chunk_error:
+                logger.warning(f"[vss-query] 추천 chunk_size 계산 실패: {chunk_error}. 기본값 10 사용")
+                final_chunk_size = 10
+        else:
+            # duration을 가져올 수 없는 경우 기본값 사용
+            logger.warning(f"[vss-query] 동영상 duration을 가져올 수 없어 기본값 10 사용")
+            final_chunk_size = 10
+    elif chunk_size < 0:
+        # chunk_size가 음수이면 기본값 사용
+        logger.warning(f"[vss-query] chunk_size가 음수입니다 ({chunk_size}). 기본값 10 사용")
+        final_chunk_size = 10
     
     # vss-query는 요약 없이 오직 query만 수행
     # (요약이 필요한 경우 generate-clips 엔드포인트를 사용)
@@ -2007,23 +2157,16 @@ async def vss_query(
     #     logger.warning(f"[CA-RAG DEBUG] query 번역 실패, 원본 사용: {translate_error}")
     #     translated_query = query
     
-    # temperature가 0이면 완전히 결정론적인 결과를 위해 top_k를 1로 설정
-    # top_k가 1보다 크면 상위 k개 토큰 중에서 샘플링하므로 랜덤성이 발생함
-    adjusted_top_k = top_k
-    if temperature == 0.0 and top_k > 1:
-        logger.info(f"temperature=0이므로 결정론적 결과를 위해 top_k를 {top_k}에서 1로 변경")
-        adjusted_top_k = 1
-    
     query_params = build_query_video_params(
         video_id=video_id,
         model=model,
         query=translated_query,  # 번역된 query 사용
-        chunk_size=chunk_size,
+        chunk_size=final_chunk_size,  # 자동 지정 처리된 chunk_size 사용
         temperature=temperature,
         seed=seed,
         max_new_tokens=max_new_tokens,
         top_p=top_p,
-        top_k=adjusted_top_k
+        top_k=top_k
     )
     
     # Query 파라미터 상세 로그 출력
@@ -2031,8 +2174,8 @@ async def vss_query(
         "[QUERY PARAMS] ====== query_video 호출 파라미터 ======"
     )
     logger.info(
-        "[QUERY PARAMS] video_id=%s, model=%s, chunk_size=%s, temperature=%s, seed=%s, max_new_tokens=%s, top_p=%s, top_k=%s",
-        video_id, model, chunk_size, temperature, seed, max_new_tokens, top_p, top_k
+        "[QUERY PARAMS] video_id=%s, model=%s, chunk_size=%s (원본: %s, 최종: %s), temperature=%s, seed=%s, max_new_tokens=%s, top_p=%s, top_k=%s",
+        video_id, model, final_chunk_size, chunk_size, final_chunk_size, temperature, seed, max_new_tokens, top_p, top_k
     )
     logger.info(
         "[QUERY PARAMS] translated_query=%s",
@@ -2321,13 +2464,14 @@ async def save_search_state(
                     (user_id, json.dumps(state_json))
                 )
             except Exception as table_error:
+                error_str = str(table_error)
                 # 테이블이 없으면 생성
-                if "doesn't exist" in str(table_error) or "Unknown table" in str(table_error):
+                if "doesn't exist" in error_str or "Unknown table" in error_str:
                     logger.info("vss_search_states 테이블이 없어 생성합니다.")
                     db_cursor.execute("""
                         CREATE TABLE IF NOT EXISTS vss_search_states (
                             USER_ID VARCHAR(255) PRIMARY KEY,
-                            STATE_DATA TEXT,
+                            STATE_DATA LONGTEXT,
                             UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
                         )
                     """)
@@ -2336,6 +2480,28 @@ async def save_search_state(
                            VALUES (?, ?, CURRENT_TIMESTAMP)""",
                         (user_id, json.dumps(state_json))
                     )
+                # Data too long 오류인 경우 컬럼 타입 변경 시도
+                elif "Data too long" in error_str or "too long for column" in error_str:
+                    logger.info("STATE_DATA 컬럼이 LONGTEXT로 변경되지 않았습니다. 마이그레이션을 시도합니다.")
+                    try:
+                        # 기존 테이블의 STATE_DATA 컬럼을 LONGTEXT로 변경
+                        db_cursor.execute("""
+                            ALTER TABLE vss_search_states 
+                            MODIFY COLUMN STATE_DATA LONGTEXT
+                        """)
+                        logger.info("STATE_DATA 컬럼을 LONGTEXT로 변경했습니다.")
+                        # 다시 삽입 시도
+                        db_cursor.execute(
+                            """INSERT INTO vss_search_states (USER_ID, STATE_DATA, UPDATED_AT)
+                               VALUES (?, ?, CURRENT_TIMESTAMP)
+                               ON DUPLICATE KEY UPDATE 
+                               STATE_DATA = VALUES(STATE_DATA),
+                               UPDATED_AT = CURRENT_TIMESTAMP""",
+                            (user_id, json.dumps(state_json))
+                        )
+                    except Exception as alter_error:
+                        logger.error(f"STATE_DATA 컬럼 변경 실패: {alter_error}")
+                        raise
                 else:
                     raise
         

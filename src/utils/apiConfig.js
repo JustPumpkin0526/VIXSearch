@@ -9,47 +9,24 @@
  * @returns {string} API 기본 URL
  */
 export function getApiBaseUrl() {
-  // 현재 접속한 호스트와 포트를 기반으로 API URL 생성
-  // 외부 IP 접속 시에도 올바른 URL을 생성하기 위해 window.location 사용
-  const host = window.location.hostname;
-  const port = window.location.port;
-  const protocol = window.location.protocol; // http: 또는 https:
-  
-  // 환경 변수가 설정되어 있고 localhost/127.0.0.1가 아닌 경우에만 사용
-  // (외부 IP 접속 시 환경 변수의 localhost를 무시하기 위함)
+  // 환경 변수가 명시적으로 설정되어 있고 localhost가 아닌 경우에만 사용
   const envUrl = import.meta.env.VITE_API_BASE_URL;
-  if (envUrl && 
+  console.log('[apiConfig] VITE_API_BASE_URL 환경 변수:', envUrl);
+  
+  // localhost나 127.0.0.1이 아닌 경우에만 환경 변수 사용
+  if (envUrl && envUrl.trim() !== '' && 
       !envUrl.includes('localhost') && 
       !envUrl.includes('127.0.0.1') &&
       !envUrl.includes('0.0.0.0')) {
-    // 환경 변수가 외부 IP를 가리키는 경우에만 사용
+    console.log('[apiConfig] 환경 변수 사용:', envUrl);
     return envUrl;
   }
   
-  // 환경 변수가 localhost이거나 없으면 현재 호스트를 기반으로 URL 생성
-  // 이렇게 하면 외부 IP로 접속했을 때도 올바른 URL이 생성됨
-  
-  // 개발 환경에서 Vite 개발 서버를 사용하는 경우 (포트 3000 또는 5173)
-  if (import.meta.env.DEV) {
-    // 같은 호스트의 8001 포트 사용
-    return `${protocol}//${host}:8001`;
-  }
-  
-  // 프로덕션 환경에서는 현재 호스트와 같은 포트를 사용하거나 8001 포트 사용
-  // 백엔드가 같은 서버의 다른 포트에서 실행되는 경우
-  if (port === '3000' || port === '5173') {
-    // 프론트엔드 개발 서버 포트인 경우, 백엔드는 8001 포트
-    return `${protocol}//${host}:8001`;
-  }
-  
-  // 프로덕션 환경에서 포트가 없거나 80/443인 경우
-  // 같은 호스트의 8001 포트 사용
-  if (!port || port === '80' || port === '443') {
-    return `${protocol}//${host}:8001`;
-  }
-  
-  // 기본값: 현재 호스트의 8001 포트
-  return `${protocol}//${host}:8001`;
+  // 기본값: 172.16.15.69:8001 (API 서버 기본 위치)
+  // localhost 환경 변수는 무시하고 항상 172.16.15.69 사용
+  const defaultUrl = "http://172.16.15.69:8001";
+  console.log('[apiConfig] 기본값 사용 (localhost 환경 변수 무시):', defaultUrl);
+  return defaultUrl;
 }
 
 /**
@@ -64,14 +41,9 @@ export function getViaServerUrl() {
     return import.meta.env.VITE_VIA_SERVER_URL;
   }
   
-  // 현재 접속한 호스트를 기반으로 VIA 서버 URL 생성
-  // VIA 서버가 같은 서버에서 실행되는 경우에만 작동
-  const host = window.location.hostname;
-  const protocol = window.location.protocol; // http: 또는 https:
-  
-  // 기본값: 현재 호스트의 8101 포트 (VIA 서버의 기본 포트)
+  // 기본값: 172.16.15.88:8101 (VIA 서버 기본 위치)
   // VIA 서버가 다른 서버에 있다면 VITE_VIA_SERVER_URL 환경 변수를 설정해야 함
-  return `${protocol}//${host}:8101`;
+  return "http://172.16.7.64:8101";
 }
 
 /**

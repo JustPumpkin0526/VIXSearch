@@ -1,20 +1,20 @@
 <template>
   <!-- 메뉴 틀 -->
-  <div id="video_list" class="w-full min-h-screen bg-gradient-to-br from-gray-200 to-gray-300 via-gray-100 dark:from-gray-950 dark:to-gray-900 dark:via-gray-925 p-10">
-    <div class="w-full h-[calc(100vh-5rem)] bg-gray-50 dark:bg-gray-800 rounded-2xl shadow-inner p-5">
+  <div id="video_list" class="w-full min-h-screen bg-gradient-to-br from-gray-200 to-gray-300 via-gray-100 dark:from-gray-950 dark:to-gray-900 dark:via-gray-925 p-[2%]">
+    <div class="w-full h-[calc(100vh-5rem)] bg-gray-50 dark:bg-gray-800 rounded-2xl shadow-inner p-[1%]">
       <!-- 헤더 -->
-      <header id="header" class="flex items-center justify-between px-1 pb-3 border-b border-gray-800/70 dark:border-gray-200/30">
+      <header id="header" class="flex items-center justify-between px-[0.3%] pb-[1%] border-b border-gray-800/70 dark:border-gray-200/30">
         <!-- 좌측: 타이틀 / 설명 + 설정 버튼 -->
-        <div class="flex items-center gap-3">
-          <div class="flex flex-col gap-1">
+        <div class="flex items-center gap-[1%]">
+          <div class="flex flex-col gap-[0.3%]">
             <div
               class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-500/10 dark:bg-emerald-500/20 border border-emerald-400/40 dark:border-emerald-400/60 w-fit">
               <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span class="text-[11px] font-semibold tracking-wide text-emerald-600 dark:text-emerald-400 uppercase">
+              <span class="text-[0.720rem] font-semibold tracking-wide text-emerald-600 dark:text-emerald-400 uppercase">
                 {{ t.workspace }}
               </span>
             </div>
-            <p class="text-xs md:text-sm text-black dark:text-gray-200 mt-1">
+            <p class="text-[12px] text-black dark:text-gray-200 mt-1">
               {{ t.description }}
               <span class="hidden md:inline">{{ t.descriptionDetail }}</span>
             </p>
@@ -127,7 +127,7 @@
           <!-- 동영상 출력 그리드(행열 구조) -->
           <div 
             ref="videoGridRef"
-            class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 p-6 flex-1 transition-opacity duration-300 min-h-0 content-start overflow-y-auto relative"
+            class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-[clamp(1rem,2vw,1.5rem)] p-[clamp(1rem,2vw,1.5rem)] flex-1 transition-opacity duration-300 min-h-0 content-start overflow-y-auto relative"
             :class="{ 'opacity-50': isDragOverUpload && items.length > 0 }"
             @contextmenu.prevent="onEmptySpaceContextMenu">
             <!-- 드래그 선택 영역 표시 -->
@@ -170,7 +170,7 @@
                 </div>
                 <!-- 그룹 이름 표시 모드 -->
                 <div v-else 
-                  class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate px-2 cursor-text"
+                  class="text-sm font-medium text-gray-800 dark:text-gray-200 break-words line-clamp-2 px-2 cursor-text"
                   @dblclick.stop="startEditGroupName(group.id, group.name)">
                   {{ group.name }}
                 </div>
@@ -299,7 +299,7 @@
               </div>
               <!-- 동영상 타이틀 및 정보 -->
               <div class="ml-4 w-full text-left">
-                <div v-if="video.title" class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+                <div v-if="video.title" class="text-sm font-medium text-gray-800 dark:text-gray-200 break-words line-clamp-2">
                   {{ video.title }}
                 </div>
                 <!-- 영상 정보: 길이(동영상만), 해상도, 용량 (가로 나열) -->
@@ -323,18 +323,18 @@
           
           <!-- 페이지네이션 (항상 최하단에 고정) -->
           <!-- 예시 이미지 촬영용: ENABLE_DEMO_MODE가 true일 때 항상 표시 -->
-          <div v-if="ENABLE_DEMO_MODE || totalPages > 1" class="flex-shrink-0 bg-gray-50 dark:bg-gray-700 border-t border-gray-200 dark:border-gray-600 flex items-center justify-center gap-2 px-6 py-4">
+          <div v-if="ENABLE_DEMO_MODE || totalPages > 1" class="flex-shrink-0 bg-gray-50 dark:bg-gray-700 border-t border-gray-200 dark:border-gray-600 flex items-center justify-center gap-[clamp(0.5rem,1vw,0.75rem)] px-[clamp(1rem,2vw,1.5rem)] py-[clamp(0.75rem,1.5vw,1rem)]">
             <button
               @click="currentPage = Math.max(1, currentPage - 1)"
               :disabled="currentPage === 1"
-              class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              class="px-[clamp(0.75rem,1.5vw,1rem)] py-[clamp(0.5rem,1vw,0.75rem)] rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               :title="settingStore.language === 'ko' ? '이전 페이지' : 'Previous Page'">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-[clamp(1rem,2vw,1.25rem)] h-[clamp(1rem,2vw,1.25rem)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
               </svg>
             </button>
             
-            <div class="flex items-center gap-1">
+            <div class="flex items-center gap-[clamp(0.25rem,0.5vw,0.5rem)]">
               <button
                 v-for="page in totalPages"
                 :key="page"
@@ -343,7 +343,7 @@
                   'bg-emerald-500 text-white': currentPage === page,
                   'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700': currentPage !== page
                 }"
-                class="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 transition-colors min-w-[40px]">
+                class="px-[clamp(0.75rem,1.5vw,1rem)] py-[clamp(0.5rem,1vw,0.75rem)] rounded-lg border border-gray-300 dark:border-gray-600 transition-colors min-w-[clamp(2rem,4vw,2.5rem)] text-[clamp(0.75rem,1.2vw,0.875rem)]">
                 {{ page }}
               </button>
             </div>
@@ -351,9 +351,9 @@
             <button
               @click="currentPage = Math.min(totalPages, currentPage + 1)"
               :disabled="currentPage === totalPages"
-              class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              class="px-[clamp(0.75rem,1.5vw,1rem)] py-[clamp(0.5rem,1vw,0.75rem)] rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               :title="settingStore.language === 'ko' ? '다음 페이지' : 'Next Page'">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-[clamp(1rem,2vw,1.25rem)] h-[clamp(1rem,2vw,1.25rem)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
               </svg>
             </button>
@@ -446,7 +446,7 @@
                     <div class="flex items-center justify-between text-xs font-medium text-gray-600 dark:text-gray-300">
                       <div class="flex items-center gap-2">
                         <span v-if="zoomedVideo.title"
-                          class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate max-w-[50vw]">{{ zoomedVideo.title
+                          class="text-sm font-semibold text-gray-800 dark:text-gray-200 break-words max-w-[90vw] sm:max-w-[70vw] md:max-w-[50vw]">{{ zoomedVideo.title
                           }}</span>
                         <!-- 장면 설명 다시 열기 버튼 (클립 재생 중이고 sentence가 있지만 팝업이 닫혀있을 때) -->
                         <button 
@@ -470,7 +470,7 @@
                   <div v-else-if="zoomedVideo && isImageFile(zoomedVideo)" class="mt-4 w-full">
                     <div class="flex items-center gap-2">
                       <span v-if="zoomedVideo.title"
-                        class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate max-w-[50vw]">{{ zoomedVideo.title
+                        class="text-sm font-semibold text-gray-800 dark:text-gray-200 break-words max-w-[90vw] sm:max-w-[70vw] md:max-w-[50vw]">{{ zoomedVideo.title
                         }}</span>
                     </div>
                   </div>
@@ -628,7 +628,7 @@
                 :key="report.id"
                 class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm border-b border-gray-100 dark:border-gray-700 last:border-b-0"
                 @click.stop="addClipsToSelectedReport(report.id, reportListSubmenu.messageIndex)">
-                <div class="font-medium truncate">{{ report.title }}</div>
+                <div class="font-medium break-words line-clamp-2">{{ report.title }}</div>
                 <div v-if="report.description" class="text-xs text-gray-500 dark:text-gray-400 truncate mt-1">
                   {{ report.description }}
                 </div>
@@ -670,7 +670,7 @@
                 :key="report.id"
                 class="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm border-b border-gray-100 dark:border-gray-700 last:border-b-0"
                 @click.stop="addZoomedClipToSelectedReport(report.id)">
-                <div class="font-medium truncate">{{ report.title }}</div>
+                <div class="font-medium break-words line-clamp-2">{{ report.title }}</div>
                 <div v-if="report.description" class="text-xs text-gray-500 dark:text-gray-400 truncate mt-1">
                   {{ report.description }}
                 </div>
@@ -1970,7 +1970,7 @@ function formatDuration(sec) {
   const parts = [];
   
   if (hours > 0) {
-    parts.push(`${hours}${settingStore.language === 'ko' ? '시간' : 'h'}`);
+    parts.push(`${hours+10}${settingStore.language === 'ko' ? '시간' : 'h'}`);
   }
   if (minutes > 0) {
     parts.push(`${minutes}${settingStore.language === 'ko' ? '분' : 'm'}`);
@@ -5460,9 +5460,9 @@ function onVideoMetadataLoaded(videoId, event) {
 // 동영상 duration을 지연 로딩으로 미리 로드하는 함수 (최적화: 배치 처리)
 let durationLoadQueue = [];
 let isProcessingDurationQueue = false;
-const DURATION_BATCH_SIZE = 5; // 한 번에 처리할 동영상 수
-const DURATION_BATCH_DELAY = 200; // 배치 간 지연 시간 (ms)
-const DURATION_LOAD_TIMEOUT = 15000; // duration 로드 타임아웃 (15초, 큰 파일 대응)
+const DURATION_BATCH_SIZE = 2; // 한 번에 처리할 동영상 수 (크롬 멈춤 방지를 위해 줄임)
+const DURATION_BATCH_DELAY = 500; // 배치 간 지연 시간 (ms, 브라우저 부하 감소)
+const DURATION_LOAD_TIMEOUT = 10000; // duration 로드 타임아웃 (10초)
 const loadingDurationUrls = new Set(); // 로드 중인 URL 추적 (중복 요청 방지)
 const loadingDurationVideoIds = new Set(); // 로드 중인 video ID 추적
 
@@ -5470,108 +5470,138 @@ function processDurationQueue() {
   if (isProcessingDurationQueue || durationLoadQueue.length === 0) return;
   
   isProcessingDurationQueue = true;
+  // 화면에 보이는 비디오 우선 처리 (현재 페이지의 비디오)
+  const currentPageStart = (currentPage.value - 1) * itemsPerPage.value;
+  const currentPageEnd = currentPageStart + itemsPerPage.value;
+  const visibleVideos = items.value.slice(currentPageStart, currentPageEnd);
+  const visibleVideoIds = new Set(visibleVideos.map(v => v.id));
+  
+  const visibleBatch = durationLoadQueue.filter(v => visibleVideoIds.has(v.id));
+  const hiddenBatch = durationLoadQueue.filter(v => !visibleVideoIds.has(v.id));
+  
+  // 화면에 보이는 비디오를 먼저 큐 앞에 배치
+  durationLoadQueue = [...visibleBatch, ...hiddenBatch];
+  
   const batch = durationLoadQueue.splice(0, DURATION_BATCH_SIZE);
   
-  batch.forEach(video => {
-    // 이미 duration이 있으면 스킵
-    if (durationMap.value[video.id]) return;
-    // 이미지 파일이면 스킵
-    if (isImageFile(video)) return;
-    // 이미 로드 중인 video ID면 스킵
-    if (loadingDurationVideoIds.has(video.id)) return;
-    
-    // 백엔드 API에서 받은 duration이 있으면 먼저 사용
-    if (video.duration && isFinite(video.duration) && video.duration > 0) {
-      durationMap.value[video.id] = video.duration;
-      return;
+  // 순차적으로 처리하여 브라우저 부하 감소
+  batch.forEach((video, index) => {
+    // 각 동영상 사이에 짧은 지연 추가 (브라우저가 다른 작업을 처리할 시간 제공)
+    if (index > 0) {
+      setTimeout(() => {
+        processSingleVideoDuration(video);
+      }, index * 100); // 100ms 간격으로 처리
+    } else {
+      processSingleVideoDuration(video);
     }
-    
-    // displayUrl이 없으면 스킵
-    if (!video.displayUrl) return;
-    
-    // blob URL은 duration 로드 시도하지 않음 (반복 요청 방지)
-    // blob URL은 브라우저 내부 메모리 URL이므로 video 요소로 로드 시 반복 요청이 발생할 수 있음
-    if (video.displayUrl.startsWith('blob:')) return;
-    
-    // 이미 로드 중인 URL이면 스킵 (중복 요청 방지)
-    if (loadingDurationUrls.has(video.displayUrl)) {
-      return;
-    }
-    
-    // 큰 파일 체크 (1GB 이상이면 duration 로드 스킵)
-    const fileSizeGB = video.fileSize ? video.fileSize / (1024 * 1024 * 1024) : 0;
-    if (fileSizeGB > 1.0) {
-      console.log(`[Duration 로드 스킵] 큰 파일 (${fileSizeGB.toFixed(2)}GB): ${video.title}`);
-      return;
-    }
-    
-    // 로드 중인 URL 및 video ID로 표시
-    loadingDurationUrls.add(video.displayUrl);
-    loadingDurationVideoIds.add(video.id);
-    
-    // 숨겨진 video 요소를 만들어서 메타데이터 로드 (백엔드 duration이 없는 경우에만)
-    const videoElement = document.createElement('video');
-    videoElement.preload = 'metadata';
-    videoElement.crossOrigin = 'anonymous';
-    videoElement.style.display = 'none';
-    videoElement.muted = true; // 음소거하여 자동 재생 방지
-    
-    // 정리 함수
-    const cleanup = () => {
-      loadingDurationUrls.delete(video.displayUrl);
-      loadingDurationVideoIds.delete(video.id);
-      if (videoElement.parentNode) {
-        try {
-          document.body.removeChild(videoElement);
-        } catch (e) {
-          // 이미 제거되었을 수 있음
-        }
-      }
-      // src 제거하여 추가 요청 방지
-      try {
-        videoElement.src = '';
-        videoElement.load();
-      } catch (e) {
-        // 에러 무시
-      }
-    };
-    
-    // 타임아웃 설정 (일정 시간 후 강제 정리)
-    const timeoutId = setTimeout(() => {
-      console.warn(`[Duration 로드 타임아웃] ${video.title} (${video.displayUrl})`);
-      cleanup();
-    }, DURATION_LOAD_TIMEOUT);
-    
-    videoElement.addEventListener('loadedmetadata', () => {
-      clearTimeout(timeoutId);
-      const duration = videoElement.duration;
-      if (duration && isFinite(duration) && duration > 0) {
-        durationMap.value[video.id] = duration;
-      }
-      cleanup();
-    }, { once: true });
-    
-    videoElement.addEventListener('error', () => {
-      clearTimeout(timeoutId);
-      cleanup();
-    }, { once: true });
-    
-    // abort 이벤트도 처리
-    videoElement.addEventListener('abort', () => {
-      clearTimeout(timeoutId);
-      cleanup();
-    }, { once: true });
-    
-    videoElement.src = video.displayUrl;
-    document.body.appendChild(videoElement);
   });
   
   isProcessingDurationQueue = false;
   
-  // 다음 배치 처리
+  // 다음 배치 처리 (requestIdleCallback 사용하여 브라우저 유휴 상태일 때만 처리)
   if (durationLoadQueue.length > 0) {
-    setTimeout(processDurationQueue, DURATION_BATCH_DELAY);
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(() => {
+        setTimeout(processDurationQueue, DURATION_BATCH_DELAY);
+      }, { timeout: 1000 });
+    } else {
+      setTimeout(processDurationQueue, DURATION_BATCH_DELAY);
+    }
   }
+}
+
+function processSingleVideoDuration(video) {
+  // 이미 duration이 있으면 스킵
+  if (durationMap.value[video.id]) return;
+  // 이미지 파일이면 스킵
+  if (isImageFile(video)) return;
+  // 이미 로드 중인 video ID면 스킵
+  if (loadingDurationVideoIds.has(video.id)) return;
+  
+  // 백엔드 API에서 받은 duration이 있으면 먼저 사용
+  if (video.duration && isFinite(video.duration) && video.duration > 0) {
+    durationMap.value[video.id] = video.duration;
+    return;
+  }
+  
+  // displayUrl이 없으면 스킵
+  if (!video.displayUrl) return;
+  
+  // blob URL은 duration 로드 시도하지 않음 (반복 요청 방지)
+  // blob URL은 브라우저 내부 메모리 URL이므로 video 요소로 로드 시 반복 요청이 발생할 수 있음
+  if (video.displayUrl.startsWith('blob:')) return;
+  
+  // 이미 로드 중인 URL이면 스킵 (중복 요청 방지)
+  if (loadingDurationUrls.has(video.displayUrl)) {
+    return;
+  }
+  
+  // 큰 파일 체크 (1GB 이상이면 duration 로드 스킵)
+  const fileSizeGB = video.fileSize ? video.fileSize / (1024 * 1024 * 1024) : 0;
+  if (fileSizeGB > 1.0) {
+    console.log(`[Duration 로드 스킵] 큰 파일 (${fileSizeGB.toFixed(2)}GB): ${video.title}`);
+    return;
+  }
+  
+  // 로드 중인 URL 및 video ID로 표시
+  loadingDurationUrls.add(video.displayUrl);
+  loadingDurationVideoIds.add(video.id);
+  
+  // 숨겨진 video 요소를 만들어서 메타데이터 로드 (백엔드 duration이 없는 경우에만)
+  const videoElement = document.createElement('video');
+  videoElement.preload = 'metadata';
+  videoElement.crossOrigin = 'anonymous';
+  videoElement.style.display = 'none';
+  videoElement.muted = true; // 음소거하여 자동 재생 방지
+  
+  // 정리 함수
+  const cleanup = () => {
+    loadingDurationUrls.delete(video.displayUrl);
+    loadingDurationVideoIds.delete(video.id);
+    if (videoElement.parentNode) {
+      try {
+        document.body.removeChild(videoElement);
+      } catch (e) {
+        // 이미 제거되었을 수 있음
+      }
+    }
+    // src 제거하여 추가 요청 방지
+    try {
+      videoElement.src = '';
+      videoElement.load();
+    } catch (e) {
+      // 에러 무시
+    }
+  };
+  
+  // 타임아웃 설정 (일정 시간 후 강제 정리)
+  const timeoutId = setTimeout(() => {
+    console.warn(`[Duration 로드 타임아웃] ${video.title} (${video.displayUrl})`);
+    cleanup();
+  }, DURATION_LOAD_TIMEOUT);
+  
+  videoElement.addEventListener('loadedmetadata', () => {
+    clearTimeout(timeoutId);
+    const duration = videoElement.duration;
+    if (duration && isFinite(duration) && duration > 0) {
+      durationMap.value[video.id] = duration;
+    }
+    cleanup();
+  }, { once: true });
+  
+  videoElement.addEventListener('error', () => {
+    clearTimeout(timeoutId);
+    cleanup();
+  }, { once: true });
+  
+  // abort 이벤트도 처리
+  videoElement.addEventListener('abort', () => {
+    clearTimeout(timeoutId);
+    cleanup();
+  }, { once: true });
+  
+  videoElement.src = video.displayUrl;
+  document.body.appendChild(videoElement);
 }
 
 function preloadAllVideoDurations() {

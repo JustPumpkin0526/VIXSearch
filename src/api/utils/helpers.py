@@ -348,15 +348,48 @@ async def translate_to_korean(text: str) -> str:
                     import re
                     # 앞뒤 따옴표 제거 (큰따옴표, 작은따옴표, 유니코드 따옴표 등)
                     translated_text = re.sub(r'^["\'"\u201C\u201D\u2018\u2019]+|["\'"\u201C\u201D\u2018\u2019]+$', '', translated_text)
-                    # 혹시 설명이 포함된 경우 첫 줄 제거 (줄바꿈이 있는 경우)
+                    
+                    # 번역 결과에서 불필요한 헤더나 설명 제거
                     lines = translated_text.split('\n')
-                    if len(lines) > 1:
-                        first_line_lower = lines[0].lower().strip()
-                        # 설명 패턴이 첫 줄에 있으면 제거
-                        if any(keyword in first_line_lower for keyword in ['sure', 'here is', 'translation', '번역']):
-                            translated_text = '\n'.join(lines[1:]).strip()
+                    cleaned_lines = []
+                    skip_until_content = False
+                    
+                    for i, line in enumerate(lines):
+                        line_lower = line.lower().strip()
+                        # 설명 패턴이 포함된 줄 제거
+                        if any(keyword in line_lower for keyword in ['sure', 'here is', 'translation:', '번역:', '**번역**', '**번역:**']):
+                            skip_until_content = True
+                            continue
+                        # 마크다운 헤더 패턴 제거 (예: **번역:**, ## 번역 등)
+                        if re.match(r'^[*#\s]*번역\s*[:：]*\s*[*#]*$', line_lower):
+                            skip_until_content = True
+                            continue
+                        # 빈 줄이 연속으로 나오면 스킵 모드 해제
+                        if not line.strip() and skip_until_content:
+                            continue
+                        # 실제 내용이 시작되면 스킵 모드 해제
+                        if line.strip() and skip_until_content:
+                            skip_until_content = False
+                        
+                        # 스킵 모드가 아니면 라인 추가
+                        if not skip_until_content:
+                            cleaned_lines.append(line)
+                    
+                    translated_text = '\n'.join(cleaned_lines).strip()
+                    
+                    # 원본 텍스트의 시작 부분이 번역 결과에 포함되어 있는지 확인 및 제거
+                    # 원본 텍스트의 첫 50자 정도가 번역 결과에 포함되어 있으면 제거
+                    if len(text) > 0:
+                        original_start = text[:50].strip()
+                        if original_start and original_start in translated_text:
+                            # 원본 텍스트 시작 부분이 포함된 위치 찾기
+                            idx = translated_text.find(original_start)
+                            if idx >= 0:
+                                # 원본 텍스트 부분 제거
+                                translated_text = translated_text[:idx].strip()
+                    
                     translated_text = translated_text.strip()
-                    logger.info(f"Ollama를 사용하여 한국어 번역 성공 {translated_text}")
+                    logger.info(f"Ollama를 사용하여 한국어 번역 성공 {translated_text[:200]}...")  # 로그 길이 제한
                     return translated_text
                 else:
                     logger.warning("Ollama 응답에 content가 없습니다. 원본 텍스트 사용")
@@ -692,44 +725,30 @@ def get_closest_chunk_size(CHUNK_SIZES, x):
 
 async def get_recommended_chunk_size(video_length):
     """동영상 길이에 따른 추천 chunk_size 계산"""
+    # In seconds:
+    target_response_time = DEFAULT_VIA_TARGET_RESPONSE_TIME
+    usecase_event_duration = DEFAULT_VIA_TARGET_USECASE_EVENT_DURATION
     recommended_chunk_size = 0
 
-    try:
-        session = await get_session()
-        async with session.post(
-            f"{VIA_SERVER_URL}/recommended_config",
-            json={
-                "video_length": int(video_length),
-                "target_response_time": int(DEFAULT_VIA_TARGET_RESPONSE_TIME),
-                "usecase_event_duration": int(DEFAULT_VIA_TARGET_USECASE_EVENT_DURATION),
-            },
-            timeout=aiohttp.ClientTimeout(total=VIA_MODEL_TIMEOUT)
-        ) as response:
-            if response.status < 400:
-                # Success response from API:
-                resp_json = await response.json()
-                recommended_chunk_size = int(resp_json.get("chunk_size", 0))
-    except Exception as e:
-        logger.warning(f"Failed to get recommended chunk size from backend: {e}")
-    
-    if recommended_chunk_size == 0:
-        # API fail to provide non-zero chunk size
-        # Choose the largest chunk-size in favor of quick VIA execution
-        recommended_chunk_size = video_length
-    
-    # 음수 값 보정 (VIA 서버는 chunk_duration >= 0 요구)
-    if recommended_chunk_size < 0:
-        logger.warning(f"recommended_chunk_size가 음수입니다 ({recommended_chunk_size}). 0으로 보정")
-        recommended_chunk_size = 0
-    
-    result = get_closest_chunk_size(CHUNK_SIZES, recommended_chunk_size)
-    
-    # 최종 결과도 0 이상인지 확인
-    if result < 0:
-        logger.warning(f"get_closest_chunk_size 결과가 음수입니다 ({result}). 0으로 보정")
-        result = 0
-    
-    return result
+    session = await get_session()
+    async with session.post(
+        f"{VIA_SERVER_URL}/recommended_config",
+        json={
+            "video_length": int(video_length),
+            "target_response_time": int(target_response_time),
+            "usecase_event_duration": int(usecase_event_duration),
+        },
+        timeout=aiohttp.ClientTimeout(total=VIA_MODEL_TIMEOUT)
+    ) as response:
+        if response.status < 400:
+            # Success response from API:
+            resp_json = await response.json()
+            recommended_chunk_size = int(resp_json.get("chunk_size", 0))
+        if recommended_chunk_size == 0:
+            # API fail to provide non-zero chunk size
+            # Choose the largest chunk-size in favor of quick VIA execution
+            recommended_chunk_size = video_length
+        return get_closest_chunk_size(CHUNK_SIZES, recommended_chunk_size)
 
 async def check_video_type(file: UploadFile) -> bool:
     """동영상 파일 타입 확인"""

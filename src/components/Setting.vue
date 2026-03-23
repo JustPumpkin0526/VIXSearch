@@ -33,20 +33,27 @@
           <h2 class="font-semibold mb-3 text-gray-900 dark:text-gray-100">Chunk 설정</h2>
           <label class="block text-sm mb-1 text-gray-700 dark:text-gray-300">Chunk Size</label>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">동영상 추론에서 분할 단위를 설정합니다.</p>
-          <select v-model.number="settingStore.chunk" class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md px-3 py-2 w-full mt-3">
-            <option value=-1>{{ settingStore.language === 'ko' ? '자동 지정' : 'Auto' }}</option>
-            <option value=0>{{ settingStore.language === 'ko' ? 'Chunk 없음' : 'No chunking' }}</option>
-            <option value=5>5 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
-            <option value=10>10 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
-            <option value=20>20 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
-            <option value=30>30 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
-            <option value=60>1 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
-            <option value=120>2 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
-            <option value=300>5 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
-            <option value=600>10 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
-            <option value=1200>20 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
-            <option value=1800>30 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+          <select 
+            :key="`chunk-select-${settingStore.chunk}`"
+            v-model.number="settingStore.chunk" 
+            class="border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md px-3 py-2 w-full mt-3">
+            <option :value="-1">{{ settingStore.language === 'ko' ? '자동 지정' : 'Auto' }}</option>
+            <option :value="0">{{ settingStore.language === 'ko' ? 'Chunk 없음' : 'No chunking' }}</option>
+            <option :value="5">5 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
+            <option :value="10">10 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
+            <option :value="20">20 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
+            <option :value="30">30 {{ settingStore.language === 'ko' ? '초' : 'sec' }}</option>
+            <option :value="60">1 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+            <option :value="120">2 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+            <option :value="300">5 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+            <option :value="600">10 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+            <option :value="1200">20 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
+            <option :value="1800">30 {{ settingStore.language === 'ko' ? '분' : 'min' }}</option>
           </select>
+          <!-- 디버깅: 현재 chunk 값 표시 -->
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            현재 값: {{ settingStore.chunk }}초
+          </p>
         </section>
 
         <section class="rounded-2xl border-2 border-gray-300 dark:border-gray-600 px-2 py-3 min-w-[220px] bg-white dark:bg-gray-700">

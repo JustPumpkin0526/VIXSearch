@@ -23,7 +23,7 @@ from docx.enum.section import WD_SECTION
 from PIL import Image
 import requests
 from moviepy.video.io.VideoFileClip import VideoFileClip
-from config.settings import CLIPS_DIR, VIDEOS_DIR, CONVERTED_VIDEOS_DIR, REPORTS_DIR
+from config.settings import CLIPS_DIR, VIDEOS_DIR, CONVERTED_VIDEOS_DIR, REPORTS_DIR, API_BASE_URL
 from database.connection import get_db_connection, verify_user_exists
 from dependencies import verify_user_dependency
 from exceptions import NotFoundException, ValidationException, DatabaseException
@@ -351,44 +351,74 @@ async def create_word_report(request: CreateWordReportRequest):
             doc.add_paragraph()  # 빈 줄
             
             # 썸네일 이미지 추가 시도 (들여쓰기)
-            if clip.url:
+            # 원본 동영상에서 시작 타임스탬프 부분을 썸네일로 사용
+            image_data = None
+            if clip.sourceVideo and clip.start_time is not None:
                 try:
-                    image_data = None
+                    logger.info(f"원본 동영상 경로 찾기 시도: sourceVideo={clip.sourceVideo}, start_time={clip.start_time}, user_id={request.user_id}")
+                    # 원본 동영상 경로 찾기
+                    original_video_path = get_original_video_path(clip.sourceVideo, request.user_id)
+                    if original_video_path:
+                        logger.info(f"✅ 원본 동영상 경로 찾음: {original_video_path}")
+                        logger.info(f"원본 동영상에서 썸네일 추출: {original_video_path}, 시간: {clip.start_time}")
+                        image_data = get_video_thumbnail(original_video_path, clip.start_time)
+                        if image_data:
+                            logger.info(f"✅ 원본 동영상에서 썸네일 추출 성공: {len(image_data)} bytes")
+                        else:
+                            logger.warning(f"⚠️ 원본 동영상에서 썸네일 추출 실패 (None 반환)")
+                    else:
+                        logger.warning(f"⚠️ 원본 동영상을 찾을 수 없음: {clip.sourceVideo}")
+                except Exception as e:
+                    logger.warning(f"원본 동영상 썸네일 추출 실패 ({clip.sourceVideo}): {e}")
+                    import traceback
+                    logger.warning(f"원본 동영상 썸네일 추출 실패 상세: {traceback.format_exc()}")
+            
+            # 원본 동영상에서 썸네일을 가져오지 못한 경우 기존 로직 사용 (fallback)
+            if not image_data and clip.url:
+                try:
                     if clip.url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
                         image_data = download_image(clip.url)
                     else:
                         thumbnail_time = clip.start_time if clip.start_time is not None else 0.0
                         image_data = get_video_thumbnail(clip.url, thumbnail_time)
-                    
-                    if image_data:
-                        try:
-                            image = Image.open(io.BytesIO(image_data))
-                            max_width = 5.0  # 인치 단위 (약간 더 크게)
-                            width, height = image.size
-                            # 너비가 최대 너비보다 크면 리사이즈
-                            if width > max_width * 72:  # 72 DPI 기준
-                                ratio = (max_width * 72) / width
-                                new_width = int(width * ratio)
-                                new_height = int(height * ratio)
-                                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                            
-                            img_byte_arr = io.BytesIO()
-                            image.save(img_byte_arr, format='PNG')
-                            img_byte_arr.seek(0)
-                            
-                            # 이미지 단락에 들여쓰기 추가
-                            img_para = doc.add_paragraph()
-                            img_para.paragraph_format.left_indent = Inches(0.5)
-                            img_para.paragraph_format.space_before = Pt(6)
-                            img_para.paragraph_format.space_after = Pt(12)
-                            
-                            # 이미지를 단락에 추가
-                            run = img_para.add_run()
-                            run.add_picture(img_byte_arr, width=Inches(max_width))
-                        except Exception as e:
-                            logger.warning(f"이미지 추가 실패 (클립 {idx}): {e}")
                 except Exception as e:
                     logger.warning(f"썸네일 처리 실패 (클립 {idx}, URL: {clip.url}): {e}")
+            
+            if image_data:
+                try:
+                    logger.info(f"썸네일 이미지 데이터 수신: {len(image_data)} bytes (클립 {idx})")
+                    image = Image.open(io.BytesIO(image_data))
+                    max_width = 5.0  # 인치 단위 (약간 더 크게)
+                    width, height = image.size
+                    logger.info(f"이미지 크기: {width}x{height} (클립 {idx})")
+                    # 너비가 최대 너비보다 크면 리사이즈
+                    if width > max_width * 72:  # 72 DPI 기준
+                        ratio = (max_width * 72) / width
+                        new_width = int(width * ratio)
+                        new_height = int(height * ratio)
+                        image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                        logger.info(f"이미지 리사이즈: {new_width}x{new_height} (클립 {idx})")
+                    
+                    img_byte_arr = io.BytesIO()
+                    image.save(img_byte_arr, format='PNG')
+                    img_byte_arr.seek(0)
+                    
+                    # 이미지 단락에 들여쓰기 추가
+                    img_para = doc.add_paragraph()
+                    img_para.paragraph_format.left_indent = Inches(0.5)
+                    img_para.paragraph_format.space_before = Pt(6)
+                    img_para.paragraph_format.space_after = Pt(12)
+                    
+                    # 이미지를 단락에 추가
+                    run = img_para.add_run()
+                    run.add_picture(img_byte_arr, width=Inches(max_width))
+                    logger.info(f"✅ 썸네일 이미지 추가 성공 (클립 {idx})")
+                except Exception as e:
+                    logger.warning(f"이미지 추가 실패 (클립 {idx}): {e}")
+                    import traceback
+                    logger.warning(f"이미지 추가 실패 상세: {traceback.format_exc()}")
+            else:
+                logger.warning(f"⚠️ 썸네일 이미지 데이터 없음 (클립 {idx})")
             
             doc.add_paragraph()  # 빈 줄
         
@@ -832,43 +862,69 @@ async def add_clips_to_report(
                 source_para.style = 'List Bullet'
             
             # 썸네일 이미지 추가 시도
+            # 원본 동영상에서 시작 타임스탬프 부분을 썸네일로 사용
             image_data = None
-            if clip.url:
+            if clip.sourceVideo and clip.start_time is not None:
+                try:
+                    logger.info(f"원본 동영상 경로 찾기 시도: sourceVideo={clip.sourceVideo}, start_time={clip.start_time}, user_id={user_id}")
+                    # 원본 동영상 경로 찾기
+                    original_video_path = get_original_video_path(clip.sourceVideo, user_id)
+                    if original_video_path:
+                        logger.info(f"✅ 원본 동영상 경로 찾음: {original_video_path}")
+                        logger.info(f"원본 동영상에서 썸네일 추출: {original_video_path}, 시간: {clip.start_time}")
+                        image_data = get_video_thumbnail(original_video_path, clip.start_time)
+                        if image_data:
+                            logger.info(f"✅ 원본 동영상에서 썸네일 추출 성공: {len(image_data)} bytes")
+                        else:
+                            logger.warning(f"⚠️ 원본 동영상에서 썸네일 추출 실패 (None 반환)")
+                    else:
+                        logger.warning(f"⚠️ 원본 동영상을 찾을 수 없음: {clip.sourceVideo}")
+                except Exception as e:
+                    logger.warning(f"원본 동영상 썸네일 추출 실패 ({clip.sourceVideo}): {e}")
+                    import traceback
+                    logger.warning(f"원본 동영상 썸네일 추출 실패 상세: {traceback.format_exc()}")
+            
+            # 원본 동영상에서 썸네일을 가져오지 못한 경우 기존 로직 사용 (fallback)
+            if not image_data and clip.url:
                 try:
                     if clip.url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
                         image_data = download_image(clip.url)
                     else:
                         thumbnail_time = clip.start_time if clip.start_time is not None else 0.0
                         image_data = get_video_thumbnail(clip.url, thumbnail_time)
-                    
-                    if image_data:
-                        try:
-                            image = Image.open(io.BytesIO(image_data))
-                            max_width = 4.0
-                            width, height = image.size
-                            if width > max_width * 72:
-                                ratio = (max_width * 72) / width
-                                new_width = int(width * ratio)
-                                new_height = int(height * ratio)
-                                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                            
-                            img_byte_arr = io.BytesIO()
-                            image.save(img_byte_arr, format='PNG')
-                            img_byte_arr.seek(0)
-                            
-                            doc.add_picture(img_byte_arr, width=Inches(max_width))
-                            
-                            img_byte_arr.seek(0)
-                            clip_images.append(base64.b64encode(img_byte_arr.read()).decode('utf-8'))
-                        except Exception as e:
-                            logger.warning(f"이미지 추가 실패: {e}")
-                            clip_images.append(None)
-                    else:
-                        clip_images.append(None)
                 except Exception as e:
                     logger.warning(f"썸네일 처리 실패 ({clip.url}): {e}")
+            
+            if image_data:
+                try:
+                    logger.info(f"썸네일 이미지 데이터 수신: {len(image_data)} bytes (클립 추가)")
+                    image = Image.open(io.BytesIO(image_data))
+                    max_width = 4.0
+                    width, height = image.size
+                    logger.info(f"이미지 크기: {width}x{height} (클립 추가)")
+                    if width > max_width * 72:
+                        ratio = (max_width * 72) / width
+                        new_width = int(width * ratio)
+                        new_height = int(height * ratio)
+                        image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                        logger.info(f"이미지 리사이즈: {new_width}x{new_height} (클립 추가)")
+                    
+                    img_byte_arr = io.BytesIO()
+                    image.save(img_byte_arr, format='PNG')
+                    img_byte_arr.seek(0)
+                    
+                    doc.add_picture(img_byte_arr, width=Inches(max_width))
+                    logger.info(f"✅ 썸네일 이미지 추가 성공 (클립 추가)")
+                    
+                    img_byte_arr.seek(0)
+                    clip_images.append(base64.b64encode(img_byte_arr.read()).decode('utf-8'))
+                except Exception as e:
+                    logger.warning(f"이미지 추가 실패: {e}")
+                    import traceback
+                    logger.warning(f"이미지 추가 실패 상세: {traceback.format_exc()}")
                     clip_images.append(None)
             else:
+                logger.warning(f"⚠️ 썸네일 이미지 데이터 없음 (클립 추가)")
                 clip_images.append(None)
             
             # 장면 설명 추가
@@ -1171,16 +1227,167 @@ def format_time(seconds: Optional[float]) -> str:
     secs = int(seconds % 60)
     return f"{minutes:02d}:{secs:02d}"
 
+def normalize_url(url: str) -> str:
+    """URL을 정규화 (상대 경로를 절대 URL로 변환)"""
+    if not url:
+        return url
+    
+    # 이미 전체 URL인 경우 (http:// 또는 https://로 시작)
+    if url.startswith('http://') or url.startswith('https://'):
+        return url
+    
+    # 상대 경로인 경우 API_BASE_URL과 결합
+    if url.startswith('/'):
+        base_url = API_BASE_URL.rstrip('/')
+        return f"{base_url}{url}"
+    
+    # 그 외의 경우 그대로 반환
+    return url
+
 def download_image(url: str, timeout: int = 10) -> Optional[bytes]:
     """이미지 URL에서 이미지 다운로드"""
     try:
-        response = requests.get(url, timeout=timeout, stream=True)
+        # URL 정규화 (상대 경로를 절대 URL로 변환)
+        normalized_url = normalize_url(url)
+        logger.info(f"이미지 다운로드 시도: {normalized_url}")
+        response = requests.get(normalized_url, timeout=timeout, stream=True)
         if response.status_code == 200:
             return response.content
+        else:
+            logger.warning(f"이미지 다운로드 실패: HTTP {response.status_code} ({normalized_url})")
         return None
     except Exception as e:
         logger.warning(f"이미지 다운로드 실패 ({url}): {e}")
         return None
+
+def get_original_video_path(source_video: str, user_id: Optional[str] = None) -> Optional[str]:
+    """원본 동영상 파일 경로 찾기"""
+    if not source_video:
+        return None
+    
+    logger.info(f"원본 동영상 경로 찾기 시작: source_video={source_video}, user_id={user_id}")
+    
+    # URL인 경우 정규화
+    normalized_url = normalize_url(source_video) if source_video.startswith('/') or not source_video.startswith('http') else source_video
+    
+    # /video-files/ URL인 경우
+    if '/video-files/' in normalized_url:
+        filename = os.path.basename(normalized_url.split('/video-files/')[-1].split('?')[0])
+        local_path = VIDEOS_DIR / filename
+        logger.info(f"VIDEOS_DIR에서 찾기 시도: {local_path}")
+        if os.path.exists(local_path):
+            logger.info(f"원본 동영상 찾음 (VIDEOS_DIR): {local_path}")
+            return str(local_path)
+    # /converted-videos/ URL인 경우
+    elif '/converted-videos/' in normalized_url:
+        filename = os.path.basename(normalized_url.split('/converted-videos/')[-1].split('?')[0])
+        local_path = CONVERTED_VIDEOS_DIR / filename
+        logger.info(f"CONVERTED_VIDEOS_DIR에서 찾기 시도: {local_path}")
+        if os.path.exists(local_path):
+            logger.info(f"원본 동영상 찾음 (CONVERTED_VIDEOS_DIR): {local_path}")
+            return str(local_path)
+    
+    # 파일명만 있는 경우 (경로 없음)
+    video_filename = os.path.basename(source_video.split('?')[0])  # 쿼리 파라미터 제거
+    
+    # 데이터베이스에서 실제 파일 경로 조회 (user_id가 있는 경우)
+    if user_id:
+        try:
+            with get_db_connection() as cursor:
+                # FILE_NAME으로 정확히 일치하는 경우
+                cursor.execute("""
+                    SELECT FILE_PATH, FILE_URL FROM vss_videos 
+                    WHERE USER_ID = ? AND FILE_NAME = ?
+                    ORDER BY CREATED_AT DESC
+                    LIMIT 1
+                """, (user_id, video_filename))
+                row = cursor.fetchone()
+                if row:
+                    file_path, file_url = row
+                    logger.info(f"DB에서 파일 정보 찾음: FILE_PATH={file_path}, FILE_URL={file_url}")
+                    
+                    # FILE_PATH가 절대 경로인 경우
+                    if file_path and os.path.exists(file_path):
+                        logger.info(f"원본 동영상 찾음 (DB FILE_PATH): {file_path}")
+                        return file_path
+                    
+                    # FILE_PATH가 상대 경로인 경우 VIDEOS_DIR 기준으로 찾기
+                    if file_path:
+                        local_path = VIDEOS_DIR / os.path.basename(file_path)
+                        if os.path.exists(local_path):
+                            logger.info(f"원본 동영상 찾음 (DB FILE_PATH 상대 경로): {local_path}")
+                            return str(local_path)
+                    
+                    # FILE_URL에서 파일명 추출하여 찾기
+                    if file_url:
+                        url_filename = os.path.basename(file_url.split('?')[0])
+                        local_path = VIDEOS_DIR / url_filename
+                        if os.path.exists(local_path):
+                            logger.info(f"원본 동영상 찾음 (DB FILE_URL): {local_path}")
+                            return str(local_path)
+                        
+                        # CONVERTED_VIDEOS_DIR에서도 찾기
+                        local_path = CONVERTED_VIDEOS_DIR / url_filename
+                        if os.path.exists(local_path):
+                            logger.info(f"원본 동영상 찾음 (DB FILE_URL converted): {local_path}")
+                            return str(local_path)
+        except Exception as e:
+            logger.warning(f"DB에서 원본 동영상 조회 실패: {e}")
+    
+    # VIDEOS_DIR에서 직접 찾기
+    local_path = VIDEOS_DIR / video_filename
+    logger.info(f"VIDEOS_DIR에서 직접 찾기 시도: {local_path}")
+    if os.path.exists(local_path):
+        logger.info(f"원본 동영상 찾음 (VIDEOS_DIR 직접): {local_path}")
+        return str(local_path)
+    
+    # CONVERTED_VIDEOS_DIR에서 찾기
+    local_path = CONVERTED_VIDEOS_DIR / video_filename
+    logger.info(f"CONVERTED_VIDEOS_DIR에서 직접 찾기 시도: {local_path}")
+    if os.path.exists(local_path):
+        logger.info(f"원본 동영상 찾음 (CONVERTED_VIDEOS_DIR 직접): {local_path}")
+        return str(local_path)
+    
+    # 부분 일치 검색 (파일명의 일부만 일치하는 경우)
+    if user_id:
+        try:
+            with get_db_connection() as cursor:
+                # 파일명의 일부가 포함된 경우 (예: robbery.mp4가 robbery_1234567890.mp4에 포함)
+                cursor.execute("""
+                    SELECT FILE_PATH, FILE_URL FROM vss_videos 
+                    WHERE USER_ID = ? AND (FILE_NAME LIKE ? OR FILE_NAME LIKE ?)
+                    ORDER BY CREATED_AT DESC
+                    LIMIT 1
+                """, (user_id, f"%{video_filename}", f"{video_filename}%"))
+                row = cursor.fetchone()
+                if row:
+                    file_path, file_url = row
+                    logger.info(f"DB에서 부분 일치 파일 찾음: FILE_PATH={file_path}, FILE_URL={file_url}")
+                    
+                    if file_path and os.path.exists(file_path):
+                        logger.info(f"원본 동영상 찾음 (DB 부분 일치 FILE_PATH): {file_path}")
+                        return file_path
+                    
+                    if file_path:
+                        local_path = VIDEOS_DIR / os.path.basename(file_path)
+                        if os.path.exists(local_path):
+                            logger.info(f"원본 동영상 찾음 (DB 부분 일치 상대 경로): {local_path}")
+                            return str(local_path)
+        except Exception as e:
+            logger.warning(f"DB에서 부분 일치 원본 동영상 조회 실패: {e}")
+    
+    # 직접 파일 경로인 경우
+    if os.path.exists(source_video):
+        logger.info(f"원본 동영상 찾음 (직접 경로): {source_video}")
+        return source_video
+    
+    # URL인 경우 다운로드 필요 (나중에 처리)
+    if normalized_url.startswith('http://') or normalized_url.startswith('https://'):
+        logger.info(f"원본 동영상 URL 반환 (다운로드 필요): {normalized_url}")
+        return normalized_url
+    
+    logger.warning(f"원본 동영상을 찾을 수 없음: {source_video} (검색 경로: {VIDEOS_DIR}, {CONVERTED_VIDEOS_DIR})")
+    return None
 
 def get_video_thumbnail(video_url: str, time_seconds: float = 0.0) -> Optional[bytes]:
     """비디오 URL에서 썸네일 추출 (지정된 시간의 프레임)"""
@@ -1188,33 +1395,41 @@ def get_video_thumbnail(video_url: str, time_seconds: float = 0.0) -> Optional[b
     is_temp_file = False
     
     try:
+        # URL 정규화 (상대 경로를 절대 URL로 변환)
+        normalized_url = normalize_url(video_url)
+        logger.info(f"비디오 썸네일 추출 시도: {normalized_url}")
+        
         # URL을 로컬 파일 경로로 변환 시도
         local_path = None
         
         # /clips/ URL인 경우
-        if '/clips/' in video_url:
-            filename = os.path.basename(video_url.split('/clips/')[-1])
+        if '/clips/' in normalized_url:
+            filename = os.path.basename(normalized_url.split('/clips/')[-1].split('?')[0])  # 쿼리 파라미터 제거
             local_path = CLIPS_DIR / filename
         # /video-files/ URL인 경우
-        elif '/video-files/' in video_url:
-            filename = os.path.basename(video_url.split('/video-files/')[-1])
+        elif '/video-files/' in normalized_url:
+            filename = os.path.basename(normalized_url.split('/video-files/')[-1].split('?')[0])  # 쿼리 파라미터 제거
             local_path = VIDEOS_DIR / filename
         # /converted-videos/ URL인 경우
-        elif '/converted-videos/' in video_url:
-            filename = os.path.basename(video_url.split('/converted-videos/')[-1])
+        elif '/converted-videos/' in normalized_url:
+            filename = os.path.basename(normalized_url.split('/converted-videos/')[-1].split('?')[0])  # 쿼리 파라미터 제거
             local_path = CONVERTED_VIDEOS_DIR / filename
         
         # 로컬 파일 경로가 존재하는 경우 사용
         if local_path and os.path.exists(local_path):
             video_path = str(local_path)
+            logger.info(f"로컬 파일 사용: {video_path}")
         # 직접 파일 경로인 경우
         elif os.path.exists(video_url):
             video_path = video_url
+            logger.info(f"직접 파일 경로 사용: {video_path}")
         else:
             # URL인 경우 임시 파일로 다운로드
             try:
-                response = requests.get(video_url, timeout=30, stream=True)
+                logger.info(f"URL에서 비디오 다운로드 시도: {normalized_url}")
+                response = requests.get(normalized_url, timeout=30, stream=True)
                 if response.status_code != 200:
+                    logger.warning(f"비디오 다운로드 실패: HTTP {response.status_code} ({normalized_url})")
                     return None
                 
                 # 임시 파일 생성
@@ -1223,8 +1438,9 @@ def get_video_thumbnail(video_url: str, time_seconds: float = 0.0) -> Optional[b
                         tmp_file.write(chunk)
                     video_path = tmp_file.name
                     is_temp_file = True
+                    logger.info(f"비디오 다운로드 완료: {video_path}")
             except Exception as e:
-                logger.warning(f"비디오 다운로드 실패 ({video_url}): {e}")
+                logger.warning(f"비디오 다운로드 실패 ({normalized_url}): {e}")
                 return None
         
         if not video_path or not os.path.exists(video_path):
@@ -1235,11 +1451,13 @@ def get_video_thumbnail(video_url: str, time_seconds: float = 0.0) -> Optional[b
         
         # 지정된 시간의 프레임 추출 (기본값: 첫 프레임)
         frame_time = min(time_seconds, video.duration - 0.1) if video.duration else 0.0
+        logger.info(f"프레임 추출 시간: {frame_time}초 (비디오 길이: {video.duration}초)")
         frame = video.get_frame(frame_time)
         video.close()
         
         # PIL Image로 변환
         img = Image.fromarray(frame)
+        logger.info(f"프레임 추출 성공: {img.width}x{img.height}")
         
         # 이미지 크기 조정 (최대 너비 800px)
         max_width = 800
@@ -1247,12 +1465,15 @@ def get_video_thumbnail(video_url: str, time_seconds: float = 0.0) -> Optional[b
             ratio = max_width / img.width
             new_size = (max_width, int(img.height * ratio))
             img = img.resize(new_size, Image.Resampling.LANCZOS)
+            logger.info(f"이미지 리사이즈: {new_size}")
         
         # BytesIO로 변환
         img_byte_arr = io.BytesIO()
         img.save(img_byte_arr, format='PNG')
         img_byte_arr.seek(0)
         
+        result_size = len(img_byte_arr.getvalue())
+        logger.info(f"✅ 썸네일 추출 완료: {result_size} bytes")
         return img_byte_arr.getvalue()
     except Exception as e:
         logger.warning(f"비디오 썸네일 추출 실패 ({video_url}): {e}")

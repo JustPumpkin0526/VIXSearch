@@ -25,11 +25,10 @@ apiClient.interceptors.request.use(
     const apiBaseUrl = getApiBaseUrl();
     config.baseURL = apiBaseUrl;
     
-    // 디버깅: 생성된 URL 로그 출력 (개발 환경에서만)
-    if (import.meta.env.DEV) {
+    // 디버깅: 생성된 URL 로그 출력 (항상 출력하여 문제 진단)
       console.log('[apiClient] API Base URL:', apiBaseUrl);
       console.log('[apiClient] Request URL:', `${apiBaseUrl}${config.url}`);
-    }
+    console.log('[apiClient] Full URL:', config.baseURL ? `${config.baseURL}${config.url}` : config.url);
     
     // 필요시 인증 토큰 추가
     const userId = localStorage.getItem('vss_user_id');

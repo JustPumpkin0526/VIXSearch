@@ -403,6 +403,9 @@ def parse_timestamps_regex(timestamp_text, video_duration):
         if not time_str:
             return None
         
+        # 's' 접미사 제거 (예: "300.03s" -> "300.03")
+        time_str = re.sub(r's\s*$', '', time_str, flags=re.IGNORECASE).strip()
+        
         # 숫자로만 구성된 타임스탬프인지 확인 (소수점, 음수 부호 허용)
         # 패턴: 선택적 음수 부호 + 하나 이상의 숫자 + 선택적 소수점과 숫자
         # SS.000 같은 잘못된 형식은 제외
@@ -449,9 +452,10 @@ def parse_timestamps_regex(timestamp_text, video_duration):
         
         # 엄격한 패턴만 허용: START-END=Description (줄 시작부터, 숫자-숫자=형식만)
         # 예: "0.00-20.00=Description" (허용)
+        # 예: "300.03s - 303.07s = Description" (허용, 's' 접미사 제거 후 파싱)
         # 예: "109.57s에 등장..." (거부)
         # 예: "60.01s - 60.01s : ..." (거부)
-        equals_pattern = r'^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*=\s*(.+)$'
+        equals_pattern = r'^(\d+(?:\.\d+)?)s?\s*-\s*(\d+(?:\.\d+)?)s?\s*=\s*(.+)$'
         equals_match = re.match(equals_pattern, line)
         
         if equals_match:
@@ -475,8 +479,9 @@ def parse_timestamps_regex(timestamp_text, video_duration):
             continue
         
         # 기존 패턴도 지원 (00:00-00:00 : 장면 설명 또는 00:00-00:00 장면 설명)
-        colon_pattern = r'(\d+(?:\.\d+)?(?::\d+(?:\.\d+)?)?)\s*[-~]\s*(\d+(?:\.\d+)?(?::\d+(?:\.\d+)?)?)\s*[:]\s*(.+)'
-        colon_match = re.search(colon_pattern, line)
+        # 콜론 앞에 공백이 있을 수도 있고 없을 수도 있음 (예: "10.00-12.00 : 설명" 또는 "10.00-12.00:설명")
+        colon_pattern = r'^(\d+(?:\.\d+)?)s?\s*-\s*(\d+(?:\.\d+)?)s?\s*[:]\s*(.+)$'
+        colon_match = re.match(colon_pattern, line)
         
         if colon_match:
             start_str = colon_match.group(1)

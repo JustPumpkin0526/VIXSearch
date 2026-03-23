@@ -1025,31 +1025,44 @@ async function fetchRecommendedChunkSize(videoLength) {
  * 동영상에 대해 추천 chunk_size를 가져와서 설정 스토어에 저장
  */
 async function updateRecommendedChunkSize(videoId) {
+  console.log(`[Chunk Size] updateRecommendedChunkSize 호출: videoId=${videoId}`);
+  
   // durationMap에서 duration 가져오기 (이미 메타데이터가 로드된 경우)
   let duration = durationMap.value[videoId];
+  console.log(`[Chunk Size] durationMap에서 duration: ${duration}`);
   
   // durationMap에 없으면 videoElement에서 가져오기 시도
-  if (!duration) {
+  if (!duration || !isFinite(duration) || duration <= 0) {
     const videoElement = videoRefs.value[videoId];
     if (!videoElement) {
-      console.warn(`동영상 ${videoId}의 엘리먼트를 찾을 수 없습니다.`);
+      console.warn(`[Chunk Size] 동영상 ${videoId}의 엘리먼트를 찾을 수 없습니다.`);
       return;
     }
     
+    console.log(`[Chunk Size] videoElement에서 duration 가져오기 시도: ${videoElement.duration}`);
     duration = await RecommendChunkSize(videoElement);
-    if (!duration) {
-      console.warn(`동영상 ${videoId}의 길이를 가져올 수 없습니다.`);
+    if (!duration || !isFinite(duration) || duration <= 0) {
+      console.warn(`[Chunk Size] 동영상 ${videoId}의 길이를 가져올 수 없습니다. (duration: ${duration})`);
       return;
     }
+    // durationMap에 저장
+    durationMap.value[videoId] = duration;
   }
 
+  console.log(`[Chunk Size] API 호출 시작: video_length=${duration}`);
   const recommendedChunkSize = await fetchRecommendedChunkSize(duration);
+  console.log(`[Chunk Size] API 응답: recommendedChunkSize=${recommendedChunkSize}`);
+  
   if (recommendedChunkSize !== null && recommendedChunkSize > 0 && settingStore) {
     // 추천된 chunk_size를 설정 스토어에 저장
-    settingStore.chunk = recommendedChunkSize;
-    console.log(`[Chunk Size] 동영상 ${videoId}의 추천 chunk_size: ${recommendedChunkSize}초 (영상 길이: ${duration}초)`);
+    const oldChunk = settingStore.chunk;
+    // 숫자로 명시적 변환하여 타입 일치 보장
+    const chunkValue = Number(recommendedChunkSize);
+    settingStore.chunk = chunkValue;
+    console.log(`[Chunk Size] ✅ 동영상 ${videoId}의 추천 chunk_size 설정 완료: ${oldChunk} → ${chunkValue}초 (영상 길이: ${duration}초)`);
+    console.log(`[Chunk Size] settingStore.chunk 타입: ${typeof settingStore.chunk}, 값: ${settingStore.chunk}`);
   } else {
-    console.warn(`[Chunk Size] 동영상 ${videoId}의 추천 chunk_size를 가져올 수 없습니다.`);
+    console.warn(`[Chunk Size] ❌ 동영상 ${videoId}의 추천 chunk_size를 가져올 수 없습니다. (recommendedChunkSize: ${recommendedChunkSize}, settingStore: ${settingStore ? '존재' : '없음'})`);
   }
 }
 
@@ -1155,10 +1168,16 @@ function onVideoMetadataLoaded(videoId, event) {
       video.width = videoWidth;
       video.height = videoHeight;
     }
-    if (duration && isFinite(duration)) {
+    if (duration && isFinite(duration) && duration > 0) {
       durationMap.value[videoId] = duration;
+      console.log(`[Chunk Size] onVideoMetadataLoaded: videoId=${videoId}, duration=${duration}`);
       // 메타데이터가 로드된 직후 chunk size 자동 업데이트
+      // 약간의 지연을 두어 durationMap이 업데이트된 후 호출
+      nextTick(() => {
       updateRecommendedChunkSize(videoId);
+      });
+    } else {
+      console.warn(`[Chunk Size] onVideoMetadataLoaded: 유효하지 않은 duration (videoId=${videoId}, duration=${duration})`);
     }
   }
 }
@@ -1227,7 +1246,13 @@ async function restoreMissingFile(video) {
     }
     const blob = await resp.blob();
     // 파일명 추론: name/title/기본값
-    const filename = (video.name || video.title || 'video') + (blob.type && !blob.type.includes('mp4') ? '' : '.mp4');
+    let baseFilename = video.name || video.title || 'video';
+    // 이미 확장자가 있으면 제거
+    const baseNameWithoutExt = baseFilename.replace(/\.[^.]+$/, '');
+    // 확장자 추가 (blob.type이 mp4가 아니면 확장자 없음)
+    const filename = blob.type && !blob.type.includes('mp4') 
+      ? baseNameWithoutExt 
+      : `${baseNameWithoutExt}.mp4`;
     video.file = new File([blob], filename, { type: blob.type || 'video/mp4' });
   } catch (e) {
     // File 복원 실패 시 무시 (서버 URL을 직접 사용)
@@ -1429,24 +1454,31 @@ async function loadVideosFromStore(loadSummaries = true) {
         await nextTick();
         // 메타데이터 로드를 기다리기 위해 더 긴 지연 시간 사용
         setTimeout(() => {
+          console.log(`[Chunk Size] loadVideosFromStore: ${videoFiles.value.length}개 동영상에 대해 chunk_size 업데이트 시도`);
           videoFiles.value.forEach(video => {
             // durationMap에 이미 duration이 있으면 바로 업데이트
-            if (durationMap.value[video.id]) {
+            if (durationMap.value[video.id] && isFinite(durationMap.value[video.id]) && durationMap.value[video.id] > 0) {
+              console.log(`[Chunk Size] durationMap에서 duration 발견: videoId=${video.id}, duration=${durationMap.value[video.id]}`);
               updateRecommendedChunkSize(video.id);
             } else {
               // duration이 없으면 비디오 엘리먼트에서 확인
               const videoElement = videoRefs.value[video.id];
               if (videoElement) {
-                if (videoElement.duration && isFinite(videoElement.duration)) {
+                if (videoElement.duration && isFinite(videoElement.duration) && videoElement.duration > 0) {
                   // 이미 메타데이터가 로드된 경우
+                  console.log(`[Chunk Size] videoElement에서 duration 발견: videoId=${video.id}, duration=${videoElement.duration}`);
                   durationMap.value[video.id] = videoElement.duration;
                   updateRecommendedChunkSize(video.id);
-                }
+                } else {
+                  console.log(`[Chunk Size] videoElement의 duration이 아직 로드되지 않음: videoId=${video.id}, duration=${videoElement.duration}`);
                 // 메타데이터가 아직 로드되지 않은 경우, onVideoMetadataLoaded에서 자동으로 업데이트됨
+                }
+              } else {
+                console.warn(`[Chunk Size] videoElement를 찾을 수 없음: videoId=${video.id}`);
               }
             }
           });
-        }, 1000); // 1초로 증가하여 메타데이터 로드 시간 확보
+        }, 1500); // 1.5초로 증가하여 메타데이터 로드 시간 확보
         
         // summaryVideoStore 업데이트 (management.vue에서 썸네일 표시를 위해)
         updateSummaryVideoStore();
@@ -3494,7 +3526,7 @@ function handleVideoError(videoId, event) {
       const displayUrl = (v.displayUrl && v.displayUrl.startsWith('blob:')) 
         ? (v.originUrl || '') 
         : (v.displayUrl || v.originUrl || '');
-        const originUrl = v.originUrl || displayUrl;
+      const originUrl = v.originUrl || displayUrl;
         
         // videoFileStore에도 File 객체 저장 (다른 메뉴에서 재사용)
         if (v.file instanceof File && typeof videoFileStore !== 'undefined' && videoFileStore) {
@@ -3504,22 +3536,22 @@ function handleVideoError(videoId, event) {
             console.warn('videoFileStore.setFileByVideo 실패:', error);
           }
         }
-        
-        return {
-          id: v.id,
-          title: v.name,
-          name: v.name,
-          url: originUrl || displayUrl,
-          originUrl: originUrl,
-          displayUrl: displayUrl,
-          objectUrl: v.summaryObjectUrl,
-          date: v.date,
-          file: v.file,
-          summary: v.summary || '',
-          dbId: v.dbId
-        };
-      });
-      summaryVideoStore.setVideos(storeVideos);
+      
+      return {
+        id: v.id,
+        title: v.name,
+        name: v.name,
+        url: originUrl || displayUrl,
+        originUrl: originUrl,
+        displayUrl: displayUrl,
+        objectUrl: v.summaryObjectUrl,
+        date: v.date,
+        file: v.file,
+        summary: v.summary || '',
+        dbId: v.dbId
+      };
+    });
+    summaryVideoStore.setVideos(storeVideos);
   }
   saveStateToLocalStorage();
 }
