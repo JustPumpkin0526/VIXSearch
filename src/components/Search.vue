@@ -82,16 +82,19 @@
             </div>
             <div v-else 
               ref="videoListGridRef"
-              class="grid gap-4 relative"
+              class="relative w-full [column-fill:balance]"
               :key="`video-list-${videoListKey}`" 
-              :style="{ gridTemplateColumns: `repeat(${videoListColumns}, minmax(0, 1fr))` }">
+              :style="{
+                columnCount: videoListColumns,
+                columnGap: '1rem'
+              }">
               <!-- 드래그 선택 영역 표시 -->
               <div 
                 v-if="isDragSelecting && dragSelectBox"
                 class="fixed border-2 border-blue-500 bg-blue-500/20 pointer-events-none z-50"
                 :style="dragSelectBox"></div>
               <div v-for="video in paginatedVideoListItems" :key="`video-${video.id || video.dbId || Math.random()}`"
-                class="video-list-thumb-card relative w-full rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden cursor-pointer group bg-gray-100 dark:bg-gray-900/40 transition-all hover:ring-2 hover:ring-gray-300 dark:hover:ring-gray-600"
+                class="video-list-thumb-card relative w-full break-inside-avoid mb-4 inline-block align-top rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden cursor-pointer group bg-gray-100 dark:bg-gray-900/40 transition-all hover:ring-2 hover:ring-gray-300 dark:hover:ring-gray-600"
                 :style="getVideoListThumbAspectStyle(video)"
                 :class="{ 'ring-2 ring-blue-400 dark:ring-blue-500 ring-offset-2 ring-offset-white dark:ring-offset-gray-800': selectedIds.includes(video.id) }"
                 :ref="el => { if (el) videoCardRefs[video.id] = el }"
