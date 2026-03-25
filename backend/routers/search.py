@@ -6,13 +6,12 @@ import shutil
 import asyncio
 import logging
 import aiohttp
-import tempfile
 import aiofiles
 import re
 from typing import Optional, List, Set, Tuple
 from pathlib import Path
 from datetime import datetime, timezone
-from fastapi import APIRouter, Request, File, Form, UploadFile, HTTPException, Query, Body, BackgroundTasks
+from fastapi import APIRouter, Request, File, Form, UploadFile, HTTPException, Query, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from moviepy.video.io.VideoFileClip import VideoFileClip
@@ -21,8 +20,7 @@ try:
     CV2_AVAILABLE = True
 except ImportError:
     CV2_AVAILABLE = False
-from database.connection import conn, cursor, ensure_db_connection, get_db_connection
-from services.video_service import _save_summary_to_db
+from database.connection import cursor, ensure_db_connection, get_db_connection
 from utils.helpers import (
     ensure_vss_client, get_via_model, get_recommended_chunk_size,
     build_query_video_params, get_session,
@@ -91,17 +89,9 @@ def filter_negative_timestamps(timestamp_data: List[Tuple[float, float, str]]) -
     return filtered
 
 from config.settings import (
-    FAST_SEARCH_OUTPUT_DIR, VIDEO_STAGING_DIR, FAST_SEARCH_OUTPUT_MAX_AGE, DEFAULT_SUMMARIZE_PROMPT,
-    OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, VIA_SERVER_URL, CV_EVENT_DETECTOR_API_URL,
+    FAST_SEARCH_OUTPUT_DIR, VIDEO_STAGING_DIR, FAST_SEARCH_OUTPUT_MAX_AGE,  VIA_SERVER_URL, CV_EVENT_DETECTOR_API_URL,
     DEFAULT_QUERY_TEMPERATURE, DEFAULT_QUERY_SEED, DEFAULT_QUERY_MAX_TOKENS,
     DEFAULT_QUERY_TOP_P, DEFAULT_QUERY_TOP_K,
-    DEFAULT_TOP_K, DEFAULT_TOP_P, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_SEED,
-    DEFAULT_NUM_FRAMES_PER_CHUNK, DEFAULT_FRAME_WIDTH, DEFAULT_FRAME_HEIGHT,
-    DEFAULT_BATCH_SIZE, DEFAULT_RAG_BATCH_SIZE, DEFAULT_RAG_TOP_K,
-    DEFAULT_SUMMARIZE_TOP_P, DEFAULT_SUMMARIZE_TEMPERATURE, DEFAULT_SUMMARIZE_MAX_TOKENS,
-    DEFAULT_CHAT_TOP_P, DEFAULT_CHAT_TEMPERATURE, DEFAULT_CHAT_MAX_TOKENS,
-    DEFAULT_NOTIFICATION_TOP_P, DEFAULT_NOTIFICATION_TEMPERATURE, DEFAULT_NOTIFICATION_MAX_TOKENS,
-    DEFAULT_ENABLE_AUDIO,
     ENABLE_VST, VST_API_URL, ENABLE_ALERTBRIDGE, ALERTBRIDGE_API_BASE, FILTERED_CLIP_PATH
 )
 
@@ -158,7 +148,7 @@ async def fetch_via_file_index() -> dict:
             items = data.get("data", []) if isinstance(data, dict) else []
             return {item.get("filename"): item.get("id") for item in items if item.get("filename") and item.get("id")}
     except asyncio.TimeoutError:
-        logger.warning(f"VIA /files 요청 타임아웃 (5초 초과)")
+        logger.warning("VIA /files 요청 타임아웃 (5초 초과)")
         return {}
     except aiohttp.ClientError as e:
         logger.warning(f"VIA /files 네트워크 오류: {e}")
@@ -191,7 +181,6 @@ def cleanup_old_fast_search_output():
 
 @router.post("/query-and-generate-clips")
 async def query_and_generate_clips(
-    request: Request,
     background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(None),
     prompt: str = Form(...),
@@ -210,7 +199,7 @@ async def query_and_generate_clips(
     logger.info("==================================================================search start==================================================================")
     """VIA query_video만 수행하고, 원본 동영상 구간 재생용 타임스탬프·메타를 `clips` 배열 형태로 반환 (별도 클립 파일 미생성)."""
     # 프론트엔드에서 전달받은 파라미터 로그 출력
-    logger.info(f"[QUERY-AND-GENERATE-CLIPS] 받은 파라미터:")
+    logger.info("[QUERY-AND-GENERATE-CLIPS] 받은 파라미터:")
     logger.info(f"  - chunk_size: {chunk_size}")
     logger.info(f"  - top_k: {top_k}")
     logger.info(f"  - top_p: {top_p}")
@@ -343,7 +332,7 @@ async def query_and_generate_clips(
 
         # 최적화: 파일 저장 건너뛰기 (video_id가 이미 DB에 있으면 디스크에 다시 쓰지 않음)
         # duration은 DB에서 가져오거나 프론트엔드에서 전달받음
-        logger.info(f"[최적화] 파일 저장 건너뛰기 (video_id 사용, 구간만 반환)")
+        logger.info("[최적화] 파일 저장 건너뛰기 (video_id 사용, 구간만 반환)")
 
         # 최적화: 여러 동영상을 병렬로 처리 (Query만)
         async def process_single_video_query(upfile: UploadFile, index: int, prompt_template: str):
@@ -437,7 +426,7 @@ async def query_and_generate_clips(
                     query_top_p = top_p if top_p is not None else DEFAULT_QUERY_TOP_P
                     query_top_k = top_k if top_k is not None else DEFAULT_QUERY_TOP_K
                     
-                    logger.info(f"[QUERY-AND-GENERATE-CLIPS] 파라미터 처리:")
+                    logger.info("[QUERY-AND-GENERATE-CLIPS] 파라미터 처리:")
                     logger.info(f"  - 프론트엔드에서 받은 top_k: {top_k}")
                     logger.info(f"  - 프론트엔드에서 받은 temperature: {temperature}")
                     logger.info(f"  - 처리 후 query_top_k: {query_top_k}")
@@ -568,38 +557,14 @@ async def query_and_generate_clips(
                                     valid_timestamps.append((adjusted_start, adjusted_end, sentence))
                                 else:
                                     valid_timestamps.append((start_time, end_time, sentence))
-                        
+
                         # 이미 1개로 제한되었으므로 추가 제한 불필요
                         if valid_timestamps:
-                            logger.debug(f"검색 구간 확정: 1개 (가장 정확도 높은 장면만 선택)")
-                            
-                            # 번역 작업 병렬 처리 - 주석 처리
-                            # sentences_to_translate = [s for _, _, s in valid_timestamps if s and s.strip()]
-                            translated_sentences = {}
-                            
-                            # if sentences_to_translate:
-                            #     translation_tasks = [translate_to_korean(sentence) for sentence in sentences_to_translate]
-                            #     try:
-                            #         translated_results = await asyncio.gather(*translation_tasks, return_exceptions=True)
-                            #         for sentence, translated in zip(sentences_to_translate, translated_results):
-                            #             if isinstance(translated, Exception):
-                            #                 translated_sentences[sentence] = sentence
-                            #             else:
-                            #                 translated_sentences[sentence] = translated
-                            #     except Exception as e:
-                            #         logger.warning(f"번역 작업 중 오류 발생: {e}, 원본 사용")
-                            #         for sentence in sentences_to_translate:
-                            #             translated_sentences[sentence] = sentence
-                            
-                            # 번역 없이 원본 사용
-                            for _, _, sentence in valid_timestamps:
-                                if sentence not in translated_sentences:
-                                    translated_sentences[sentence] = sentence
-                            
+                            logger.debug("검색 구간 확정: 1개 (가장 정확도 높은 장면만 선택)")
+
                             # 별도 클립 파일 없이 원본 재생용 구간·메타만 반환 (응답 필드명 `clips`는 프론트 호환 유지)
                             logger.debug(f"타임스탬프·메타 반환: {len(valid_timestamps)}개 (url 없음)")
                             for idx, (start_time, end_time, sentence) in enumerate(valid_timestamps):
-                                translated_sentence = translated_sentences.get(sentence, sentence)
                                 video_clips.append({
                                     "id": f"{base_name}_{timestamp_suffix}_{idx}",
                                     "title": file_path,
@@ -607,7 +572,7 @@ async def query_and_generate_clips(
                                     "start_time": start_time,
                                     "end_time": end_time,
                                     "search_query": prompt,
-                                    "sentence": translated_sentence,
+                                    "sentence": sentence,
                                     "source_video_filename": file_path,
                                     "video_id": video_id,
                                     "db_id": db_internal_id
@@ -636,8 +601,6 @@ async def query_and_generate_clips(
                     if video is not None:
                         try:
                             video.close()
-                            # sleep 제거: 불필요한 지연 제거로 성능 향상
-                            # await asyncio.sleep(0.1)
                         except Exception as close_error:
                             logger.warning(f"비디오 리소스 정리 중 오류: {close_error}")
                         finally:
@@ -781,7 +744,7 @@ async def vss_query(
                 final_chunk_size = 10
         else:
             # duration을 가져올 수 없는 경우 기본값 사용
-            logger.warning(f"[vss-query] 동영상 duration을 가져올 수 없어 기본값 10 사용")
+            logger.warning("[vss-query] 동영상 duration을 가져올 수 없어 기본값 10 사용")
             final_chunk_size = 10
     elif chunk_size < 0:
         # chunk_size가 음수이면 기본값 사용
@@ -1576,7 +1539,6 @@ async def send_alert_to_alertbridge(
             timeout=aiohttp.ClientTimeout(total=60)
         ) as resp:
             if resp.status == 200 or resp.status == 202:
-                result = await resp.json()
                 logger.info(f"AlertBridge 전송 성공: {clip_basename}, Alert ID: {alert_id}")
                 return True
             else:

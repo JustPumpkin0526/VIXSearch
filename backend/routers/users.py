@@ -2,7 +2,7 @@
 import time
 import logging
 from pathlib import Path
-from fastapi import APIRouter, File, UploadFile, Depends
+from fastapi import APIRouter, File, UploadFile
 from pydantic import BaseModel
 from database.connection import get_db_connection
 from utils.validators import validate_email

@@ -2,7 +2,6 @@
 import logging
 from pathlib import Path
 from database.connection import conn, cursor, ensure_db_connection
-from services.vss_client import VSS
 from utils.helpers import ensure_vss_client
 
 logger = logging.getLogger(__name__)

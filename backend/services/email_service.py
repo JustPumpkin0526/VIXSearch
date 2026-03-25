@@ -2,12 +2,11 @@
 import random
 import smtplib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from config.settings import (
-    SMTP_SERVER, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL,
-    EMAIL_CODE_EXPIRY_MINUTES
+    SMTP_SERVER, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL
 )
 
 logger = logging.getLogger(__name__)
@@ -122,13 +121,13 @@ VSS Team
             return True
         else:
             # SMTP 설정이 없으면 로그만 출력 (개발 환경)
-            logger.warning(f"SMTP 설정이 없어 이메일을 전송하지 않습니다.")
+            logger.warning("SMTP 설정이 없어 이메일을 전송하지 않습니다.")
             logger.warning(f"인증 코드: {code} (이메일: {to_email})")
-            logger.warning(f"실제 운영 환경에서는 .env 파일에 SMTP 설정을 추가하세요.")
+            logger.warning("실제 운영 환경에서는 .env 파일에 SMTP 설정을 추가하세요.")
             return True  # 개발 환경에서는 항상 성공으로 처리
     except smtplib.SMTPAuthenticationError as e:
         logger.error(f"SMTP 인증 실패: {e}")
-        logger.error(f"사용자명과 비밀번호를 확인하세요. Gmail의 경우 앱 비밀번호를 사용해야 합니다.")
+        logger.error("사용자명과 비밀번호를 확인하세요. Gmail의 경우 앱 비밀번호를 사용해야 합니다.")
         return False
     except smtplib.SMTPException as e:
         logger.error(f"SMTP 오류: {e}")

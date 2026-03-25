@@ -272,7 +272,7 @@ async def build_query_prompt(prompt: str) -> str:
                     translated_prompt = re.sub(r'\s+', ' ', translated_prompt)
                     translated_prompt = translated_prompt.strip()
                     
-                    logger.info(f"Ollama를 사용하여 프롬프트 영어 번역 성공")
+                    logger.info("Ollama를 사용하여 프롬프트 영어 번역 성공")
                     return f"{translated_prompt}"
                 else:
                     logger.warning("Ollama 응답에 content가 없습니다. 원본 프롬프트 사용")

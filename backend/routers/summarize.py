@@ -1,7 +1,6 @@
 """요약 관련 라우터"""
 import logging
 import os
-import shutil
 import tempfile
 import asyncio
 from typing import Optional, List
@@ -74,6 +73,7 @@ async def vss_summarize(
     """동영상/이미지 요약 VSS API"""
     await ensure_vss_client()
     model = await get_via_model()
+    from utils.helpers import vss_client
 
     # ========== CA-RAG 컨텍스트 디버깅 로그 시작 ==========
     logger.info(
@@ -81,7 +81,7 @@ async def vss_summarize(
     )
     
     # 프론트엔드에서 전달받은 파라미터 로그 출력
-    logger.info(f"[VSS-SUMMARIZE] 받은 파라미터:")
+    logger.info("[VSS-SUMMARIZE] 받은 파라미터:")
     logger.info(f"  - top_k: {top_k}")
     logger.info(f"  - top_p: {top_p}")
     logger.info(f"  - temperature: {temperature}")
@@ -113,9 +113,7 @@ async def vss_summarize(
             image_mode,
             file.filename
         )
-        
-        from utils.helpers import vss_client
-        
+
         # 임시 파일로 저장
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
             content = await file.read()
@@ -168,9 +166,9 @@ async def vss_summarize(
         logger.warning(f"max_tokens가 1024를 초과합니다 ({max_tokens}). 1024로 제한합니다.")
         max_tokens = 1024
     
-    # chunk_duration 자동 계산 (chunk_duration이 None이거나 -1인 경우)
+    # chunk_duration 자동 계산 (chunk_duration이 -1인 경우; Form은 필수 int이므로 None 분기 없음)
     final_chunk_duration = chunk_duration
-    if chunk_duration is None or chunk_duration == -1:
+    if chunk_duration == -1:
         # 비디오 파일인 경우에만 duration 계산 (이미지 모드는 chunk_duration이 의미 없음)
         if not image_mode and temp_file_path and os.path.exists(temp_file_path):
             try:
@@ -184,18 +182,18 @@ async def vss_summarize(
                     final_chunk_duration = await get_recommended_chunk_size(duration)
                     logger.info(f"자동 지정: chunk_duration={final_chunk_duration} 사용 (영상 길이: {duration}초)")
                 else:
-                    logger.warning(f"영상 길이를 가져올 수 없습니다. 기본값 10 사용")
+                    logger.warning("영상 길이를 가져올 수 없습니다. 기본값 10 사용")
                     final_chunk_duration = 10
             except Exception as video_error:
                 logger.warning(f"비디오 파일 로드 실패: {temp_file_path}, 오류: {video_error}. 기본값 10 사용")
                 final_chunk_duration = 10
         elif video_id and not image_mode:
             # video_id만 있는 경우는 duration을 가져올 수 없으므로 기본값 사용
-            logger.warning(f"video_id만 제공되어 영상 길이를 가져올 수 없습니다. 기본값 10 사용")
+            logger.warning("video_id만 제공되어 영상 길이를 가져올 수 없습니다. 기본값 10 사용")
             final_chunk_duration = 10
         else:
             # 이미지 모드이거나 파일이 없는 경우 기본값 사용
-            logger.info(f"이미지 모드이거나 파일이 없어 기본값 10 사용")
+            logger.info("이미지 모드이거나 파일이 없어 기본값 10 사용")
             final_chunk_duration = 10
     elif chunk_duration < 0:
         logger.warning(f"chunk_duration이 음수입니다 ({chunk_duration}). 기본값 10 사용")
@@ -234,8 +232,7 @@ async def vss_summarize(
             enable_audio=enable_audio,
             enable_chat_history=enable_chat_history
         )
-        from utils.helpers import vss_client
-        
+
         logger.info(
             "[CA-RAG DEBUG] summarize_video 호출 전: image_mode=%s, video_id=%s",
             image_mode,
@@ -341,7 +338,8 @@ async def vss_summarize_multi(
     """
     await ensure_vss_client()
     model = await get_via_model()
-    
+    from utils.helpers import vss_client
+
     try:
         # JSON 문자열을 리스트로 파싱
         video_id_list = json.loads(video_ids)
@@ -358,7 +356,7 @@ async def vss_summarize_multi(
     # 멀티 이미지는 항상 이미지 모드이므로 chunk_duration이 의미 없지만, 일관성을 위해 기본값 사용
     final_chunk_duration = chunk_duration
     if chunk_duration is None or chunk_duration == -1:
-        logger.info(f"멀티 이미지 모드이므로 기본값 10 사용")
+        logger.info("멀티 이미지 모드이므로 기본값 10 사용")
         final_chunk_duration = 10
     elif chunk_duration < 0:
         logger.warning(f"chunk_duration이 음수입니다 ({chunk_duration}). 기본값 10 사용")
@@ -398,7 +396,6 @@ async def vss_summarize_multi(
             enable_audio=(enable_audio.lower() == "true"),
             enable_chat_history=False
         )
-        from utils.helpers import vss_client
         result = await vss_client.summarize_video(*summarize_params)
         
         # 다중 이미지 처리 시 VIA 서버 컨텍스트 정리를 위한 대기 시간
@@ -653,7 +650,7 @@ async def delete_summaries(request: DeleteSummaryRequest):
             "message": f"{deleted_count}개의 요약 결과가 삭제되었습니다.",
             "deleted_count": deleted_count
         }
-    except (ValidationException, NotFoundException):
+    except ValidationException:
         raise
     except Exception as e:
         logger.error(f"요약 결과 삭제 실패: {e}")

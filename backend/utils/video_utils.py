@@ -377,9 +377,7 @@ def convert_video_to_mp4(input_path: str, output_path: str):
 
 def extract_video_metadata(file_path: str, video_id: int, filename: str):
     """동영상 메타데이터를 추출하여 DB에 업데이트 (동시 실행 제한)"""
-    global _metadata_extraction_queue
-    
-    # 큐에 추가
+    # 큐에 추가 (모듈 레벨 리스트에 대한 append/pop이므로 global 불필요)
     _metadata_extraction_queue.append((file_path, video_id, filename))
     logger.info(f"메타데이터 추출 대기열에 추가: {filename} (ID: {video_id}), 대기 중인 작업: {len(_metadata_extraction_queue)}")
     

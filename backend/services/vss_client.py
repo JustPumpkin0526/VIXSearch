@@ -4,12 +4,7 @@ import aiohttp
 import logging
 from fastapi import HTTPException
 from utils.helpers import get_session
-from config.settings import (
-    VIA_MODEL_TIMEOUT,
-    VIA_UPLOAD_TIMEOUT_MIN,
-    VIA_UPLOAD_TIMEOUT_MAX,
-    VIA_UPLOAD_TIMEOUT_PER_MB
-)
+from config.settings import VIA_MODEL_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -96,18 +91,11 @@ class VSS:
                 data.add_field("file", file_handle, filename=file_name)
                 data.add_field("purpose", purpose)
                 data.add_field("media_type", media_type)
-                # 이미지는 일반적으로 작으므로 기본 타임아웃 사용
-                timeout_seconds = VIA_UPLOAD_TIMEOUT_MIN
             else:
                 # 동영상인 경우: 파일을 실제로 업로드
                 data.add_field("file", file_handle, filename=f"file_{self.f_count}")
                 data.add_field("purpose", purpose)
                 data.add_field("media_type", media_type)
-                # 파일 크기에 따라 동적 타임아웃 계산
-                timeout_seconds = max(
-                    VIA_UPLOAD_TIMEOUT_MIN,
-                    min(VIA_UPLOAD_TIMEOUT_MAX, int(file_size / (1024 * 1024) * VIA_UPLOAD_TIMEOUT_PER_MB))
-                )
 
             async with session.post(
                 self.files_endpoint, 
@@ -153,7 +141,7 @@ class VSS:
         )
         
         # Summarize 파라미터 로그 출력
-        logger.info(f"[SUMMARIZE-VIDEO] 파라미터:")
+        logger.info("[SUMMARIZE-VIDEO] 파라미터:")
         logger.info(f"  - top_k: {top_k}")
         logger.info(f"  - top_p: {top_p}")
         logger.info(f"  - temperature: {temperature}")

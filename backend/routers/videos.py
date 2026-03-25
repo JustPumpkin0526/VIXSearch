@@ -1,11 +1,9 @@
 """동영상 관련 라우터"""
 import asyncio
 import logging
-import os
 import time
 import aiofiles
 from pathlib import Path
-from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, File, UploadFile, Form, BackgroundTasks, Request
 from database.connection import get_db_connection
 from config.settings import VIDEOS_DIR, CONVERTED_VIDEOS_DIR
@@ -386,7 +384,7 @@ async def convert_video(
             if not row:
                 raise NotFoundException("동영상", str(video_id))
             
-            file_path_str, file_name, file_url = row
+            file_path_str, file_url = row
         
         file_path = Path(file_path_str)
         

@@ -35,8 +35,8 @@ from config.settings import (
     PROFILE_IMAGES_DIR, SAMPLE_DIR, REPORTS_DIR
 )
 
-# 데이터베이스 연결 초기화
-from database.connection import db_pool, conn, cursor
+# 데이터베이스 연결 초기화 (모듈 속성을 직접 갱신해 connection.py와 단일 소스 유지)
+import database.connection as db_connection
 
 # 유틸리티 import
 from utils.helpers import get_session
@@ -113,12 +113,11 @@ async def lifespan(app: FastAPI):
     await get_session()
     
     # 데이터베이스 연결 확인 (실패해도 애플리케이션은 계속 시작)
-    global conn, cursor
-    if conn is None or cursor is None:
+    if db_connection.conn is None or db_connection.cursor is None:
         try:
-            conn = db_pool.get_connection()
-            conn.autocommit = True
-            cursor = conn.cursor()
+            db_connection.conn = db_connection.db_pool.get_connection()
+            db_connection.conn.autocommit = True
+            db_connection.cursor = db_connection.conn.cursor()
             logger.info("데이터베이스 연결 성공 (startup)")
         except Exception as e:
             logger.warning(f"데이터베이스 연결 실패 (startup): {e}")
@@ -127,8 +126,8 @@ async def lifespan(app: FastAPI):
     logger.info("애플리케이션이 시작되었습니다. VIA 서버의 query_video를 사용합니다.")
     logger.info("=" * 60)
     logger.info("서버가 정상적으로 시작되었습니다.")
-    logger.info(f"서버 주소: http://0.0.0.0:8001 (모든 네트워크 인터페이스에서 접속 가능)")
-    logger.info(f"로컬 접속: http://localhost:8001")
+    logger.info("서버 주소: http://0.0.0.0:8001 (모든 네트워크 인터페이스에서 접속 가능)")
+    logger.info("로컬 접속: http://localhost:8001")
     logger.info("API 문서: http://localhost:8001/docs")
     logger.info("외부 접속: http://<서버IP>:8001 (서버의 실제 IP 주소 사용)")
     logger.info("=" * 60)

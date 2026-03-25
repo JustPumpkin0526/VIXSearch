@@ -1,7 +1,6 @@
 """로깅 설정"""
 import logging
 from logging.handlers import TimedRotatingFileHandler
-from pathlib import Path
 from datetime import datetime
 from .settings import LOGS_DIR
 

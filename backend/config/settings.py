@@ -1,7 +1,6 @@
 """애플리케이션 설정"""
 import os
 from pathlib import Path
-from typing import Optional
 
 # .env 파일 지원 (python-dotenv가 설치되어 있는 경우)
 try:

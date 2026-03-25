@@ -364,7 +364,7 @@ async def create_word_report(request: CreateWordReportRequest):
                         if image_data:
                             logger.info(f"✅ 원본 동영상에서 썸네일 추출 성공: {len(image_data)} bytes")
                         else:
-                            logger.warning(f"⚠️ 원본 동영상에서 썸네일 추출 실패 (None 반환)")
+                            logger.warning("⚠️ 원본 동영상에서 썸네일 추출 실패 (None 반환)")
                     else:
                         logger.warning(f"⚠️ 원본 동영상을 찾을 수 없음: {clip.sourceVideo}")
                 except Exception as e:
@@ -470,9 +470,6 @@ async def create_word_report(request: CreateWordReportRequest):
         
         # Word 문서 저장
         doc.save(str(file_path))
-        
-        # 파일 URL 생성 (정적 파일 서빙용)
-        file_url = f"/reports-files/{filename}"
         
         # 데이터베이스에 보고서 저장 (Word 파일 경로 포함)
         with get_db_connection() as cursor:
@@ -812,7 +809,7 @@ async def add_clips_to_report(
         if len(new_clips) == 0:
             return {
                 "success": False,
-                "message": f"추가할 수 있는 새로운 클립이 없습니다. 모든 클립이 이미 보고서에 포함되어 있습니다.",
+                "message": "추가할 수 있는 새로운 클립이 없습니다. 모든 클립이 이미 보고서에 포함되어 있습니다.",
                 "duplicate_count": len(duplicate_clips)
             }
         
@@ -875,7 +872,7 @@ async def add_clips_to_report(
                         if image_data:
                             logger.info(f"✅ 원본 동영상에서 썸네일 추출 성공: {len(image_data)} bytes")
                         else:
-                            logger.warning(f"⚠️ 원본 동영상에서 썸네일 추출 실패 (None 반환)")
+                            logger.warning("⚠️ 원본 동영상에서 썸네일 추출 실패 (None 반환)")
                     else:
                         logger.warning(f"⚠️ 원본 동영상을 찾을 수 없음: {clip.sourceVideo}")
                 except Exception as e:
@@ -913,7 +910,7 @@ async def add_clips_to_report(
                     img_byte_arr.seek(0)
                     
                     doc.add_picture(img_byte_arr, width=Inches(max_width))
-                    logger.info(f"✅ 썸네일 이미지 추가 성공 (클립 추가)")
+                    logger.info("✅ 썸네일 이미지 추가 성공 (클립 추가)")
                     
                     img_byte_arr.seek(0)
                     clip_images.append(base64.b64encode(img_byte_arr.read()).decode('utf-8'))
@@ -923,7 +920,7 @@ async def add_clips_to_report(
                     logger.warning(f"이미지 추가 실패 상세: {traceback.format_exc()}")
                     clip_images.append(None)
             else:
-                logger.warning(f"⚠️ 썸네일 이미지 데이터 없음 (클립 추가)")
+                logger.warning("⚠️ 썸네일 이미지 데이터 없음 (클립 추가)")
                 clip_images.append(None)
             
             # 장면 설명 추가
