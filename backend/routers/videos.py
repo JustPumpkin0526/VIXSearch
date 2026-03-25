@@ -9,7 +9,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Query, File, UploadFile, Form, BackgroundTasks, Request
 from database.connection import get_db_connection
-from config.settings import (
+from app_config.settings import (
     BACKEND_DIR,
     VIDEOS_DIR,
     CONVERTED_VIDEOS_DIR,
@@ -18,7 +18,7 @@ from config.settings import (
 from utils.helpers import build_file_url
 from utils.video_utils import convert_video_to_mp4, extract_video_metadata
 from services.video_service import upload_to_via_server_background
-from config.settings import UNSUPPORTED_VIDEO_FORMATS
+from app_config.settings import UNSUPPORTED_VIDEO_FORMATS
 from exceptions import NotFoundException, ValidationException, DatabaseException
 
 logger = logging.getLogger(__name__)

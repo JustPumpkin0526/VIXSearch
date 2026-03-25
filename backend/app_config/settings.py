@@ -7,7 +7,7 @@ from typing import Optional
 try:
     from dotenv import load_dotenv
     # 프로젝트 루트 기준 상대 경로에서 .env 파일 로드
-    # backend/config/settings.py -> 프로젝트 루트는 parents[2]
+    # backend/app_config/settings.py -> 프로젝트 루트는 parents[2]
     env_path = Path(__file__).resolve().parents[2] / ".env"
     if env_path.exists():
         load_dotenv(env_path)

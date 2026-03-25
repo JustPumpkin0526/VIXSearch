@@ -4,7 +4,7 @@ import aiohttp
 import logging
 from fastapi import HTTPException
 from utils.helpers import get_session
-from config.settings import VIA_MODEL_TIMEOUT
+from app_config.settings import VIA_MODEL_TIMEOUT
 
 logger = logging.getLogger(__name__)
 

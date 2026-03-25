@@ -4,7 +4,7 @@ import re
 import threading
 import logging
 from queue import Queue, Empty
-from config.settings import (
+from app_config.settings import (
     DB_HOST, DB_USER, DB_PASSWORD, DB_PORT, DB_NAME, IP_PATTERN, DB_POOL_SIZE, DB_POOL_WARMUP
 )
 from exceptions import DatabaseException, NotFoundException

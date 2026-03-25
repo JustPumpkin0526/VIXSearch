@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, UploadFile
 from pydantic import BaseModel
 from database.connection import get_db_connection
 from utils.validators import validate_email
-from config.settings import ALLOWED_IMAGE_EXTENSIONS, PROFILE_IMAGES_DIR
+from app_config.settings import ALLOWED_IMAGE_EXTENSIONS, PROFILE_IMAGES_DIR
 from exceptions import NotFoundException, ValidationException, DatabaseException, ForbiddenException
 
 logger = logging.getLogger(__name__)

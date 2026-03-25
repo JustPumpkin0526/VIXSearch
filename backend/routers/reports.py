@@ -22,7 +22,7 @@ from docx.oxml.ns import qn
 from PIL import Image
 import requests
 from moviepy.video.io.VideoFileClip import VideoFileClip
-from config.settings import (
+from app_config.settings import (
     FAST_SEARCH_OUTPUT_DIR,
     VIDEOS_DIR,
     CONVERTED_VIDEOS_DIR,

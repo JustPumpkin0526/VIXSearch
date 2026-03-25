@@ -4,7 +4,7 @@ import aiohttp
 import logging
 from fastapi import UploadFile
 from fastapi import HTTPException
-from config.settings import (
+from app_config.settings import (
     API_BASE_URL, VIA_SERVER_URL, VIA_MODEL_TIMEOUT,
     OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TRANSLATION_MODEL, OLLAMA_TIMEOUT, DEFAULT_NUM_FRAMES_PER_CHUNK,
     DEFAULT_SUMMARIZE_PROMPT,

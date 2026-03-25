@@ -88,7 +88,7 @@ def filter_negative_timestamps(timestamp_data: List[Tuple[float, float, str]]) -
     
     return filtered
 
-from config.settings import (
+from app_config.settings import (
     FAST_SEARCH_OUTPUT_DIR, VIDEO_STAGING_DIR, FAST_SEARCH_OUTPUT_MAX_AGE,  VIA_SERVER_URL, CV_EVENT_DETECTOR_API_URL,
     DEFAULT_QUERY_TEMPERATURE, DEFAULT_QUERY_SEED, DEFAULT_QUERY_MAX_TOKENS,
     DEFAULT_QUERY_TOP_P, DEFAULT_QUERY_TOP_K,

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 # 로깅 설정 먼저 초기화
-from config.logging_config import setup_logging
+from app_config.logging_config import setup_logging
 setup_logging()
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def ignore_connection_reset(loop, context):
 # (모듈 레벨에서는 이벤트 루프가 없을 수 있으므로 여기서는 설정하지 않음)
 
 # 설정 import
-from config.settings import (
+from app_config.settings import (
     VIDEOS_DIR, FAST_SEARCH_OUTPUT_DIR, CONVERTED_VIDEOS_DIR, VIDEO_STAGING_DIR,
     PROFILE_IMAGES_DIR, SAMPLE_DIR, REPORTS_DIR
 )
@@ -132,7 +132,7 @@ async def lifespan(app: FastAPI):
     logger.info("외부 접속: http://<서버IP>:8001 (서버의 실제 IP 주소 사용)")
     logger.info("=" * 60)
     # VIA 서버 URL 로깅
-    from config.settings import VIA_SERVER_URL
+    from app_config.settings import VIA_SERVER_URL
     logger.info(f"VIA 서버 URL: {VIA_SERVER_URL}")
     if "localhost" in VIA_SERVER_URL or "127.0.0.1" in VIA_SERVER_URL:
         logger.warning("VIA 서버가 localhost로 설정되어 있습니다. 다른 서버에서 실행 중이라면")

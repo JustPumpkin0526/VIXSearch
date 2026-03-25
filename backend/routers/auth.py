@@ -13,7 +13,7 @@ from services.email_service import (
     generate_verification_code, send_verification_email,
     cleanup_expired_codes, cleanup_expired_reset_codes
 )
-from config.settings import EMAIL_CODE_EXPIRY_MINUTES, ENABLE_EMAIL_VERIFICATION
+from app_config.settings import EMAIL_CODE_EXPIRY_MINUTES, ENABLE_EMAIL_VERIFICATION
 
 logger = logging.getLogger(__name__)
 
