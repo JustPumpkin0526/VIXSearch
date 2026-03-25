@@ -24,7 +24,7 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8001")
 # VIA 서버가 다른 서버에서 실행되는 경우 환경 변수로 IP 주소 설정 필요
 # 예: VIA_SERVER_URL=http://192.168.1.100:8101
 # 같은 서버에서 실행되는 경우 localhost 사용
-VIA_SERVER_URL = os.getenv("VIA_SERVER_URL", "http://172.16.15.88:8101")
+VIA_SERVER_URL = os.getenv("VIA_SERVER_URL", "http://172.16.7.64:8101")
 VIA_MODEL_TIMEOUT = int(os.getenv("VIA_MODEL_TIMEOUT", "10"))  # VIA 모델 조회 타임아웃 (초)
 VIA_UPLOAD_TIMEOUT_MIN = 300  # 최소 업로드 타임아웃 (초, 5분)
 VIA_UPLOAD_TIMEOUT_MAX = 1800  # 최대 업로드 타임아웃 (초, 30분)
