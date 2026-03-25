@@ -1,4 +1,4 @@
-"""로깅 설정"""
+"""로깅 설정."""
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime
