@@ -3,7 +3,7 @@
  * 로딩 상태, 에러 처리, 재시도 로직 포함
  */
 import { ref } from 'vue';
-import apiClient, { apiGet, apiPost, apiPut, apiDelete, apiUpload } from '@/utils/apiClient';
+import { apiGet, apiPost, apiPut, apiDelete, apiUpload } from '@/utils/apiClient';
 
 /**
  * API 호출 Composable

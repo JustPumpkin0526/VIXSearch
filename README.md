@@ -66,8 +66,11 @@ VSS_Project/
 ├── public/
 ├── sql/                     # 스키마 SQL 스크립트
 ├── docs/                    # SMTP 등 보조 문서
+├── scripts/                 # 유틸 (예: SMTP 설정 스크립트)
+├── config/                  # ESLint 등 프론트 도구 설정
+├── models/                  # 로컬 LLM 가중치(.gguf 등, 용량 큼 — Git 제외 권장)
 ├── NVIDIA-VSS/              # 참조·외부 VIA/VLM 관련 스크립트(선택)
-├── requirements.txt
+├── requirements.txt         # Python 의존성 (백엔드)
 ├── package.json
 └── .env                     # 루트에 생성 (Git 제외)
 ```
@@ -139,7 +142,7 @@ SMTP_FROM_EMAIL=
 ```
 
 - 비밀번호·키는 **코드에 넣지 말고** `.env`만 사용합니다.
-- SMTP 상세는 `docs/SMTP_SETUP_GUIDE.md` 또는 루트의 `setup_smtp.py`를 참고할 수 있습니다.
+- SMTP 상세는 `docs/SMTP_SETUP_GUIDE.md` 또는 `scripts/setup_smtp.py`를 참고할 수 있습니다. (루트에서 `python scripts/setup_smtp.py` 실행)
 
 ## 데이터베이스
 

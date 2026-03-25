@@ -27,7 +27,7 @@ else:
     logger.warning("SMTP 설정이 로드되지 않았습니다!")
     logger.warning(f"   SMTP_USER: {'설정됨' if SMTP_USER else '비어있음'}")
     logger.warning(f"   SMTP_PASSWORD: {'설정됨' if SMTP_PASSWORD else '비어있음'}")
-    logger.warning("   .env 파일을 확인하거나 setup_smtp.py를 실행하여 설정하세요.")
+    logger.warning("   .env 파일을 확인하거나 scripts/setup_smtp.py를 실행하여 설정하세요.")
 
 
 def generate_verification_code():

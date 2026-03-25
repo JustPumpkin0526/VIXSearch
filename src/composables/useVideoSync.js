@@ -3,7 +3,7 @@
  * management.vue와 Search.vue 간의 비디오 삭제 동기화를 처리
  */
 
-import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { onMounted, onBeforeUnmount } from 'vue';
 import { isVideoDeleted as checkVideoDeleted } from '@/utils/videoUtils';
 
 const EVENT_NAME = 'videos-deleted-from-management';
