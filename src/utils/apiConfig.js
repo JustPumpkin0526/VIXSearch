@@ -24,7 +24,7 @@ export function getApiBaseUrl() {
   
   // 기본값: 172.16.15.69:8001 (API 서버 기본 위치)
   // localhost 환경 변수는 무시하고 항상 172.16.15.69 사용
-  const defaultUrl = "http://172.16.15.69:8001";
+  const defaultUrl = "http://localhost:8001";
   console.log('[apiConfig] 기본값 사용 (localhost 환경 변수 무시):', defaultUrl);
   return defaultUrl;
 }

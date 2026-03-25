@@ -120,12 +120,6 @@ if not CV2_AVAILABLE:
 
 router = APIRouter()
 
-def _get_subclip(video, start_time, end_time):
-    """MoviePy v1/v2 호환: subclip 또는 subclipped 사용"""
-    if hasattr(video, "subclip"):
-        return video.subclip(start_time, end_time)
-    return video.subclipped(start_time, end_time)
-
 def create_clip_with_ffmpeg(input_path: str, output_path: str, start_time: float, end_time: float) -> bool:
     """
     FFmpeg를 직접 사용하여 클립 생성 (MoviePy보다 3-5배 빠름)
