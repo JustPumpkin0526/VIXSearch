@@ -231,7 +231,29 @@ async def delete_video(
                 raise NotFoundException("동영상", str(video_id))
             
             file_path_str, file_url, via_video_id = row
-            
+
+        # 파일 먼저 삭제: Windows에서 파일 잠금 시 DB만 삭제되어 고아 파일이 남는 문제 방지
+        failed_deletions = []
+        for path in _paths_to_delete_for_video_row(file_path_str, file_url):
+            if path.is_file():
+                try:
+                    path.unlink()
+                    logger.info(f"동영상 관련 파일 삭제: {path}")
+                except Exception as e:
+                    logger.warning(f"동영상 파일 삭제 실패: {path}, {e}")
+                    failed_deletions.append((path, e))
+
+        if failed_deletions:
+            locked_paths = [str(p) for p, err in failed_deletions if isinstance(err, PermissionError)]
+            detail = (
+                "동영상 파일이 다른 프로세스에서 사용 중이라 삭제할 수 없습니다. "
+                "영상 재생/미리보기를 닫고 다시 시도해주세요."
+            )
+            if locked_paths:
+                detail += f" (잠금 파일: {', '.join(locked_paths[:3])})"
+            raise HTTPException(status_code=423, detail=detail)
+
+        with get_db_connection() as cursor:
             # 요약 결과 삭제 (VIDEO_ID가 있는 경우)
             if via_video_id:
                 try:
@@ -253,15 +275,6 @@ async def delete_video(
             )
             # autocommit이 활성화되어 있으므로 명시적 커밋 불필요
         
-        # 파일 삭제 (DB 트랜잭션 외부): FILE_PATH 단일 의존 시 누락·경로 불일치로 원본이 남는 경우 방지
-        for path in _paths_to_delete_for_video_row(file_path_str, file_url):
-            if path.is_file():
-                try:
-                    path.unlink()
-                    logger.info(f"동영상 관련 파일 삭제: {path}")
-                except Exception as e:
-                    logger.warning(f"동영상 파일 삭제 실패 (무시): {path}, {e}")
-        
         logger.info(f"동영상 삭제 완료: USER_ID={user_id}, VIDEO_ID={video_id}")
         
         return {
@@ -269,6 +282,8 @@ async def delete_video(
             "message": "동영상이 성공적으로 삭제되었습니다."
         }
     except NotFoundException:
+        raise
+    except HTTPException:
         raise
     except Exception as e:
         logger.error(f"동영상 삭제 실패: {e}")

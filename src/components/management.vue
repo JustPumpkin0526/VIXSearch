@@ -4505,6 +4505,7 @@ async function confirmDelete() {
   }
   
   // DB에서 삭제 (dbId가 있는 경우)
+  const successfulDbIds = new Set();
   if (userId) {
     const deletePromises = videosToDelete
       .filter(video => video.dbId) // dbId가 있는 동영상만
@@ -4522,6 +4523,7 @@ async function confirmDelete() {
           } else {
             const result = await response.json();
             console.log(`동영상 삭제 성공 (ID: ${video.dbId}):`, result);
+            successfulDbIds.add(video.dbId);
           }
         } catch (error) {
           console.error(`동영상 삭제 중 오류 (ID: ${video.dbId}):`, error);
@@ -4534,10 +4536,21 @@ async function confirmDelete() {
     console.warn('사용자 ID가 없어 DB 삭제를 건너뜁니다.');
   }
 
+  // 실제 서버 삭제 성공 항목만 후속 UI/탭 정리에 반영
+  const deletedVideos = userId
+    ? videosToDelete.filter(video => !video.dbId || successfulDbIds.has(video.dbId))
+    : videosToDelete;
+
+  if (deletedVideos.length === 0) {
+    showDeletePopup.value = false;
+    selectedIds.value = [];
+    return;
+  }
+
   // 삭제된 동영상의 ID와 dbId 수집
   const deletedVideoIds = new Set();
   const deletedVideoDbIds = new Set();
-  videosToDelete.forEach(video => {
+  deletedVideos.forEach(video => {
     // id 추가
     if (video.id != null) {
       deletedVideoIds.add(video.id);
