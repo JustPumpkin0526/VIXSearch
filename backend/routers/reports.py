@@ -22,7 +22,14 @@ from docx.oxml.ns import qn
 from PIL import Image
 import requests
 from moviepy.video.io.VideoFileClip import VideoFileClip
-from config.settings import FAST_SEARCH_OUTPUT_DIR, VIDEOS_DIR, CONVERTED_VIDEOS_DIR, REPORTS_DIR, API_BASE_URL
+from config.settings import (
+    FAST_SEARCH_OUTPUT_DIR,
+    VIDEOS_DIR,
+    CONVERTED_VIDEOS_DIR,
+    REPORTS_DIR,
+    API_BASE_URL,
+    resolve_storage_file_path,
+)
 from database.connection import get_db_connection, verify_user_exists
 from dependencies import verify_user_dependency
 from exceptions import NotFoundException, ValidationException, DatabaseException
@@ -1301,10 +1308,12 @@ def get_original_video_path(source_video: str, user_id: Optional[str] = None) ->
                     file_path, file_url = row
                     logger.info(f"DB에서 파일 정보 찾음: FILE_PATH={file_path}, FILE_URL={file_url}")
                     
-                    # FILE_PATH가 절대 경로인 경우
-                    if file_path and os.path.exists(file_path):
-                        logger.info(f"원본 동영상 찾음 (DB FILE_PATH): {file_path}")
-                        return file_path
+                    # FILE_PATH (구 backend/videos 등 DB 절대 경로 포함 → result/ 로 해석)
+                    if file_path:
+                        resolved_fp = resolve_storage_file_path(file_path)
+                        if resolved_fp:
+                            logger.info(f"원본 동영상 찾음 (DB FILE_PATH): {resolved_fp}")
+                            return str(resolved_fp)
                     
                     # FILE_PATH가 상대 경로인 경우 VIDEOS_DIR 기준으로 찾기
                     if file_path:
@@ -1359,9 +1368,11 @@ def get_original_video_path(source_video: str, user_id: Optional[str] = None) ->
                     file_path, file_url = row
                     logger.info(f"DB에서 부분 일치 파일 찾음: FILE_PATH={file_path}, FILE_URL={file_url}")
                     
-                    if file_path and os.path.exists(file_path):
-                        logger.info(f"원본 동영상 찾음 (DB 부분 일치 FILE_PATH): {file_path}")
-                        return file_path
+                    if file_path:
+                        resolved_fp = resolve_storage_file_path(file_path)
+                        if resolved_fp:
+                            logger.info(f"원본 동영상 찾음 (DB 부분 일치 FILE_PATH): {resolved_fp}")
+                            return str(resolved_fp)
                     
                     if file_path:
                         local_path = VIDEOS_DIR / os.path.basename(file_path)
@@ -1371,7 +1382,11 @@ def get_original_video_path(source_video: str, user_id: Optional[str] = None) ->
         except Exception as e:
             logger.warning(f"DB에서 부분 일치 원본 동영상 조회 실패: {e}")
     
-    # 직접 파일 경로인 경우
+    # 직접 파일 경로인 경우 (또는 DB에 남은 구 경로 → result/)
+    resolved_src = resolve_storage_file_path(source_video)
+    if resolved_src:
+        logger.info(f"원본 동영상 찾음 (경로 해석): {resolved_src}")
+        return str(resolved_src)
     if os.path.exists(source_video):
         logger.info(f"원본 동영상 찾음 (직접 경로): {source_video}")
         return source_video

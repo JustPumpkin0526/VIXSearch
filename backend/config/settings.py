@@ -1,6 +1,7 @@
 """애플리케이션 설정"""
 import os
 from pathlib import Path
+from typing import Optional
 
 # .env 파일 지원 (python-dotenv가 설치되어 있는 경우)
 try:
@@ -137,16 +138,63 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", SMTP_USER)
 
 # ==================== 디렉토리 경로 ====================
-# 동영상 관련 디렉터리는 모두 videos/ 아래에 둡니다.
-BASE_DIR = Path(__file__).parent.parent
-VIDEOS_DIR = BASE_DIR / "videos"
+# backend/ 는 코드 전용. 업로드·변환·리포트·로그 등 런타임 산출물은 프로젝트 루트의 result/ 에 둡니다.
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = BACKEND_DIR.parent
+RESULT_DIR = PROJECT_ROOT / "result"
+
+VIDEOS_DIR = RESULT_DIR / "videos"
 CONVERTED_VIDEOS_DIR = VIDEOS_DIR / "converted-videos"
 FAST_SEARCH_OUTPUT_DIR = VIDEOS_DIR / "fast-search-output"
 # 업로드 처리·VIA 전송용 임시 파일 (고속 검색 출력물과 분리)
 VIDEO_STAGING_DIR = VIDEOS_DIR / "staging"
-PROFILE_IMAGES_DIR = BASE_DIR / "profile-images"
-REPORTS_DIR = BASE_DIR / "reports"
-LOGS_DIR = BASE_DIR / "logs"
+PROFILE_IMAGES_DIR = RESULT_DIR / "profile-images"
+REPORTS_DIR = RESULT_DIR / "reports"
+LOGS_DIR = RESULT_DIR / "logs"
 # Vue 정적 자산 (프론트는 루트의 src/)
-SAMPLE_DIR = BASE_DIR.parent / "src" / "assets" / "sample"
+SAMPLE_DIR = PROJECT_ROOT / "src" / "assets" / "sample"
+
+
+def resolve_storage_file_path(stored_path: Optional[str]) -> Optional[Path]:
+    """
+    DB에 저장된 FILE_PATH 등이 예전 backend/videos·backend/reports 를 가리킬 때
+    현재 result/videos·result/reports 실제 파일로 해석합니다.
+    """
+    if stored_path is None or str(stored_path).strip() == "":
+        return None
+    raw = str(stored_path).strip()
+    p = Path(raw)
+    try:
+        if p.is_file():
+            return p.resolve()
+    except OSError:
+        pass
+    parts = p.parts
+    for i in range(len(parts) - 1):
+        if parts[i].lower() != "backend":
+            continue
+        nxt = parts[i + 1].lower()
+        if nxt not in ("videos", "reports"):
+            continue
+        tail = parts[i + 2:]
+        candidate = Path(RESULT_DIR, nxt, *tail)
+        try:
+            if candidate.is_file():
+                return candidate.resolve()
+        except OSError:
+            pass
+    if parts:
+        name = parts[-1]
+        for rel in (
+            Path("videos") / name,
+            Path("videos") / "converted-videos" / name,
+            Path("reports") / name,
+        ):
+            candidate = RESULT_DIR / rel
+            try:
+                if candidate.is_file():
+                    return candidate.resolve()
+            except OSError:
+                pass
+    return None
 

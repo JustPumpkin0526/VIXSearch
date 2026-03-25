@@ -1,12 +1,20 @@
 """동영상 관련 라우터"""
 import asyncio
 import logging
+import os
 import time
 import aiofiles
 from pathlib import Path
+from typing import Optional
+from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Query, File, UploadFile, Form, BackgroundTasks, Request
 from database.connection import get_db_connection
-from config.settings import VIDEOS_DIR, CONVERTED_VIDEOS_DIR
+from config.settings import (
+    BACKEND_DIR,
+    VIDEOS_DIR,
+    CONVERTED_VIDEOS_DIR,
+    resolve_storage_file_path,
+)
 from utils.helpers import build_file_url
 from utils.video_utils import convert_video_to_mp4, extract_video_metadata
 from services.video_service import upload_to_via_server_background
@@ -21,6 +29,62 @@ def _format_datetime(value):
     if value is None:
         return None
     return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+def _stored_filename_from_video_file_url(file_url: Optional[str]) -> Optional[str]:
+    """DB의 FILE_URL(/video-files/...) 또는 절대 URL에서 저장 파일명 추출."""
+    if not file_url or not str(file_url).strip():
+        return None
+    u = str(file_url).strip().split("?")[0]
+    if "/video-files/" in u:
+        tail = u.split("/video-files/", 1)[-1].lstrip("/")
+        name = os.path.basename(tail) if tail else None
+        return name or None
+    if u.startswith("http://") or u.startswith("https://"):
+        path = (urlparse(u).path or "").split("?")[0]
+        if "/video-files/" in path:
+            tail = path.split("/video-files/", 1)[-1].lstrip("/")
+            name = os.path.basename(tail) if tail else None
+            return name or None
+    name = os.path.basename(u.rstrip("/"))
+    return name if name else None
+
+
+def _paths_to_delete_for_video_row(file_path_str: Optional[str], file_url: Optional[str]) -> list[Path]:
+    """
+    업로드 원본·변환본 삭제 후보 경로 (FILE_PATH 누락/이전 backend 경로/재기동 후 해석 실패 대비).
+    """
+    candidates: list[Path] = []
+    seen: set[str] = set()
+
+    def push(p: Optional[Path]) -> None:
+        if p is None:
+            return
+        try:
+            key = str(p.resolve()).casefold()
+        except OSError:
+            key = str(p).casefold()
+        if key not in seen:
+            seen.add(key)
+            candidates.append(p)
+
+    if file_path_str and str(file_path_str).strip():
+        raw = str(file_path_str).strip()
+        resolved = resolve_storage_file_path(raw)
+        if resolved:
+            push(resolved)
+        push(Path(raw))
+
+    stored_name = _stored_filename_from_video_file_url(file_url)
+    if stored_name:
+        push(VIDEOS_DIR / stored_name)
+        push(BACKEND_DIR / "videos" / stored_name)
+        stem = Path(stored_name).stem
+        push(CONVERTED_VIDEOS_DIR / f"{stem}_converted.mp4")
+        push(CONVERTED_VIDEOS_DIR / f"{stem}.mp4")
+
+    return candidates
+
 
 # 허용된 동영상 확장자
 ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v'}
@@ -189,28 +253,14 @@ async def delete_video(
             )
             # autocommit이 활성화되어 있으므로 명시적 커밋 불필요
         
-        # 파일 삭제 (DB 트랜잭션 외부에서 처리)
-        if file_path_str:
-            file_path = Path(file_path_str)
-            if file_path.exists():
+        # 파일 삭제 (DB 트랜잭션 외부): FILE_PATH 단일 의존 시 누락·경로 불일치로 원본이 남는 경우 방지
+        for path in _paths_to_delete_for_video_row(file_path_str, file_url):
+            if path.is_file():
                 try:
-                    file_path.unlink()
-                    logger.info(f"동영상 파일 삭제: {file_path}")
+                    path.unlink()
+                    logger.info(f"동영상 관련 파일 삭제: {path}")
                 except Exception as e:
-                    logger.warning(f"동영상 파일 삭제 실패 (무시): {e}")
-        
-        # 변환된 파일도 삭제 시도
-        if file_url:
-            original_filename = file_url.replace("/video-files/", "").lstrip("/")
-            base_name = Path(original_filename).stem
-            converted_filename = f"{base_name}.mp4"
-            converted_file_path = CONVERTED_VIDEOS_DIR / converted_filename
-            if converted_file_path.exists():
-                try:
-                    converted_file_path.unlink()
-                    logger.info(f"변환된 동영상 파일 삭제: {converted_file_path}")
-                except Exception as e:
-                    logger.warning(f"변환된 동영상 파일 삭제 실패 (무시): {e}")
+                    logger.warning(f"동영상 파일 삭제 실패 (무시): {path}, {e}")
         
         logger.info(f"동영상 삭제 완료: USER_ID={user_id}, VIDEO_ID={video_id}")
         
@@ -384,9 +434,10 @@ async def convert_video(
             if not row:
                 raise NotFoundException("동영상", str(video_id))
             
-            file_path_str, file_url = row
+            file_path_str, _file_name, file_url = row
         
-        file_path = Path(file_path_str)
+        resolved = resolve_storage_file_path(file_path_str)
+        file_path = resolved if resolved else Path(file_path_str)
         
         if not file_path.exists():
             raise NotFoundException("동영상 파일", file_path_str)
