@@ -740,38 +740,6 @@ function getVideoFileExtension(filename) {
   return filename.toLowerCase().split('.').pop();
 }
 
-// 요약 결과를 한국어로 번역하는 함수
-async function translateSummaryToKorean(text) {
-  if (!text || text.trim().length === 0) {
-    return text;
-  }
-  
-  try {
-    const formData = new FormData();
-    formData.append('text', text);
-    
-    const response = await fetch(`${API_BASE_URL}/translate-to-korean`, {
-      method: 'POST',
-      body: formData
-    });
-    
-    if (!response.ok) {
-      console.warn('번역 API 호출 실패:', response.status);
-      return text; // 번역 실패 시 원본 반환
-    }
-    
-    const data = await response.json();
-    if (data.success && data.translated_text) {
-      return data.translated_text;
-    }
-    
-    return text; // 번역 실패 시 원본 반환
-  } catch (error) {
-    console.warn('번역 중 오류 발생:', error);
-    return text; // 번역 실패 시 원본 반환
-  }
-}
-
 // 지원하지 않는 형식인지 확인하는 함수
 function isUnsupportedFormat(filename) {
   return UNSUPPORTED_VIDEO_FORMATS.includes(getVideoFileExtension(filename));
@@ -834,8 +802,6 @@ async function convertVideoToMp4(videoId, userId, videoObject) {
 }
 
 const METADATA_TIMEOUT = 5000; // 동영상 메타데이터 로드 타임아웃 (ms)
-const CHUNK_SIZE_UPDATE_DELAY = 1000; // chunk_size 업데이트 지연 시간 (ms)
-const AUTO_SAVE_DELAY = 1000; // 자동 저장 지연 시간 (ms)
 
 // ==================== 다국어 지원 ====================
 const summarizeTranslations = {
@@ -1018,7 +984,6 @@ const singleVideo = computed(() => (videoFiles.value.length === 1 ? videoFiles.v
 const progress = ref({});
 const currentTimeMap = ref({}); // 비디오별 현재 재생 시간(초)
 const durationMap = ref({});    // 비디오별 전체 길이(초)
-const dragVideoId = ref(null); // 업로드 영역용 id
 const draggingVideoId = ref(null); // 재생바 스크러빙 중인 비디오 id
 const progressBarRefs = ref({}); // 비디오별 진행바 엘리먼트 참조
 let draggingBarEl = null; // 현재 드래그 중인 진행바 엘리먼트
@@ -1173,7 +1138,7 @@ function addChatMessage(message) {
   scrollChatToBottom();
 }
 
-function updateProgress(videoId, event) {
+function updateProgress(videoId, _event) {
   if (!videoId) return;
   const video = videoRefs.value && videoRefs.value[videoId];
   if (!video) return;
@@ -1670,7 +1635,7 @@ onMounted(async () => {
 });
 
 // summaryVideoStore.videos 변경 감지하여 자동 업데이트
-watch(() => summaryVideoStore.videos, async (newVideos, oldVideos) => {
+watch(() => summaryVideoStore.videos, async (newVideos, _oldVideos) => {
   const userId = localStorage.getItem("vss_user_id");
   if (!userId) {
     return;
@@ -1854,7 +1819,7 @@ function checkAndRestoreMissedResults() {
   });
   
   // 누락된 결과 찾기 및 표시
-  for (const [resultKey, result] of window.__vssTaskResults.entries()) {
+  for (const [_resultKey, result] of window.__vssTaskResults.entries()) {
     // 현재 동영상 목록에 있고, 아직 표시되지 않은 결과만 처리
     if (currentVideoIds.has(result.videoId) && !displayedVideoIds.has(result.videoId)) {
       // 요약 결과를 동영상 객체에 저장
@@ -1894,7 +1859,7 @@ function handleVisibilityChange() {
     
     // 활성화된 작업의 타이머 업데이트
     if (window.__vssActiveTasks && window.__vssActiveTasks.size > 0) {
-      for (const [taskId, taskInfo] of window.__vssActiveTasks.entries()) {
+      for (const [_taskId, taskInfo] of window.__vssActiveTasks.entries()) {
         if (taskInfo.intervals && taskInfo.intervals.length > 0) {
           taskInfo.intervals.forEach(({ loadingId, startTime }) => {
             const loadingIdx = chatMessages.value.findIndex(m => m.id === loadingId);
@@ -2289,7 +2254,7 @@ function handleModalBackgroundClick(event, closeFunction) {
 }
 
 // 확대 모달 비디오 시간 업데이트
-function onZoomTimeUpdate(event) {
+function onZoomTimeUpdate() {
   if (!zoomVideoRef.value) return;
   const video = zoomVideoRef.value;
   if (typeof video.duration !== 'number' || !Number.isFinite(video.duration) || video.duration === 0) return;
@@ -2985,7 +2950,6 @@ async function runInference() {
   if (!prompt.value || String(prompt.value).trim().length === 0) {
     // 사용자에게 입력을 요구하고 실행을 막기 위한 단순 경고
     warningMessage.value = '텍스트를 입력하십시오.';
-    pendingAction = null;
     showWarningModal.value = true;
     return;
   }
@@ -3015,12 +2979,6 @@ async function runInference() {
     loadingIds: [],
     prompt: taskPrompt
   });
-
-  // NaN 방지 헬퍼
-  const safeNum = (val, fallback) => {
-    const n = Number(val);
-    return Number.isFinite(n) ? n : fallback;
-  };
 
   // 진행 상태 집계 표시
   addChatMessage({
@@ -3076,18 +3034,8 @@ async function removeSingleVideo() {
 // 경고 모달 상태/메시지
 const showWarningModal = ref(false);
 const warningMessage = ref('');
-let pendingAction = null; // function to execute if user confirms
-
 function closeWarning() {
   showWarningModal.value = false;
-  warningMessage.value = '';
-  pendingAction = null;
-}
-
-function confirmWarning() {
-  // 단순히 모달을 닫기만 함 (실행 금지)
-  showWarningModal.value = false;
-  pendingAction = null;
   warningMessage.value = '';
 }
 
@@ -3133,7 +3081,6 @@ async function onAsk(q) {
   if (!q || String(q).trim().length === 0) {
     // 사용자에게 입력을 요구하고 실행을 막기 위한 단순 경고
     warningMessage.value = '텍스트를 입력하십시오.';
-    pendingAction = null;
     showWarningModal.value = true;
     return;
   }
@@ -3554,7 +3501,7 @@ async function saveResult() {
   
   // 3. 전역 작업 결과에서 요약 결과 추출
   if (videosWithSummary.length === 0 && window.__vssTaskResults) {
-    for (const [resultKey, result] of window.__vssTaskResults.entries()) {
+    for (const [_resultKey, result] of window.__vssTaskResults.entries()) {
       if (result.summaryText && result.videoId) {
         const video = videoFiles.value.find(v => v.id === result.videoId);
         if (video && !videosWithSummary.find(v => v.id === video.id)) {

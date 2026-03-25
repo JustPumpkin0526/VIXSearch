@@ -36,21 +36,8 @@ class NotFoundException(VSSException):
         super().__init__(status_code=404, detail=detail, error_code=error_code)
 
 
-class UnauthorizedException(VSSException):
-    """인증/인가 관련 예외"""
-    def __init__(self, detail: str = "인증이 필요합니다.", error_code: str = "UNAUTHORIZED"):
-        super().__init__(status_code=401, detail=detail, error_code=error_code)
-
-
 class ForbiddenException(VSSException):
     """권한 부족 예외"""
     def __init__(self, detail: str = "권한이 없습니다.", error_code: str = "FORBIDDEN"):
         super().__init__(status_code=403, detail=detail, error_code=error_code)
 
-
-class ExternalServiceException(VSSException):
-    """외부 서비스 호출 실패 예외"""
-    def __init__(self, service_name: str, detail: Optional[str] = None, error_code: str = "EXTERNAL_SERVICE_ERROR"):
-        if not detail:
-            detail = f"{service_name} 서비스 호출에 실패했습니다."
-        super().__init__(status_code=502, detail=detail, error_code=error_code)

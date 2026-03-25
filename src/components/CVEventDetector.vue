@@ -425,13 +425,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useSettingStore } from '@/stores/settingStore';
-import { getApiBaseUrl, getViaServerUrl, getCVEventDetectorApiUrl } from '@/utils/apiConfig';
+import { getApiBaseUrl } from '@/utils/apiConfig';
 
 const settingStore = useSettingStore();
 const API_BASE_URL = getApiBaseUrl();
-const VIA_SERVER_URL = getViaServerUrl();
 // CV Event Detector API는 백엔드 프록시를 통해 호출
 const CV_EVENT_DETECTOR_API_URL = `${API_BASE_URL}/cv-event-detector`;
 
@@ -809,7 +808,7 @@ function uploadFileWithProgress(file, uploadId) {
             uploadItem.status = settingStore.language === 'ko' ? '완료' : 'Complete';
           }
           resolve(data);
-        } catch (e) {
+        } catch (_e) {
           if (uploadItem) {
             uploadItem.status = settingStore.language === 'ko' ? '실패: 응답 파싱 오류' : 'Failed: Response parse error';
             uploadItem.progress = 0;
@@ -936,7 +935,7 @@ async function removeCurrentVideo() {
   }
 }
 
-function onVideoMetadataLoaded(event) {
+function onVideoMetadataLoaded() {
   if (currentVideo.value && videoRef.value) {
     durationMap.value[currentVideo.value.id] = videoRef.value.duration;
   }
@@ -964,13 +963,6 @@ async function ensurePipeline() {
   if (currentPipelineId.value) {
     return currentPipelineId.value;
   }
-
-  // Detection Classes를 쉼표로 변환
-  const classesArray = parameters.value.detection_classes
-    .split('\n')
-    .map(line => line.trim())
-    .filter(line => line.length > 0);
-  const gdinoprompt = classesArray.join(' . '); // cv_event_detector.py는 ' . '로 구분
 
   // 파이프라인 생성 요청
   const pipelineRequest = {

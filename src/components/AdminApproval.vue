@@ -116,7 +116,7 @@ async function loadPendingUsers() {
       return;
     }
     pendingUsers.value = data.users || [];
-  } catch (e) {
+  } catch (_e) {
     errorMessage.value = "승인 대기 사용자 조회 중 오류가 발생했습니다.";
   } finally {
     isLoading.value = false;
@@ -150,7 +150,7 @@ async function setApproval(userId, approved) {
     }
     pendingUsers.value = pendingUsers.value.filter((u) => u.id !== userId);
     successMessage.value = approved ? "승인 완료." : "반려 처리 완료.";
-  } catch (e) {
+  } catch (_e) {
     errorMessage.value = "승인 처리 중 오류가 발생했습니다.";
   } finally {
     isProcessing.value = false;

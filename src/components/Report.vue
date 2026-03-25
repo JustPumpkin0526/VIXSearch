@@ -561,7 +561,7 @@ const formattedEditingContent = computed(() => {
   try {
     const content = convertBase64ImagesToHtml(editingContent.value);
     return marked.parse(content);
-  } catch (e) {
+  } catch (_e) {
     return editingContent.value;
   }
 });
@@ -2350,7 +2350,7 @@ async function confirmDeleteReport() {
 }
 
 // 전역 클릭 이벤트로 컨텍스트 메뉴 닫기
-function handleGlobalClick(e) {
+function handleGlobalClick() {
   if (!contextMenu.value.visible) return;
   closeContextMenu();
 }

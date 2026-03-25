@@ -2,7 +2,7 @@
 from typing import Optional, Union, List
 import aiohttp
 import logging
-from fastapi import UploadFile, Request
+from fastapi import UploadFile
 from fastapi import HTTPException
 from config.settings import (
     API_BASE_URL, VIA_SERVER_URL, VIA_MODEL_TIMEOUT,
@@ -29,11 +29,6 @@ vss_client = None
 
 # VSS 클래스를 나중에 import (순환 참조 방지)
 VSS = None
-
-def _set_vss_class(vss_class):
-    """VSS 클래스를 설정 (순환 참조 방지)"""
-    global VSS
-    VSS = vss_class
 
 async def get_session():
     """전역 aiohttp 세션 가져오기 또는 생성"""
@@ -406,92 +401,6 @@ async def translate_to_korean(text: str) -> str:
     return text
 
 
-async def translate_to_english(text: str) -> str:
-    """
-    Ollama를 사용하여 텍스트를 영어로 번역
-    
-    Args:
-        text: 번역할 텍스트 (한국어 또는 다른 언어)
-    
-    Returns:
-        영어로 번역된 텍스트 (실패 시 원본 반환)
-    """
-    if not text or not text.strip():
-        return text
-    
-    try:
-        # Ollama API 호출을 위한 프롬프트 구성
-        ollama_prompt = f"Translate the following text to English. Output ONLY the translation without any explanation:\n\n{text}\n\nTranslation:"
-        
-        # Ollama API 호출 (aiohttp 사용) - 번역 전용 모델 사용
-        session = await get_session()
-        ollama_url = f"{OLLAMA_BASE_URL}/api/chat"
-        # 번역 전용 모델 사용 (hy-mt15-translation)
-        translation_model = OLLAMA_TRANSLATION_MODEL
-        payload = {
-            "model": translation_model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a translation machine. Your ONLY output must be the translated text. Never include phrases like 'Sure,', 'Here is the translation', 'Translation:', 'Please', or any explanations. Never add quotation marks. Do not add 'Please' or any polite phrases. Output the translation directly without any preamble or postamble."
-                },
-                {
-                    "role": "user",
-                    "content": ollama_prompt
-                }
-            ],
-            "stream": False,
-            "options": {
-                "temperature": 0.0,  # 번역은 정확성이 중요하므로 낮은 temperature
-                "num_predict": -1  # 최대값: 모델의 컨텍스트 윈도우 크기만큼 생성 (무제한)
-            }
-        }
-        
-        async with session.post(
-            ollama_url,
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=OLLAMA_TIMEOUT)
-        ) as ollama_response:
-            if ollama_response.status == 200:
-                ollama_data = await ollama_response.json()
-                translated_text = ollama_data.get("message", {}).get("content", "")
-                if translated_text:
-                    translated_text = translated_text.strip()
-                    # 혹시 모를 경우를 대비한 최소한의 정리
-                    import re
-                    # 앞뒤 따옴표 제거
-                    translated_text = re.sub(r'^["\'"\u201C\u201D\u2018\u2019]+|["\'"\u201C\u201D\u2018\u2019]+$', '', translated_text)
-                    # 혹시 설명이 포함된 경우 첫 줄 제거
-                    lines = translated_text.split('\n')
-                    if len(lines) > 1:
-                        first_line_lower = lines[0].lower().strip()
-                        if any(keyword in first_line_lower for keyword in ['sure', 'here is', 'translation', '번역']):
-                            translated_text = '\n'.join(lines[1:]).strip()
-                    translated_text = translated_text.strip()
-                    
-                    # "please" 제거 (대소문자 구분 없이)
-                    translated_text = re.sub(r'\b[Pp]lease\b\s*', '', translated_text, flags=re.IGNORECASE)
-                    # 연속된 공백 정리
-                    translated_text = re.sub(r'\s+', ' ', translated_text)
-                    translated_text = translated_text.strip()
-                    
-                    logger.info(f"텍스트 영어 번역 성공: {text[:30]}...")
-                    return translated_text
-                else:
-                    logger.warning("Ollama 응답에 content가 없습니다. 원본 텍스트 사용")
-            else:
-                error_text = await ollama_response.text()
-                logger.warning(f"Ollama API 호출 실패 (HTTP {ollama_response.status}): {error_text}")
-    except aiohttp.ClientConnectorError as e:
-        logger.warning(f"Ollama 서버에 연결할 수 없습니다: {e}")
-        logger.info("Ollama가 실행 중인지 확인하세요: ollama serve")
-    except Exception as e:
-        logger.warning(f"Ollama를 사용한 영어 번역 중 오류 발생: {e}")
-    
-    # 번역 실패한 경우 원본 텍스트 반환
-    return text
-
-
 async def summarize_sentences(sentences: list) -> str:
     """
     여러 문장을 LLM을 사용하여 한 문장으로 요약
@@ -594,101 +503,6 @@ summarize the sentences into one concise sentence"""
     
     # 요약 실패한 경우 공백으로 합친 문장 반환
     return " ".join(filtered_sentences)
-
-
-async def get_text_embedding(text: str) -> Optional[List[float]]:
-    """
-    Ollama를 사용하여 텍스트의 임베딩 벡터를 생성합니다.
-    
-    Args:
-        text: 임베딩을 생성할 텍스트
-    
-    Returns:
-        임베딩 벡터 (리스트) 또는 None (실패 시)
-    """
-    if not text or not text.strip():
-        return None
-    
-    try:
-        session = await get_session()
-        ollama_url = f"{OLLAMA_BASE_URL}/api/embeddings"
-        payload = {
-            "model": OLLAMA_MODEL,
-            "prompt": text.strip()
-        }
-        
-        async with session.post(
-            ollama_url,
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=OLLAMA_TIMEOUT)
-        ) as response:
-            if response.status == 200:
-                data = await response.json()
-                embedding = data.get("embedding")
-                if embedding:
-                    return embedding
-                else:
-                    logger.warning(f"Ollama 임베딩 응답에 embedding이 없습니다: {data}")
-                    return None
-            else:
-                error_text = await response.text()
-                logger.warning(f"Ollama 임베딩 API 호출 실패 (HTTP {response.status}): {error_text}")
-                return None
-    except aiohttp.ClientConnectorError as e:
-        logger.warning(f"Ollama 서버에 연결할 수 없습니다: {e}")
-        return None
-    except Exception as e:
-        logger.warning(f"Ollama 임베딩 생성 중 오류 발생: {e}")
-        return None
-
-
-def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-    """
-    두 벡터 간의 코사인 유사도를 계산합니다.
-    
-    Args:
-        vec1: 첫 번째 벡터
-        vec2: 두 번째 벡터
-    
-    Returns:
-        코사인 유사도 (0.0 ~ 1.0)
-    """
-    if not vec1 or not vec2 or len(vec1) != len(vec2):
-        return 0.0
-    
-    import math
-    dot_product = sum(a * b for a, b in zip(vec1, vec2))
-    magnitude1 = math.sqrt(sum(a * a for a in vec1))
-    magnitude2 = math.sqrt(sum(a * a for a in vec2))
-    
-    if magnitude1 == 0 or magnitude2 == 0:
-        return 0.0
-    
-    return dot_product / (magnitude1 * magnitude2)
-
-
-async def calculate_similarity(text1: str, text2: str) -> float:
-    """
-    두 텍스트 간의 유사도를 계산합니다 (Ollama 임베딩 사용).
-    
-    Args:
-        text1: 첫 번째 텍스트
-        text2: 두 번째 텍스트
-    
-    Returns:
-        유사도 점수 (0.0 ~ 1.0), 실패 시 0.0
-    """
-    if not text1 or not text2:
-        return 0.0
-    
-    embedding1 = await get_text_embedding(text1)
-    embedding2 = await get_text_embedding(text2)
-    
-    if embedding1 and embedding2:
-        return cosine_similarity(embedding1, embedding2)
-    else:
-        logger.warning(f"임베딩 생성 실패: text1={text1[:50]}..., text2={text2[:50]}...")
-        return 0.0
 
 
 # CHUNK_SIZES 정의 (튜플 리스트 형식: (label, value))

@@ -346,7 +346,7 @@ async function sendVerificationCode() {
   
   try {
     await sendCode({ email: email.value.trim() });
-  } catch (err) {
+  } catch (_err) {
     // 에러는 usePost의 onError에서 처리됨
   } finally {
     isSendingCode.value = false;
@@ -367,7 +367,7 @@ async function verifyEmailCode() {
       email: email.value.trim(),
       code: verificationCode.value.trim()
     });
-  } catch (err) {
+  } catch (_err) {
     // 에러는 usePost의 onError에서 처리됨
   } finally {
     isVerifyingCode.value = false;
@@ -398,7 +398,7 @@ async function register() {
       email: email.value.trim(),
       verification_code: emailVerificationEnabled.value ? verificationCode.value.trim() : ""
     });
-  } catch (err) {
+  } catch (_err) {
     // 에러는 usePost의 onError에서 처리됨
   } finally {
     isLoading.value = false;

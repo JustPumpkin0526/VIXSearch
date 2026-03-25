@@ -1,12 +1,9 @@
 """VSS API 메인 애플리케이션"""
 import asyncio
 import sys
-from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import FileResponse
-from starlette.requests import Request
 import logging
 
 # 로깅 설정 먼저 초기화
@@ -34,7 +31,8 @@ def ignore_connection_reset(loop, context):
 
 # 설정 import
 from config.settings import (
-    VIDEOS_DIR, CLIPS_DIR, CONVERTED_VIDEOS_DIR, PROFILE_IMAGES_DIR, SAMPLE_DIR, REPORTS_DIR
+    VIDEOS_DIR, FAST_SEARCH_OUTPUT_DIR, CONVERTED_VIDEOS_DIR, VIDEO_STAGING_DIR,
+    PROFILE_IMAGES_DIR, SAMPLE_DIR, REPORTS_DIR
 )
 
 # 데이터베이스 연결 초기화
@@ -171,9 +169,14 @@ async def vss_exception_handler(request, exc: VSSException):
         }
     )
 
-# Serve generated clips as static files under /clips
-CLIPS_DIR.mkdir(exist_ok=True)
-app.mount("/clips", CORSStaticFiles(directory=str(CLIPS_DIR.resolve())), name="clips")
+# 고속 검색(CV) 출력물 정적 제공 (물리 경로: videos/fast-search-output)
+FAST_SEARCH_OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
+VIDEO_STAGING_DIR.mkdir(exist_ok=True, parents=True)
+app.mount(
+    "/fast-search-output",
+    CORSStaticFiles(directory=str(FAST_SEARCH_OUTPUT_DIR.resolve())),
+    name="fast-search-output",
+)
 
 # Serve uploaded videos as static files under /video-files (API 엔드포인트와 충돌 방지)
 VIDEOS_DIR.mkdir(exist_ok=True)
@@ -237,8 +240,7 @@ logger.info("모든 엔드포인트가 라우터로 마이그레이션되었습�
 if __name__ == "__main__":
     import uvicorn
     import logging
-    import time
-    
+
     # uvicorn access logger에 타임스탬프 포맷 설정
     # uvicorn이 시작되면 자동으로 핸들러가 추가되므로, 핸들러 추가 시 포맷터를 적용하도록 설정
     access_logger = logging.getLogger("uvicorn.access")

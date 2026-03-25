@@ -19,11 +19,10 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.enum.section import WD_SECTION
 from PIL import Image
 import requests
 from moviepy.video.io.VideoFileClip import VideoFileClip
-from config.settings import CLIPS_DIR, VIDEOS_DIR, CONVERTED_VIDEOS_DIR, REPORTS_DIR, API_BASE_URL
+from config.settings import FAST_SEARCH_OUTPUT_DIR, VIDEOS_DIR, CONVERTED_VIDEOS_DIR, REPORTS_DIR, API_BASE_URL
 from database.connection import get_db_connection, verify_user_exists
 from dependencies import verify_user_dependency
 from exceptions import NotFoundException, ValidationException, DatabaseException
@@ -849,7 +848,7 @@ async def add_clips_to_report(
             add_horizontal_line(separator_para)
             
             # 클립 번호 및 제목
-            clip_heading = doc.add_heading(f"{idx}. {clip.title}", level=1)
+            doc.add_heading(f"{idx}. {clip.title}", level=1)
             
             # 시간 정보
             if clip.start_time is not None and clip.end_time is not None:
@@ -1109,7 +1108,6 @@ async def update_report(
                 in_list = False
                 
                 for line in lines:
-                    original_line = line
                     line = line.strip()
                     
                     # 빈 줄 처리
@@ -1133,7 +1131,7 @@ async def update_report(
                         # base64 이미지 추출 (여러 줄에 걸쳐 있을 수 있음)
                         match = re.search(r'data:image/([^;]+);base64,([A-Za-z0-9+/=]+)', line)
                         if match:
-                            img_type, img_data = match.groups()
+                            _, img_data = match.groups()
                             try:
                                 img_bytes = base64.b64decode(img_data)
                                 img_io = io.BytesIO(img_bytes)
@@ -1402,10 +1400,10 @@ def get_video_thumbnail(video_url: str, time_seconds: float = 0.0) -> Optional[b
         # URL을 로컬 파일 경로로 변환 시도
         local_path = None
         
-        # /clips/ URL인 경우
-        if '/clips/' in normalized_url:
-            filename = os.path.basename(normalized_url.split('/clips/')[-1].split('?')[0])  # 쿼리 파라미터 제거
-            local_path = CLIPS_DIR / filename
+        # /fast-search-output/ URL인 경우 (고속 검색 CV 출력)
+        if '/fast-search-output/' in normalized_url:
+            filename = os.path.basename(normalized_url.split('/fast-search-output/')[-1].split('?')[0])
+            local_path = FAST_SEARCH_OUTPUT_DIR / filename
         # /video-files/ URL인 경우
         elif '/video-files/' in normalized_url:
             filename = os.path.basename(normalized_url.split('/video-files/')[-1].split('?')[0])  # 쿼리 파라미터 제거

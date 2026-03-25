@@ -5,7 +5,6 @@ from .connection import (
     cursor,
     ensure_db_connection,
     verify_user_exists,
-    validate_video_ownership,
     get_db_connection,
     DBConnectionContext
 )
@@ -16,7 +15,6 @@ __all__ = [
     'cursor',
     'ensure_db_connection',
     'verify_user_exists',
-    'validate_video_ownership',
     'get_db_connection',
     'DBConnectionContext'
 ]

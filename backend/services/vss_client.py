@@ -25,7 +25,7 @@ class VSS:
         self.model = None
         self.f_count = 0
 
-    async def check_response(self, response, json_format=True):
+    async def check_response(self, response):
         logger.debug(f"Response Status Code: {response.status}")
         if response.status == 200:
             try:

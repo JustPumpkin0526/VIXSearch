@@ -221,11 +221,10 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useSettingStore } from '@/stores/settingStore';
-import { getApiBaseUrl, getViaServerUrl } from '@/utils/apiConfig';
+import { getViaServerUrl } from '@/utils/apiConfig';
 import { marked } from 'marked';
 
 const settingStore = useSettingStore();
-const API_BASE_URL = getApiBaseUrl();
 const VIA_SERVER_URL = getViaServerUrl();
 
 const alerts = ref([]);

@@ -192,34 +192,12 @@ def verify_user_exists(user_id: str):
     사용자 존재 확인 (Deprecated)
     
     ⚠️ 경고: 이 함수는 하위 호환성을 위해 유지됩니다.
-    새로운 코드에서는 dependencies.verify_user_dependency를 사용하세요.
+    새로운 엔드포인트에서는 `dependencies.verify_user_dependency` 사용을 권장합니다.
     """
     with get_db_connection() as local_cursor:
         local_cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
         if not local_cursor.fetchone():
             raise NotFoundException("사용자", user_id)
-
-
-def validate_video_ownership(video_id: str, user_id: str, via_video_id: bool = False):
-    """
-    동영상 소유권 확인 (Deprecated)
-    
-    ⚠️ 경고: 이 함수는 하위 호환성을 위해 유지됩니다.
-    새로운 코드에서는 dependencies.verify_video_ownership을 사용하세요.
-    """
-    with get_db_connection() as local_cursor:
-        if via_video_id:
-            local_cursor.execute(
-                "SELECT ID FROM vss_videos WHERE VIDEO_ID = ? AND USER_ID = ?",
-                (video_id, user_id)
-            )
-        else:
-            local_cursor.execute(
-                "SELECT ID FROM vss_videos WHERE ID = ? AND USER_ID = ?",
-                (video_id, user_id)
-            )
-        if not local_cursor.fetchone():
-            raise NotFoundException("동영상", str(video_id))
 
 
 class DBConnectionContext:
@@ -230,7 +208,7 @@ class DBConnectionContext:
         self.cursor = self.conn.cursor()
         return self.cursor
     
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, _exc_type, _exc_val, _exc_tb):
         # autocommit이 활성화되어 있으므로 명시적 커밋 불필요
         db_pool.return_connection(self.conn)
 

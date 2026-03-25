@@ -271,7 +271,7 @@ const translations = {
         description: "동영상에서 원하는 장면을 검색하는 방법:",
         step1: "검색할 동영상을 선택하세요 (하나 이상)",
         step2: "우클릭 메뉴에서 '검색'을 선택하거나, 우측 사이드바를 열어 검색창을 사용하세요",
-        step3: "검색할 장면에 대한 설명을 입력하고 Enter를 누르면 해당 장면의 클립이 생성됩니다"
+        step3: "검색할 장면에 대한 설명을 입력하고 Enter를 누르면 원본 동영상에서 해당 구간이 재생됩니다"
       }
     },
     summarizeGuide: {
@@ -423,7 +423,7 @@ const translations = {
         description: "How to search for scenes in videos:",
         step1: "Select videos to search (one or more)",
         step2: "Choose 'Search' from the right-click menu or open the right sidebar to use the search box",
-        step3: "Enter a description of the scene you want to search and press Enter to generate clips of that scene"
+        step3: "Enter a description of the scene you want to search and press Enter to play that segment in the original video"
       }
     },
     summarizeGuide: {

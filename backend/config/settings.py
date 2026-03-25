@@ -7,7 +7,8 @@ from typing import Optional
 try:
     from dotenv import load_dotenv
     # 프로젝트 루트 기준 상대 경로에서 .env 파일 로드
-    env_path = Path(__file__).resolve().parents[3] / ".env"
+    # backend/config/settings.py -> 프로젝트 루트는 parents[2]
+    env_path = Path(__file__).resolve().parents[2] / ".env"
     if env_path.exists():
         load_dotenv(env_path)
     else:
@@ -66,7 +67,8 @@ FILTERED_CLIP_PATH = os.getenv("FILTERED_CLIP_PATH", "/tmp/alert-media-dir")
 ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'}
 ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 FILE_BUFFER_SIZE = 16 * 1024 * 1024  # 16MB (업로드 성능 최적화)
-CLIP_CLEANUP_AGE = 86400  # 클립 파일 정리 기준 시간 (24시간, 초)
+# 고속 검색(CV) 임시 출력물 정리 기준 (초)
+FAST_SEARCH_OUTPUT_MAX_AGE = 86400
 UNSUPPORTED_VIDEO_FORMATS = {'.avi', '.mkv', '.flv', '.wmv'}  # 변환이 필요한 비디오 형식 (브라우저 호환성을 위해 .avi도 변환 필요)
 
 # ==================== 타임아웃 설정 ====================
@@ -136,13 +138,16 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", SMTP_USER)
 
 # ==================== 디렉토리 경로 ====================
+# 동영상 관련 디렉터리는 모두 videos/ 아래에 둡니다.
 BASE_DIR = Path(__file__).parent.parent
 VIDEOS_DIR = BASE_DIR / "videos"
-CLIPS_DIR = BASE_DIR / "clips"
-CONVERTED_VIDEOS_DIR = BASE_DIR / "converted-videos"
+CONVERTED_VIDEOS_DIR = VIDEOS_DIR / "converted-videos"
+FAST_SEARCH_OUTPUT_DIR = VIDEOS_DIR / "fast-search-output"
+# 업로드 처리·VIA 전송용 임시 파일 (고속 검색 출력물과 분리)
+VIDEO_STAGING_DIR = VIDEOS_DIR / "staging"
 PROFILE_IMAGES_DIR = BASE_DIR / "profile-images"
 REPORTS_DIR = BASE_DIR / "reports"
-TMP_DIR = BASE_DIR / "tmp"
 LOGS_DIR = BASE_DIR / "logs"
-SAMPLE_DIR = BASE_DIR.parent / "assets" / "sample"
+# Vue 정적 자산 (프론트는 루트의 src/)
+SAMPLE_DIR = BASE_DIR.parent / "src" / "assets" / "sample"
 
