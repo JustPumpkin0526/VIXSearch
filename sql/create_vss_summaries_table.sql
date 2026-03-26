@@ -15,5 +15,5 @@ CREATE TABLE `vss_summaries` (
 )
 COLLATE='utf8mb4_unicode_ci'
 ENGINE=InnoDB
-AUTO_INCREMENT=159
+AUTO_INCREMENT=1333
 ;
