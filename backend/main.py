@@ -85,11 +85,10 @@ class CORSStaticFiles(StaticFiles):
                                 if not content_type_set:
                                     headers.append([b"content-type", content_type.encode()])
                     
-                    # CORS 헤더 추가
+                    # CORS 헤더 (* 와 credentials 동시 사용은 스펙 위반이라 브라우저가 미디어 CORS를 거부할 수 있음)
                     headers.append([b"access-control-allow-origin", b"*"])
                     headers.append([b"access-control-allow-methods", b"GET, HEAD, OPTIONS"])
                     headers.append([b"access-control-allow-headers", b"*"])
-                    headers.append([b"access-control-allow-credentials", b"true"])
                     message["headers"] = headers
                 await send(message)
             
