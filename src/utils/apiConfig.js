@@ -9,23 +9,18 @@
  * @returns {string} API 기본 URL
  */
 export function getApiBaseUrl() {
-  // 환경 변수가 명시적으로 설정되어 있고 localhost가 아닌 경우에만 사용
   const envUrl = import.meta.env.VITE_API_BASE_URL;
   console.log('[apiConfig] VITE_API_BASE_URL 환경 변수:', envUrl);
-  
-  // localhost나 127.0.0.1이 아닌 경우에만 환경 변수 사용
-  if (envUrl && envUrl.trim() !== '' && 
-      !envUrl.includes('localhost') && 
-      !envUrl.includes('127.0.0.1') &&
-      !envUrl.includes('0.0.0.0')) {
-    console.log('[apiConfig] 환경 변수 사용:', envUrl);
-    return envUrl;
+
+  // .env에 명시된 값은 그대로 사용 (localhost 포함). 다른 PC에서 API IP만 바꾸면 됨.
+  if (envUrl && String(envUrl).trim() !== '') {
+    const u = String(envUrl).trim();
+    console.log('[apiConfig] VITE_API_BASE_URL 사용:', u);
+    return u;
   }
-  
-  // 기본값: 172.16.15.69:8001 (API 서버 기본 위치)
-  // localhost 환경 변수는 무시하고 항상 172.16.15.69 사용
-  const defaultUrl = "http://localhost:8001";
-  console.log('[apiConfig] 기본값 사용 (localhost 환경 변수 무시):', defaultUrl);
+
+  const defaultUrl = 'http://localhost:8001';
+  console.log('[apiConfig] VITE_API_BASE_URL 없음 — 기본값:', defaultUrl);
   return defaultUrl;
 }
 
