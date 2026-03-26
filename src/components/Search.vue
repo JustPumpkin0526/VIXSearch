@@ -83,7 +83,6 @@
             <div v-else 
               ref="videoListGridRef"
               class="relative w-full [column-fill:balance]"
-              :key="`video-list-${videoListKey}`" 
               :style="{
                 columnCount: videoListColumns,
                 columnGap: '1rem'
@@ -143,7 +142,7 @@
                   v-else-if="video.displayUrl && !isImageFile(video) && (!isUnsupportedFormat(video.title || '') || video.displayUrl?.includes('converted-videos'))" 
                   :src="encodeVideoUrl(video.displayUrl)" 
                   class="absolute inset-0 w-full h-full object-cover"
-                  :preload="video.duration ? 'none' : 'metadata'"
+                  preload="metadata"
                   draggable="false"
                   muted
                   playsinline
@@ -1866,7 +1865,6 @@ const videoListColumns = computed(() => {
 
 // 페이지네이션 관련
 const videoListCurrentPage = ref(1);
-const videoListKey = ref(0); // 리스트 강제 리렌더링을 위한 키
 // 드래그 선택 관련
 const videoListContainerRef = ref(null);
 const videoListGridRef = ref(null);
@@ -5034,48 +5032,38 @@ function getClipThumbnailUrl(clip) {
 }
 
 /**
- * URL의 파일명 부분을 인코딩하여 특수 문자(#, [, ] 등) 문제 해결
- * @param {string} url - 인코딩할 URL
- * @returns {string} 인코딩된 URL
+ * API 베이스와 결합한 절대 URL을 반환합니다.
+ * 한글 등 비ASCII 경로는 URL 생성자가 UTF-8 % 인코딩으로 직렬화합니다.
+ * (구현: pathname 마지막만 encodeURIComponent 하면 이미 % 인코딩된 세그먼트가 이중 인코딩되어 404가 납니다.)
+ * @param {string} url - 상대 또는 절대 URL
+ * @returns {string} 인코딩된 절대 URL
  */
 function encodeVideoUrl(url) {
   if (!url) return '';
-  
-  // blob URL은 그대로 반환
+
   if (url.startsWith('blob:')) {
     return url;
   }
-  
-  // localhost나 127.0.0.1을 최신 API_BASE_URL로 교체
+
   let processedUrl = url;
   if (url.includes('localhost:8001') || url.includes('127.0.0.1:8001')) {
     const currentApiBaseUrl = getApiBaseUrl();
-    // localhost를 현재 API_BASE_URL로 교체
     processedUrl = url.replace(/https?:\/\/localhost:8001/g, currentApiBaseUrl)
-                      .replace(/https?:\/\/127\.0\.0\.1:8001/g, currentApiBaseUrl);
+      .replace(/https?:\/\/127\.0\.0\.1:8001/g, currentApiBaseUrl);
   }
-  
-  // 상대 경로인 경우 최신 API_BASE_URL 가져오기
-  let absoluteUrl = processedUrl;
-  if (processedUrl.startsWith('/')) {
-    const currentApiBaseUrl = getApiBaseUrl();
-    absoluteUrl = `${currentApiBaseUrl}${processedUrl}`;
-  }
-  
+
+  const base = getApiBaseUrl();
+  const baseForResolve = base.endsWith('/') ? base : `${base}/`;
+
   try {
-    // URL 객체로 파싱
-    const urlObj = new URL(absoluteUrl);
-    // 경로를 분리하여 파일명 부분만 인코딩
-    const pathParts = urlObj.pathname.split('/');
-    const filename = pathParts[pathParts.length - 1];
-    if (filename) {
-      // 파일명 부분만 인코딩 (특수 문자 처리)
-      pathParts[pathParts.length - 1] = encodeURIComponent(filename);
-      urlObj.pathname = pathParts.join('/');
+    if (processedUrl.startsWith('/')) {
+      return new URL(processedUrl, baseForResolve).href;
     }
-    return urlObj.toString();
+    if (processedUrl.startsWith('http://') || processedUrl.startsWith('https://')) {
+      return new URL(processedUrl).href;
+    }
+    return processedUrl;
   } catch (e) {
-    // URL 파싱 실패 시 원본 반환
     console.warn('[encodeVideoUrl] URL 파싱 실패:', url, e);
     return url;
   }
@@ -5552,10 +5540,7 @@ function removeVideoFromList(videoId) {
     }
   });
   
-  // 리스트 강제 리렌더링
-  videoListKey.value += 1;
-  
-  // 페이지네이션 조정
+  // 페이지네이션 조정 (부모 key로 그리드 전체를 강제 리마운트하지 않음 — 남은 카드의 썸네일 유지)
   nextTick(() => {
     if (videoListTotalPages.value > 0 && videoListCurrentPage.value > videoListTotalPages.value) {
       videoListCurrentPage.value = videoListTotalPages.value;
@@ -5563,9 +5548,6 @@ function removeVideoFromList(videoId) {
     if (paginatedVideoListItems.value.length === 0 && videoListCurrentPage.value > 1) {
       videoListCurrentPage.value = Math.max(1, videoListCurrentPage.value - 1);
     }
-    videoListKey.value += 1;
-    
-    // 상태 저장
     updateCurrentChatVideoList();
     autoSaveSearchState();
   });
@@ -6642,13 +6624,6 @@ onActivated(async () => {
 // composable은 setup 스크립트 최상위에서 호출해야 함
 // items는 globalVideoList의 computed이므로, globalVideoList를 직접 업데이트해야 함
 useVideoSync(globalVideoList, selectedIds, chatSessions, {
-  updateVideoList: () => {
-    // globalVideoList가 이미 useVideoSync에서 업데이트되었으므로 리렌더링만 수행
-    videoListKey.value += 1;
-    nextTick(() => {
-      videoListKey.value += 1;
-    });
-  },
   updateChatSessions: (deletedIds, deletedDbIds) => {
     // 채팅 세션에서 삭제된 비디오 제거
     chatSessions.value.forEach(chat => {

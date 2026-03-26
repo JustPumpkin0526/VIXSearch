@@ -683,7 +683,7 @@ import { getApiBaseUrl } from '@/utils/apiConfig';
 // ==================== 상수 정의 ====================
 const API_BASE_URL = getApiBaseUrl();
 
-/** Search와 동일: 미디어 URL 파일명 인코딩 및 API 호스트 정규화 */
+/** Search와 동일: API 호스트 정규화 + URL 생성자로 경로 직렬화(한글·% 인코딩 이중 적용 방지) */
 function encodeVideoUrl(url) {
   if (!url) return '';
   if (url.startsWith('blob:')) return url;
@@ -693,19 +693,16 @@ function encodeVideoUrl(url) {
     processedUrl = url.replace(/https?:\/\/localhost:8001/g, currentApiBaseUrl)
       .replace(/https?:\/\/127\.0\.0\.1:8001/g, currentApiBaseUrl);
   }
-  let absoluteUrl = processedUrl;
-  if (processedUrl.startsWith('/')) {
-    absoluteUrl = `${getApiBaseUrl()}${processedUrl}`;
-  }
+  const base = getApiBaseUrl();
+  const baseForResolve = base.endsWith('/') ? base : `${base}/`;
   try {
-    const urlObj = new URL(absoluteUrl);
-    const pathParts = urlObj.pathname.split('/');
-    const filename = pathParts[pathParts.length - 1];
-    if (filename) {
-      pathParts[pathParts.length - 1] = encodeURIComponent(filename);
-      urlObj.pathname = pathParts.join('/');
+    if (processedUrl.startsWith('/')) {
+      return new URL(processedUrl, baseForResolve).href;
     }
-    return urlObj.toString();
+    if (processedUrl.startsWith('http://') || processedUrl.startsWith('https://')) {
+      return new URL(processedUrl).href;
+    }
+    return processedUrl;
   } catch (e) {
     console.warn('[Summarize encodeVideoUrl] URL 파싱 실패:', url, e);
     return url;
