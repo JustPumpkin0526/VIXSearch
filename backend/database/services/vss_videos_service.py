@@ -150,6 +150,28 @@ class VSSVideoService:
             "success": True,
             "videos": list(result)
         }
+    
+    @staticmethod
+    def find_by_filename(user_id: str, filename: str):
+        """Find a video by exact filename for a user (manages DB session)."""
+        try:
+            from database.db.connection import get_db_connection
+            with get_db_connection() as db:
+                return VideoRepository.get_by_user_and_filename(user_id, filename, db)
+        except Exception:
+            logger.exception(f"find_by_filename failed for user_id={user_id} filename={filename}")
+            return None
+
+    @staticmethod
+    def find_partial_by_filename(user_id: str, filename_fragment: str):
+        """Find a video by partial filename match for a user (manages DB session)."""
+        try:
+            from database.db.connection import get_db_connection
+            with get_db_connection() as db:
+                return VideoRepository.find_partial_by_filename(user_id, filename_fragment, db)
+        except Exception:
+            logger.exception(f"find_partial_by_filename failed for user_id={user_id} fragment={filename_fragment}")
+            return None
         
     @staticmethod
     def delete_video(video_id: int, user_id: str):

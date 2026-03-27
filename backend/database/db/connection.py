@@ -1,9 +1,4 @@
 """데이터베이스 연결 관리"""
-# import mariadb
-# import re
-# import threading
-# from queue import Queue, Empty
-
 import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -34,11 +29,8 @@ from contextlib import contextmanager
 
 @contextmanager
 def get_db_connection():
-    """Return a SQLAlchemy `Session` from `SessionLocal`.
-
-    This function yields a plain `Session` (no DB-API cursor compatibility).
-    Repositories and services should use SQLAlchemy ORM APIs only.
-    """
+    """ORM 세션을 제공하는 컨텍스트 매니저. with 블록이 끝나면 자동으로 커밋 또는 롤백 후 세션 종료."""
+    """기존 cursor를 사용하는 raw 방식에서 안정성과 편의성을 높인 SQLAlchemy ORM 방식으로 전환."""
     session = SessionLocal()
     try:
         yield session

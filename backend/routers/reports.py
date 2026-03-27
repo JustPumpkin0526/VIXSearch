@@ -401,17 +401,34 @@ async def create_word_report(request: CreateWordReportRequest):
                     img_byte_arr = io.BytesIO()
                     image.save(img_byte_arr, format='PNG')
                     img_byte_arr.seek(0)
-                    
+
                     # 이미지 단락에 들여쓰기 추가
                     img_para = doc.add_paragraph()
                     img_para.paragraph_format.left_indent = Inches(0.5)
                     img_para.paragraph_format.space_before = Pt(6)
                     img_para.paragraph_format.space_after = Pt(12)
-                    
-                    # 이미지를 단락에 추가
+
+                    # 이미지를 단락에 추가 (BytesIO로 실패하면 임시 파일로 재시도)
                     run = img_para.add_run()
-                    run.add_picture(img_byte_arr, width=Inches(max_width))
-                    logger.info(f"✅ 썸네일 이미지 추가 성공 (클립 {idx})")
+                    try:
+                        run.add_picture(img_byte_arr, width=Inches(max_width))
+                        logger.info(f"✅ 썸네일 이미지 추가 성공 (클립 {idx})")
+                    except Exception as pic_err:
+                        logger.warning(f"run.add_picture(BytesIO) 실패, 임시 파일로 재시도: {pic_err}")
+                        try:
+                            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
+                                tmp_img.write(img_byte_arr.getvalue())
+                                tmp_path = tmp_img.name
+                            run.add_picture(tmp_path, width=Inches(max_width))
+                            logger.info(f"✅ 썸네일 이미지 추가 성공 (임시파일) (클립 {idx})")
+                        except Exception as tmp_err:
+                            logger.warning(f"임시 파일로도 이미지 추가 실패: {tmp_err}")
+                        finally:
+                            try:
+                                if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                                    os.unlink(tmp_path)
+                            except Exception:
+                                pass
                 except Exception as e:
                     logger.warning(f"이미지 추가 실패 (클립 {idx}): {e}")
                     import traceback
@@ -839,10 +856,26 @@ async def add_clips_to_report(
                     img_byte_arr = io.BytesIO()
                     image.save(img_byte_arr, format='PNG')
                     img_byte_arr.seek(0)
-                    
-                    doc.add_picture(img_byte_arr, width=Inches(max_width))
-                    logger.info("✅ 썸네일 이미지 추가 성공 (클립 추가)")
-                    
+                    try:
+                        doc.add_picture(img_byte_arr, width=Inches(max_width))
+                        logger.info("✅ 썸네일 이미지 추가 성공 (클립 추가)")
+                    except Exception as pic_err:
+                        logger.warning(f"doc.add_picture(BytesIO) 실패, 임시 파일로 재시도: {pic_err}")
+                        try:
+                            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
+                                tmp_img.write(img_byte_arr.getvalue())
+                                tmp_path = tmp_img.name
+                            doc.add_picture(tmp_path, width=Inches(max_width))
+                            logger.info("✅ 썸네일 이미지 추가 성공 (임시파일, 클립 추가)")
+                        except Exception as tmp_err:
+                            logger.warning(f"임시 파일로도 이미지 추가 실패 (클립 추가): {tmp_err}")
+                        finally:
+                            try:
+                                if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                                    os.unlink(tmp_path)
+                            except Exception:
+                                pass
+
                     img_byte_arr.seek(0)
                     clip_images.append(base64.b64encode(img_byte_arr.read()).decode('utf-8'))
                 except Exception as e:
