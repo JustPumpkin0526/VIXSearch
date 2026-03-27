@@ -6,10 +6,14 @@ orchestrate logic and map ORM objects to the tuple shapes expected by routers.
 import json
 import logging
 from typing import Optional, Tuple
+
 from database.db.connection import get_db_connection
-from database.repositories.vss_reports_repo import ReportRepository
+
 from ..orm.vss_reports import VSSReport
+from database.repositories.vss_reports_repo import ReportRepository
 from database.repositories.vss_user_repo import UserRepository
+from database.services.vss_file_service import FileService
+
 
 logger = logging.getLogger(__name__)
 
@@ -82,3 +86,42 @@ class ReportService:
             if not r:
                 raise Exception("보고서를 찾을 수 없습니다.")
             ReportRepository.update_content_and_videos(r, content, description, word_count, video_ids_json, video_titles_json, db)
+
+    @staticmethod
+    def create_word_report(user_id: str, title: str, author: str, description: str, query: str, clips: list):
+        """문서(Word) 생성 -> DB 저장 -> 파일 확정. 라우터에서 호출할 수 있는 클래스 메서드.
+
+        clips: list of dict-like objects expected by document service.
+        """
+        try:
+            # import here to avoid top-level circular imports
+            from database.services.vss_document_service import DocumentService
+
+            doc, report_content, word_count, thumbs = DocumentService.create_word_document(user_id, title, author, description, query, clips)
+
+            # DB에 저장
+            report_id = ReportService.create_report(user_id, title, description, report_content, word_count, None, None)
+
+            # 파일 저장 및 확정
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip().replace(' ', '_')[:50]
+            final_path, final_filename = FileService.save_docx_temp_and_finalize(doc, report_id=report_id, safe_title=safe_title)
+
+            return {
+                'report_id': report_id,
+                'file_path': final_path,
+                'file_name': final_filename,
+                'file_url': f"/reports-files/{final_filename}",
+                'word_count': word_count,
+                'thumbs': thumbs
+            }
+        except Exception as e:
+            logger.error(f"create_word_report 실패: {e}")
+            raise
+
+    @staticmethod
+    def find_file_for_report(report_id: int) -> Optional[str]:
+        return FileService.find_report_file(report_id)
+
+    @staticmethod
+    def delete_report_files(report_id: int):
+        return FileService.delete_report_files(report_id)
