@@ -952,12 +952,8 @@
                     v-else-if="video.displayUrl && !isImageFile(video) && (!isUnsupportedFormat(video.title || '') || video.displayUrl?.includes('converted-videos'))" 
                     :src="encodeVideoUrl(video.displayUrl)" 
                     class="w-[clamp(4rem,12vw,6rem)] h-[clamp(3rem,9vw,4rem)] object-cover rounded flex-shrink-0"
-<<<<<<< HEAD
                     crossorigin="anonymous"
                     preload="metadata"
-=======
-                    :preload="video.duration ? 'none' : 'metadata'"
->>>>>>> 722d0e7be5f6318302a5e13987861cf3df4f1f5a
                     draggable="false"
                     @loadedmetadata="(e) => { if (e.target && isFinite(e.target.duration) && e.target.duration > 0 && !video.duration) video.duration = e.target.duration; }"
                   ></video>
