@@ -122,7 +122,7 @@ DEFAULT_QUERY_TOP_K = 80
 
 # ==================== 데이터베이스 설정 ====================
 # 외부 접속 지원: localhost를 기본값으로 사용 (같은 서버에서 실행되는 경우)
-DB_HOST = os.getenv("DB_HOST", "172.16.15.69")
+DB_HOST = os.getenv("DB_HOST", "172.16.15.27")
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")  # 환경 변수에서 로드 (필수)
 DB_PORT = int(os.getenv("DB_PORT", "3306"))

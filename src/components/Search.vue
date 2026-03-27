@@ -124,7 +124,6 @@
                   v-if="isImageFile(video) && video.displayUrl"
                   :src="encodeVideoUrl(video.displayUrl)"
                   class="absolute inset-0 w-full h-full object-cover"
-                  crossorigin="anonymous"
                   loading="lazy"
                   draggable="false"
                   alt=""
@@ -146,6 +145,7 @@
                   class="absolute inset-0 w-full h-full object-cover"
                   crossorigin="anonymous"
                   preload="metadata"
+
                   draggable="false"
                   muted
                   playsinline
@@ -354,7 +354,6 @@
                         class="w-[clamp(5rem,15vw,8rem)] h-[clamp(3.5rem,10vw,5rem)] object-cover rounded flex-shrink-0"
                         loading="lazy"
                         @error="(e) => handleChatVideoError(video, e)"
-                        crossorigin="anonymous"
                         draggable="false"
                         alt=""
                       />
@@ -373,7 +372,6 @@
                         class="w-32 h-20 object-cover rounded flex-shrink-0"
                         @error="(e) => handleChatVideoError(video, e)"
                         @loadedmetadata="(e) => { if (e.target && isFinite(e.target.duration) && e.target.duration > 0) video.duration = e.target.duration; }"
-                        crossorigin="anonymous"
                         preload="metadata"
                         draggable="false"
                       ></video>
@@ -403,7 +401,7 @@
                         @click.stop="zoomClip(clip)"
                         @error="(e) => console.warn('clip thumbnail error', e, clip)"
                         @loadedmetadata="(e) => { if (e.target && clip.start_time !== undefined) e.target.currentTime = Math.max(0.1, clip.start_time || 0.1); else if (e.target) e.target.currentTime = 0.1; }"
-                        crossorigin="anonymous"></video>
+                      ></video>
                       <div class="flex-1 min-w-0">
                         <p
                           :class="message.role === 'assistant' ? 'text-sm font-medium text-gray-800 dark:text-gray-200 break-words line-clamp-2' : 'text-sm font-medium text-white break-words line-clamp-2'">
@@ -937,7 +935,6 @@
                     v-if="isImageFile(video) && video.displayUrl"
                     :src="encodeVideoUrl(video.displayUrl)"
                     class="w-[clamp(4rem,12vw,6rem)] h-[clamp(3rem,9vw,4rem)] object-cover rounded flex-shrink-0"
-                    crossorigin="anonymous"
                     loading="lazy"
                     draggable="false"
                     alt=""
@@ -955,8 +952,12 @@
                     v-else-if="video.displayUrl && !isImageFile(video) && (!isUnsupportedFormat(video.title || '') || video.displayUrl?.includes('converted-videos'))" 
                     :src="encodeVideoUrl(video.displayUrl)" 
                     class="w-[clamp(4rem,12vw,6rem)] h-[clamp(3rem,9vw,4rem)] object-cover rounded flex-shrink-0"
+<<<<<<< HEAD
                     crossorigin="anonymous"
                     preload="metadata"
+=======
+                    :preload="video.duration ? 'none' : 'metadata'"
+>>>>>>> 722d0e7be5f6318302a5e13987861cf3df4f1f5a
                     draggable="false"
                     @loadedmetadata="(e) => { if (e.target && isFinite(e.target.duration) && e.target.duration > 0 && !video.duration) video.duration = e.target.duration; }"
                   ></video>
@@ -1034,7 +1035,7 @@
                   @mouseenter="hoveredVideoId = zoomedVideo?.id" @mouseleave="hoveredVideoId = null">
                   <!-- 동영상인 경우 -->
                   <video v-if="zoomedVideo" ref="zoomVideoRef" :src="encodeVideoUrl(zoomedVideo.displayUrl)"
-                    class="object-cover w-full h-full" preload="metadata" crossorigin="anonymous"
+                    class="object-cover w-full h-full" preload="metadata"
                     @timeupdate="onZoomTimeUpdate($event)"
                     @error="(e) => handleZoomVideoError(zoomedVideo.id, e)"
                     draggable="false"></video>
