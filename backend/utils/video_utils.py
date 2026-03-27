@@ -3,10 +3,33 @@ import re
 import logging
 import subprocess
 import threading
-from moviepy.video.io.VideoFileClip import VideoFileClip
-from database.connection import conn, cursor, ensure_db_connection
 
 logger = logging.getLogger(__name__)
+_VIDEOFILECLIP_IMPORT_FAILED = False
+
+def get_VideoFileClip():
+    """Return the VideoFileClip class from installed moviepy version.
+
+    Tries multiple import paths to support moviepy 2.x and older releases.
+    Raises ImportError if none available.
+    """
+    try:
+        # moviepy 2.x
+        from moviepy import VideoFileClip as VFC
+        return VFC
+    except Exception:
+        try:
+            # older moviepy
+            from moviepy.editor import VideoFileClip as VFC
+            return VFC
+        except Exception:
+            try:
+                # fallback internal path
+                from moviepy.video.io.VideoFileClip import VideoFileClip as VFC
+                return VFC
+            except Exception as e:
+                raise ImportError("moviepy VideoFileClip import failed: " + str(e))
+from database.repositories.vss_videos_repo import VideoRepository
 
 # 동시 메타데이터 추출 작업 제한 (최대 1개만 동시 실행)
 _metadata_extraction_semaphore = threading.Semaphore(1)
@@ -394,22 +417,37 @@ def extract_video_metadata(file_path: str, video_id: int, filename: str):
         
         logger.info(f"메타데이터 추출 시작: {filename} (ID: {video_id})")
         
-        video = VideoFileClip(str(file_path))
-        width = int(video.w) if video.w else None
-        height = int(video.h) if video.h else None
-        duration = float(video.duration) if video.duration else None
+        try:
+            VFC = get_VideoFileClip()
+        except ImportError as ie:
+            logger.warning(f"Video metadata extraction skipped: {ie}")
+            return
+
+        video = VFC(str(file_path))
+        try:
+            # moviepy API differences: prefer .size then .w/.h
+            if hasattr(video, 'size') and video.size:
+                width, height = int(video.size[0]), int(video.size[1])
+            else:
+                width = int(video.w) if getattr(video, 'w', None) else None
+                height = int(video.h) if getattr(video, 'h', None) else None
+            duration = float(video.duration) if getattr(video, 'duration', None) else None
+        finally:
+            try:
+                video.close()
+            except Exception:
+                pass
         video.close()
         
-        # 메타데이터 업데이트
-        ensure_db_connection()
-        cursor.execute(
-            """UPDATE vss_videos 
-               SET WIDTH = ?, HEIGHT = ?, DURATION = ? 
-               WHERE ID = ?""",
-            (width, height, duration, video_id)
-        )
-        conn.commit()
-        logger.info(f"동영상 메타데이터 업데이트 완료: {filename} (ID: {video_id}), 해상도: {width}x{height}, 길이: {duration:.1f}s")
+        # 메타데이터 업데이트 (ORM 세션 사용)
+        try:
+            ok = VideoRepository.update_metadata(video_id, width, height, duration)
+            if ok:
+                logger.info(f"동영상 메타데이터 업데이트 완료: {filename} (ID: {video_id}), 해상도: {width}x{height}, 길이: {duration:.1f}s")
+            else:
+                logger.warning(f"동영상 메타데이터 업데이트 실패: {filename} (ID: {video_id})")
+        except Exception as e:
+            logger.warning(f"동영상 메타데이터 업데이트 실패: {e}")
     except Exception as e:
         logger.warning(f"동영상 메타데이터 추출 실패: {e}")
     finally:

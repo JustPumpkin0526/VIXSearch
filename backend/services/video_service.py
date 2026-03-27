@@ -1,8 +1,9 @@
 """동영상 서비스"""
 import logging
 from pathlib import Path
-from database.connection import conn, cursor, ensure_db_connection
+from database.db.connection import get_db_connection
 from utils.helpers import ensure_vss_client
+from database.repositories.vss_summaries_repo import SummaryRepository
 
 logger = logging.getLogger(__name__)
 
@@ -37,32 +38,17 @@ def _save_summary_to_db(video_id: str, user_id: str, summary_text: str, prompt: 
         summary_id: 저장된 요약의 ID (INSERT인 경우), None (UPDATE인 경우)
     """
     try:
-        # vss_summaries 테이블에 저장 또는 업데이트
-        ensure_db_connection()
-        cursor.execute(
-            """INSERT INTO vss_summaries (VIDEO_ID, USER_ID, SUMMARY_TEXT, PROMPT) 
-               VALUES (?, ?, ?, ?)
-               ON DUPLICATE KEY UPDATE 
-               SUMMARY_TEXT = VALUES(SUMMARY_TEXT),
-               PROMPT = VALUES(PROMPT),
-               UPDATED_AT = CURRENT_TIMESTAMP""",
-            (video_id, user_id, summary_text, prompt)
-        )
-        conn.commit()
-        
-        summary_id = cursor.lastrowid if cursor.rowcount == 1 else None
-        if summary_id is None:
-            # UPDATE인 경우 ID 조회
-            cursor.execute(
-                "SELECT ID FROM vss_summaries WHERE VIDEO_ID = ? AND USER_ID = ?",
-                (video_id, user_id)
-            )
-            row = cursor.fetchone()
-            summary_id = row[0] if row else None
-        
-        logger.info(f"요약 결과 DB 저장 완료: VIDEO_ID={video_id}, USER_ID={user_id}, summary_id={summary_id}")
-        return summary_id
+        # ORM 방식으로 저장 (레거시 cursor/conn 사용 금지)
+        with get_db_connection() as db:
+            existing = SummaryRepository.get_by_video_and_user(video_id, user_id, db)
+            if existing:
+                summary = SummaryRepository.update(existing, summary_text, prompt, db)
+            else:
+                summary = SummaryRepository.create(video_id, user_id, summary_text, prompt, db)
+            summary_id = getattr(summary, 'ID', None)
+            logger.info(f"요약 결과 DB 저장 완료 (ORM): VIDEO_ID={video_id}, USER_ID={user_id}, summary_id={summary_id}")
+            return summary_id
     except Exception as e:
-        logger.error(f"요약 결과 DB 저장 실패: {e}")
+        logger.error(f"요약 결과 DB 저장 실패 (ORM): {e}")
         raise
 

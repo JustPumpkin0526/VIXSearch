@@ -1,14 +1,22 @@
 """VSS API 메인 애플리케이션"""
 import asyncio
 import sys
+# Note: avoid modifying sys.path here. Prefer running as a package/module
+# (e.g. `python -m backend.main`) or using proper package-relative imports.
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 # 로깅 설정 먼저 초기화
-from app_config.logging_config import setup_logging
-setup_logging()
+try:
+    # when run as a package (python -m backend.main)
+    from backend.app_config.logging_config import setup_logging
+    setup_logging()
+except Exception:
+    # when run as a script (python backend/main.py)
+    from app_config.logging_config import setup_logging
+    setup_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +37,38 @@ def ignore_connection_reset(loop, context):
 # lifespan에서 get_running_loop()를 사용하도록 변경
 # (모듈 레벨에서는 이벤트 루프가 없을 수 있으므로 여기서는 설정하지 않음)
 
-# 설정 import
-from app_config.settings import (
-    VIDEOS_DIR, FAST_SEARCH_OUTPUT_DIR, CONVERTED_VIDEOS_DIR, VIDEO_STAGING_DIR,
-    PROFILE_IMAGES_DIR, SAMPLE_DIR, REPORTS_DIR
-)
+# 설정 import + DB/유틸리티 임포트 (패키지 모드 / 스크립트 모드 호환)
+try:
+    # package mode
+    from backend.app_config.settings import (
+        VIDEOS_DIR, FAST_SEARCH_OUTPUT_DIR, CONVERTED_VIDEOS_DIR, VIDEO_STAGING_DIR,
+        PROFILE_IMAGES_DIR, SAMPLE_DIR, REPORTS_DIR
+    )
 
-# 데이터베이스 연결 초기화 (모듈 속성을 직접 갱신해 connection.py와 단일 소스 유지)
-import database.connection as db_connection
+    # 데이터베이스 연결 초기화 — SQLAlchemy 기반 연결 확인
+    from backend.database.db.connection import engine
 
-# 유틸리티 import
-from utils.helpers import get_session
-# http_session을 전역으로 접근하기 위해
-import utils.helpers as utils_helpers
+    # 유틸리티 import
+    from backend.utils.helpers import get_session
+    # http_session을 전역으로 접근하기 위해
+    import backend.utils.helpers as utils_helpers
 
-from contextlib import asynccontextmanager
-from exceptions import VSSException
+    from contextlib import asynccontextmanager
+    from backend.exceptions import VSSException
+except Exception:
+    # script mode
+    from app_config.settings import (
+        VIDEOS_DIR, FAST_SEARCH_OUTPUT_DIR, CONVERTED_VIDEOS_DIR, VIDEO_STAGING_DIR,
+        PROFILE_IMAGES_DIR, SAMPLE_DIR, REPORTS_DIR
+    )
+
+    from database.db.connection import engine
+
+    from utils.helpers import get_session
+    import utils.helpers as utils_helpers
+
+    from contextlib import asynccontextmanager
+    from exceptions import VSSException
 
 # CORS 헤더를 추가하는 커스텀 StaticFiles 클래스
 class CORSStaticFiles(StaticFiles):
@@ -85,11 +109,10 @@ class CORSStaticFiles(StaticFiles):
                                 if not content_type_set:
                                     headers.append([b"content-type", content_type.encode()])
                     
-                    # CORS 헤더 추가
+                    # CORS 헤더 (* 와 credentials 동시 사용은 스펙 위반이라 브라우저가 미디어 CORS를 거부할 수 있음)
                     headers.append([b"access-control-allow-origin", b"*"])
                     headers.append([b"access-control-allow-methods", b"GET, HEAD, OPTIONS"])
                     headers.append([b"access-control-allow-headers", b"*"])
-                    headers.append([b"access-control-allow-credentials", b"true"])
                     message["headers"] = headers
                 await send(message)
             
@@ -112,18 +135,17 @@ async def lifespan(app: FastAPI):
     
     await get_session()
     
-    # 데이터베이스 연결 확인 (실패해도 애플리케이션은 계속 시작)
-    if db_connection.conn is None or db_connection.cursor is None:
-        try:
-            db_connection.conn = db_connection.db_pool.get_connection()
-            db_connection.conn.autocommit = True
-            db_connection.cursor = db_connection.conn.cursor()
-            logger.info("데이터베이스 연결 성공 (startup)")
-        except Exception as e:
-            logger.warning(f"데이터베이스 연결 실패 (startup): {e}")
-            logger.warning("첫 요청 시 연결을 다시 시도합니다.")
+    # 데이터베이스 연결 확인 (SQLAlchemy engine 연결 테스트)
+    try:
+        with engine.connect() as conn:
+            logger.info("데이터베이스 엔진 연결 확인 성공 (startup)")
+    except Exception as e:
+        logger.warning(f"데이터베이스 엔진 연결 실패 (startup): {e}")
+        logger.warning("첫 요청 시 DB 연결 또는 마이그레이션이 필요할 수 있습니다.")
     
     logger.info("애플리케이션이 시작되었습니다. VIA 서버의 query_video를 사용합니다.")
+    import sys as _sys
+    logger.info(f"Python executable: {_sys.executable}")
     logger.info("=" * 60)
     logger.info("서버가 정상적으로 시작되었습니다.")
     logger.info("서버 주소: http://0.0.0.0:8001 (모든 네트워크 인터페이스에서 접속 가능)")
@@ -134,6 +156,19 @@ async def lifespan(app: FastAPI):
     # VIA 서버 URL 로깅
     from app_config.settings import VIA_SERVER_URL
     logger.info(f"VIA 서버 URL: {VIA_SERVER_URL}")
+    # moviepy 로드 상태 확인 (환경 문제 진단용)
+    try:
+        # utils.video_utils의 호환성 헬퍼 사용
+        from utils.video_utils import get_VideoFileClip
+        try:
+            VFC = get_VideoFileClip()
+            logger.info(f"moviepy VideoFileClip available: module={VFC.__module__}")
+        except Exception as _mpe2:
+            logger.warning(f"moviepy VideoFileClip import failed on startup: {_mpe2}")
+            logger.warning(f"Python executable at startup: {_sys.executable}")
+    except Exception as _mpe:
+        logger.warning(f"moviepy import helper failed on startup: {_mpe}")
+        logger.warning(f"Python executable at startup: {_sys.executable}")
     if "localhost" in VIA_SERVER_URL or "127.0.0.1" in VIA_SERVER_URL:
         logger.warning("VIA 서버가 localhost로 설정되어 있습니다. 다른 서버에서 실행 중이라면")
         logger.warning("환경 변수 VIA_SERVER_URL을 설정하세요. 예: VIA_SERVER_URL=http://<VIA서버IP>:8101")
@@ -219,8 +254,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 라우터 등록
-from routers import auth, users, summarize, reports, search, videos
+# 라우터 등록 (package/script 모드 호환)
+try:
+    from backend.routers import auth, users, summarize, reports, search, videos
+    from backend.routers.videos import upload_video, convert_video
+except Exception:
+    from routers import auth, users, summarize, reports, search, videos
+    from routers.videos import upload_video, convert_video
 
 app.include_router(auth.router, tags=["auth"])
 app.include_router(users.router, tags=["users"])
@@ -228,8 +268,6 @@ app.include_router(summarize.router, tags=["summarize"])
 app.include_router(reports.router, prefix="/reports", tags=["reports"])
 app.include_router(search.router, tags=["search"])
 app.include_router(videos.router, prefix="/videos", tags=["videos"])
-# upload-video와 convert-video는 별도 경로로도 등록 (하위 호환성)
-from routers.videos import upload_video, convert_video
 app.add_api_route("/upload-video", upload_video, methods=["POST"], tags=["videos"])
 app.add_api_route("/convert-video/{video_id}", convert_video, methods=["GET"], tags=["videos"])
 
@@ -258,4 +296,3 @@ if __name__ == "__main__":
     
     # uvicorn 실행
     uvicorn.run(app, host="0.0.0.0", port=8001)
-

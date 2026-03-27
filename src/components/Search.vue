@@ -145,7 +145,7 @@
                   :src="encodeVideoUrl(video.displayUrl)" 
                   class="absolute inset-0 w-full h-full object-cover"
                   crossorigin="anonymous"
-                  :preload="video.duration ? 'none' : 'metadata'"
+                  preload="metadata"
                   draggable="false"
                   muted
                   playsinline
@@ -956,7 +956,7 @@
                     :src="encodeVideoUrl(video.displayUrl)" 
                     class="w-[clamp(4rem,12vw,6rem)] h-[clamp(3rem,9vw,4rem)] object-cover rounded flex-shrink-0"
                     crossorigin="anonymous"
-                    :preload="video.duration ? 'none' : 'metadata'"
+                    preload="metadata"
                     draggable="false"
                     @loadedmetadata="(e) => { if (e.target && isFinite(e.target.duration) && e.target.duration > 0 && !video.duration) video.duration = e.target.duration; }"
                   ></video>

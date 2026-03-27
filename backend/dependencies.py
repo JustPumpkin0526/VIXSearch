@@ -2,7 +2,7 @@
 import logging
 from typing import Optional
 from fastapi import Depends, HTTPException, Query
-from database.connection import get_db_connection
+from database.repositories.vss_user_repo import UserRepository
 from exceptions import NotFoundException, DatabaseException
 
 logger = logging.getLogger(__name__)
@@ -34,10 +34,8 @@ def verify_user_dependency(user_id: str = Depends(get_user_id)) -> str:
             ...
     """
     try:
-        with get_db_connection() as cursor:
-            cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
-            if not cursor.fetchone():
-                raise NotFoundException("사용자", user_id)
+        if not UserRepository.exists_by_id(user_id):
+            raise NotFoundException("사용자", user_id)
         return user_id
     except NotFoundException:
         raise

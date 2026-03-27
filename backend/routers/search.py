@@ -14,13 +14,16 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request, File, Form, UploadFile, HTTPException, Query, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from moviepy.video.io.VideoFileClip import VideoFileClip
+from utils.video_utils import get_VideoFileClip
+from database.services.vss_search_states_service import SearchStateService
+
+
 try:
     import cv2
     CV2_AVAILABLE = True
 except ImportError:
     CV2_AVAILABLE = False
-from database.connection import cursor, ensure_db_connection, get_db_connection
+from database.repositories.vss_videos_repo import VideoRepository
 from utils.helpers import (
     ensure_vss_client, get_via_model, get_recommended_chunk_size,
     build_query_video_params, get_session,
@@ -276,39 +279,19 @@ async def query_and_generate_clips(
         
         if user_id and video_id_map:
             try:
-                ensure_db_connection()
                 # 모든 내부 DB ID 수집
                 db_ids_to_check = []
                 for upfile in upload_list:
                     db_internal_id = get_db_internal_id(upfile)
                     if db_internal_id:
                         db_ids_to_check.append(db_internal_id)
-                
-                # 배치로 VIDEO_ID 조회
+
+                # 레포지토리에게 배치 조회 위임
                 if db_ids_to_check:
-                    unique_db_ids = list(set(db_ids_to_check))
-                    placeholders = ','.join(['?'] * len(unique_db_ids))
-                    params = unique_db_ids + [user_id]
-                    cursor.execute(
-                        f"SELECT ID, VIDEO_ID FROM vss_videos WHERE ID IN ({placeholders}) AND USER_ID = ?",
-                        params
-                    )
-                    for row in cursor.fetchall():
-                        video_id_batch_map[row[0]] = row[1]
-                    
-                    # 배치로 duration 조회 (video_id 목록이 있는 경우)
+                    video_id_batch_map = VideoRepository.batch_get_video_ids_by_internal_ids(db_ids_to_check, user_id)
                     if video_id_batch_map:
-                        video_ids_list = list(video_id_batch_map.values())
-                        unique_video_ids = list(set(video_ids_list))
-                        duration_placeholders = ','.join(['?'] * len(unique_video_ids))
-                        duration_params = unique_video_ids + [user_id]
-                        cursor.execute(
-                            f"SELECT VIDEO_ID, DURATION FROM vss_videos WHERE VIDEO_ID IN ({duration_placeholders}) AND USER_ID = ?",
-                            duration_params
-                        )
-                        for row in cursor.fetchall():
-                            if row[1]:  # duration이 None이 아닌 경우만
-                                duration_batch_map[row[0]] = float(row[1])
+                        unique_video_ids = list(set(video_id_batch_map.values()))
+                        duration_batch_map = VideoRepository.get_durations_by_video_ids(unique_video_ids, user_id)
                         logger.info(f"[최적화] 배치 duration 조회 완료: {len(duration_batch_map)}개")
             except Exception as e:
                 logger.warning(f"배치 DB 조회 중 오류: {e}")
@@ -712,10 +695,13 @@ async def vss_query(
             # chunk_size 자동 지정을 위해 duration 가져오기 (파일 삭제 전에 수행)
             if chunk_size is None or chunk_size == -1 or chunk_size < 0:
                 try:
-                    video = VideoFileClip(file_path)
-                    duration = video.duration or 0
-                    video.close()
-                    del video
+                    VFC = get_VideoFileClip()
+                    video = VFC(file_path)
+                    duration = getattr(video, 'duration', 0) or 0
+                    try:
+                        video.close()
+                    except Exception:
+                        pass
                     logger.info(f"[vss-query] 동영상 duration: {duration}초")
                 except Exception as video_error:
                     logger.warning(f"[vss-query] 동영상 duration 가져오기 실패: {video_error}")
@@ -1054,72 +1040,11 @@ async def cv_delete_stream(request: Request):
         raise HTTPException(status_code=500, detail=f"스트림 삭제 중 오류가 발생했습니다: {str(e)}")
 
 @router.post("/save-search-state")
-async def save_search_state(
-    user_id: str = Form(...),
-    state_data: str = Form(...)  # JSON 문자열
-):
-    """Search 메뉴 상태를 DB에 저장"""
+async def save_search_state(user_id: str = Form(...), state_data: str = Form(...)):
     try:
-        state_json = json.loads(state_data)
-        
-        with get_db_connection() as db_cursor:
-            # 기존 상태가 있으면 업데이트, 없으면 삽입
-            # 테이블이 없으면 생성 (IF NOT EXISTS는 MariaDB에서 지원하지 않으므로 try-except 사용)
-            try:
-                db_cursor.execute(
-                    """INSERT INTO vss_search_states (USER_ID, STATE_DATA, UPDATED_AT)
-                       VALUES (?, ?, CURRENT_TIMESTAMP)
-                       ON DUPLICATE KEY UPDATE 
-                       STATE_DATA = VALUES(STATE_DATA),
-                       UPDATED_AT = CURRENT_TIMESTAMP""",
-                    (user_id, json.dumps(state_json))
-                )
-            except Exception as table_error:
-                error_str = str(table_error)
-                # 테이블이 없으면 생성
-                if "doesn't exist" in error_str or "Unknown table" in error_str:
-                    logger.info("vss_search_states 테이블이 없어 생성합니다.")
-                    db_cursor.execute("""
-                        CREATE TABLE IF NOT EXISTS vss_search_states (
-                            USER_ID VARCHAR(255) PRIMARY KEY,
-                            STATE_DATA LONGTEXT,
-                            UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                        )
-                    """)
-                    db_cursor.execute(
-                        """INSERT INTO vss_search_states (USER_ID, STATE_DATA, UPDATED_AT)
-                           VALUES (?, ?, CURRENT_TIMESTAMP)""",
-                        (user_id, json.dumps(state_json))
-                    )
-                # Data too long 오류인 경우 컬럼 타입 변경 시도
-                elif "Data too long" in error_str or "too long for column" in error_str:
-                    logger.info("STATE_DATA 컬럼이 LONGTEXT로 변경되지 않았습니다. 마이그레이션을 시도합니다.")
-                    try:
-                        # 기존 테이블의 STATE_DATA 컬럼을 LONGTEXT로 변경
-                        db_cursor.execute("""
-                            ALTER TABLE vss_search_states 
-                            MODIFY COLUMN STATE_DATA LONGTEXT
-                        """)
-                        logger.info("STATE_DATA 컬럼을 LONGTEXT로 변경했습니다.")
-                        # 다시 삽입 시도
-                        db_cursor.execute(
-                            """INSERT INTO vss_search_states (USER_ID, STATE_DATA, UPDATED_AT)
-                               VALUES (?, ?, CURRENT_TIMESTAMP)
-                               ON DUPLICATE KEY UPDATE 
-                               STATE_DATA = VALUES(STATE_DATA),
-                               UPDATED_AT = CURRENT_TIMESTAMP""",
-                            (user_id, json.dumps(state_json))
-                        )
-                    except Exception as alter_error:
-                        logger.error(f"STATE_DATA 컬럼 변경 실패: {alter_error}")
-                        raise
-                else:
-                    raise
-        
-        return {"success": True, "message": "Search 상태 저장 완료"}
+        return SearchStateService.save_search_state(user_id, state_data)
     except Exception as e:
-        logger.error(f"Search 상태 저장 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"상태 저장 중 오류가 발생했습니다: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"상태 저장 중 오류: {str(e)}" )
 
 @router.get("/load-search-state")
 async def load_search_state(
@@ -1127,29 +1052,9 @@ async def load_search_state(
 ):
     """Search 메뉴 상태를 DB에서 불러오기"""
     try:
-        with get_db_connection() as db_cursor:
-            try:
-                db_cursor.execute(
-                    "SELECT STATE_DATA FROM vss_search_states WHERE USER_ID = ?",
-                    (user_id,)
-                )
-                result = db_cursor.fetchone()
-                
-                if result and result[0]:
-                    state_json = json.loads(result[0])
-                    return {"success": True, "state": state_json}
-                else:
-                    return {"success": True, "state": None}
-            except Exception as table_error:
-                # 테이블이 없으면 None 반환
-                if "doesn't exist" in str(table_error) or "Unknown table" in str(table_error):
-                    logger.info("vss_search_states 테이블이 없습니다.")
-                    return {"success": True, "state": None}
-                else:
-                    raise
+        return SearchStateService.load_search_state(user_id)
     except Exception as e:
-        logger.error(f"Search 상태 불러오기 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"상태 불러오기 중 오류가 발생했습니다: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"상태 불러오기 오류: {str(e)}")
 
 # ==================== 고속 검색 (CV Event Detector 기반) ====================
 

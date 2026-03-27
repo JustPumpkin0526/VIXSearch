@@ -17,8 +17,13 @@ from utils.helpers import (
     translate_to_korean,
     get_recommended_chunk_size
 )
-from moviepy.video.io.VideoFileClip import VideoFileClip
-from database.connection import get_db_connection
+from utils.video_utils import get_VideoFileClip
+from database.services.vss_summaries_service import (
+    get_summaries_batch as svc_get_summaries_batch,
+    get_summaries as svc_get_summaries,
+    get_summary as svc_get_summary,
+    delete_summaries_by_internal_ids as svc_delete_summaries_by_internal_ids,
+)
 from exceptions import NotFoundException, DatabaseException, ValidationException
 
 logger = logging.getLogger(__name__)
@@ -172,12 +177,15 @@ async def vss_summarize(
         # 비디오 파일인 경우에만 duration 계산 (이미지 모드는 chunk_duration이 의미 없음)
         if not image_mode and temp_file_path and os.path.exists(temp_file_path):
             try:
-                video = VideoFileClip(temp_file_path)
-                duration = video.duration or 0
-                video.close()
-                del video
+                VFC = get_VideoFileClip()
+                video = VFC(temp_file_path)
+                duration = getattr(video, 'duration', 0) or 0
+                try:
+                    video.close()
+                except Exception:
+                    pass
                 logger.info(f"Video duration: {duration} seconds for {temp_file_path}")
-                
+
                 if duration > 0:
                     final_chunk_duration = await get_recommended_chunk_size(duration)
                     logger.info(f"자동 지정: chunk_duration={final_chunk_duration} 사용 (영상 길이: {duration}초)")
@@ -447,52 +455,20 @@ def get_summaries_batch(
             logger.error(f"[get_summaries_batch] video_ids 파싱 실패: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid video_ids format: {str(e)}")
         
-        # 사용자 존재 확인
-        with get_db_connection() as cursor:
-            cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
-            if not cursor.fetchone():
-                logger.warning(f"[get_summaries_batch] 사용자를 찾을 수 없음: USER_ID={user_id}")
-                raise NotFoundException("사용자", user_id)
-        
-        # 배치로 요약 상태 조회
-        summary_map = {}  # video_id -> summary 정보 매핑
-        if video_id_list:
-            with get_db_connection() as cursor:
-                # 중복 제거
-                unique_video_ids = list(set(video_id_list))
-                placeholders = ','.join(['?'] * len(unique_video_ids))
-                params = unique_video_ids + [user_id]
-                cursor.execute(
-                    f"""SELECT VIDEO_ID, ID, PROMPT, SUMMARY_TEXT, CREATED_AT, UPDATED_AT
-                       FROM vss_summaries
-                       WHERE VIDEO_ID IN ({placeholders}) AND USER_ID = ?""",
-                    params
-                )
-                for row in cursor.fetchall():
-                    video_id = row[0]
-                    summary_map[video_id] = {
-                        "id": row[1],
-                        "video_id": video_id,
-                        "user_id": user_id,
-                        "prompt": row[2],
-                        "summary_text": row[3],
-                        "created_at": _format_datetime(row[4]),
-                        "updated_at": _format_datetime(row[5])
-                    }
+        # 사용자 존재 확인 + 배치로 요약 상태 조회 via service
+        summary_map = svc_get_summaries_batch(video_id_list, user_id)
         
         # 모든 video_id에 대해 응답 생성 (요약이 없는 것도 포함)
         results = {}
         for video_id in video_id_list:
             if video_id in summary_map:
-                results[video_id] = {
-                    "success": True,
-                    "summary": summary_map[video_id]
-                }
+                entry = summary_map[video_id]
+                # format dates
+                entry["created_at"] = _format_datetime(entry.get("created_at"))
+                entry["updated_at"] = _format_datetime(entry.get("updated_at"))
+                results[video_id] = {"success": True, "summary": entry}
             else:
-                results[video_id] = {
-                    "success": False,
-                    "message": "요약 결과가 없습니다."
-                }
+                results[video_id] = {"success": False, "message": "요약 결과가 없습니다."}
         
         logger.info(f"[get_summaries_batch] 배치 요약 상태 조회 완료: {len([r for r in results.values() if r['success']])}개 요약 존재, {len([r for r in results.values() if not r['success']])}개 요약 없음")
         return {
@@ -509,33 +485,19 @@ def get_summaries_batch(
 def get_summaries(user_id: str = Query(...)):
     """사용자 요약 결과 목록 조회"""
     try:
-        # 사용자 존재 확인
-        with get_db_connection() as cursor:
-            cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
-            if not cursor.fetchone():
-                raise NotFoundException("사용자", user_id)
-        with get_db_connection() as cursor:
-            cursor.execute(
-                """SELECT ID, VIDEO_ID, USER_ID, PROMPT, SUMMARY_TEXT, CREATED_AT, UPDATED_AT
-                   FROM vss_summaries
-                   WHERE USER_ID = ?
-                   ORDER BY UPDATED_AT DESC""",
-                (user_id,)
-            )
-            rows = cursor.fetchall()
-
-        summaries = [
-            {
-                "id": row[0],
-                "video_id": row[1],
-                "user_id": row[2],
-                "prompt": row[3],
-                "summary_text": row[4],
-                "created_at": _format_datetime(row[5]),
-                "updated_at": _format_datetime(row[6])
-            }
-            for row in rows
-        ]
+        # use summaries service to get results
+        rows = svc_get_summaries(user_id)
+        summaries = []
+        for r in rows:
+            summaries.append({
+                "id": r.get("id"),
+                "video_id": r.get("video_id"),
+                "user_id": r.get("user_id"),
+                "prompt": r.get("prompt"),
+                "summary_text": r.get("summary_text"),
+                "created_at": _format_datetime(r.get("created_at")),
+                "updated_at": _format_datetime(r.get("updated_at"))
+            })
 
         return {
             "success": True,
@@ -555,40 +517,15 @@ def get_summary(
     """특정 동영상의 요약 결과 조회 (VIA 서버 video_id 기준)"""
     logger.info(f"[get_summary] 요약 결과 조회 요청: VIDEO_ID={video_id}, USER_ID={user_id}")
     try:
-        # 사용자 존재 확인
-        with get_db_connection() as cursor:
-            cursor.execute("SELECT ID FROM vss_user WHERE ID = ?", (user_id,))
-            if not cursor.fetchone():
-                logger.warning(f"[get_summary] 사용자를 찾을 수 없음: USER_ID={user_id}")
-                raise NotFoundException("사용자", user_id)
-        with get_db_connection() as cursor:
-            cursor.execute(
-                """SELECT ID, VIDEO_ID, USER_ID, PROMPT, SUMMARY_TEXT, CREATED_AT, UPDATED_AT
-                   FROM vss_summaries
-                   WHERE VIDEO_ID = ? AND USER_ID = ?""",
-                (video_id, user_id)
-            )
-            row = cursor.fetchone()
-            if not row:
-                logger.info(f"[get_summary] 요약 결과 없음: VIDEO_ID={video_id}, USER_ID={user_id}")
-                return {
-                    "success": False,
-                    "message": "요약 결과가 없습니다."
-                }
+        row = svc_get_summary(video_id, user_id)
+        if not row:
+            logger.info(f"[get_summary] 요약 결과 없음: VIDEO_ID={video_id}, USER_ID={user_id}")
+            return {"success": False, "message": "요약 결과가 없습니다."}
 
-        logger.info(f"[get_summary] 요약 결과 조회 성공: VIDEO_ID={video_id}, USER_ID={user_id}, SUMMARY_ID={row[0]}")
-        return {
-            "success": True,
-            "summary": {
-                "id": row[0],
-                "video_id": row[1],
-                "user_id": row[2],
-                "prompt": row[3],
-                "summary_text": row[4],
-                "created_at": _format_datetime(row[5]),
-                "updated_at": _format_datetime(row[6])
-            }
-        }
+        logger.info(f"[get_summary] 요약 결과 조회 성공: VIDEO_ID={video_id}, USER_ID={user_id}, SUMMARY_ID={row.get('id')}")
+        row["created_at"] = _format_datetime(row.get("created_at"))
+        row["updated_at"] = _format_datetime(row.get("updated_at"))
+        return {"success": True, "summary": row}
     except NotFoundException:
         raise
     except Exception as e:
@@ -605,51 +542,14 @@ async def delete_summaries(request: DeleteSummaryRequest):
     try:
         if not request.video_ids or len(request.video_ids) == 0:
             raise ValidationException("video_ids는 비어있지 않은 배열이어야 합니다.")
-        
-        with get_db_connection() as cursor:
-            # vss_videos 테이블에서 해당 동영상들의 VIDEO_ID (VIA 서버의 video_id) 조회
-            placeholders = ','.join(['?' for _ in request.video_ids])
-            cursor.execute(
-                f"""SELECT VIDEO_ID FROM vss_videos 
-                   WHERE ID IN ({placeholders}) AND USER_ID = ?""",
-                request.video_ids + [request.user_id]
-            )
-            rows = cursor.fetchall()
-            
-            if not rows:
-                return {
-                    "success": True,
-                    "message": "삭제할 요약 결과가 없습니다.",
-                    "deleted_count": 0
-                }
-            
-            # VIDEO_ID 목록 추출 (None 제외)
-            video_ids = [row[0] for row in rows if row[0] is not None]
-            
-            if not video_ids:
-                return {
-                    "success": True,
-                    "message": "삭제할 요약 결과가 없습니다.",
-                    "deleted_count": 0
-                }
-            
-            # vss_summaries 테이블에서 해당 VIDEO_ID와 USER_ID로 요약 결과 삭제
-            video_placeholders = ','.join(['?' for _ in video_ids])
-            cursor.execute(
-                f"""DELETE FROM vss_summaries 
-                   WHERE VIDEO_ID IN ({video_placeholders}) AND USER_ID = ?""",
-                video_ids + [request.user_id]
-            )
-            deleted_count = cursor.rowcount
-            # autocommit이 활성화되어 있으므로 명시적 커밋 불필요
-        
+        # delegate deletion logic to service (maps internal ids -> video_ids and deletes)
+        deleted_count = svc_delete_summaries_by_internal_ids(request.video_ids, request.user_id)
+
+        if deleted_count == 0:
+            return {"success": True, "message": "삭제할 요약 결과가 없습니다.", "deleted_count": 0}
+
         logger.info(f"요약 결과 삭제 완료: USER_ID={request.user_id}, 삭제된 요약 수={deleted_count}")
-        
-        return {
-            "success": True,
-            "message": f"{deleted_count}개의 요약 결과가 삭제되었습니다.",
-            "deleted_count": deleted_count
-        }
+        return {"success": True, "message": f"{deleted_count}개의 요약 결과가 삭제되었습니다.", "deleted_count": deleted_count}
     except ValidationException:
         raise
     except Exception as e:

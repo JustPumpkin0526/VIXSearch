@@ -21,7 +21,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from PIL import Image
 import requests
-from moviepy.video.io.VideoFileClip import VideoFileClip
+from utils.video_utils import get_VideoFileClip
 from app_config.settings import (
     FAST_SEARCH_OUTPUT_DIR,
     VIDEOS_DIR,
@@ -30,8 +30,13 @@ from app_config.settings import (
     API_BASE_URL,
     resolve_storage_file_path,
 )
-from database.connection import get_db_connection, verify_user_exists
+from routers.auth import verify_user_exists
 from dependencies import verify_user_dependency
+from database.services.vss_reports_service import (
+    check_title_exists, create_report_db, get_reports_db, get_report_db,
+    delete_report_db, update_report_db, update_report_content_db
+)
+from database.services.vss_videos_service import VSSVideoService
 from exceptions import NotFoundException, ValidationException, DatabaseException
 from fastapi import Depends
 
@@ -134,14 +139,8 @@ async def check_report_title(
         if not title:
             raise ValidationException("보고서 제목이 필요합니다.")
         
-        with get_db_connection() as cursor:
-            # 동일한 제목의 보고서가 있는지 확인
-            cursor.execute("""
-                SELECT COUNT(*) FROM vss_reports
-                WHERE USER_ID = ? AND TITLE = ?
-            """, (user_id, title))
-            
-            count = cursor.fetchone()[0]
+        count_exists = check_title_exists(user_id, title)
+        count = 1 if count_exists else 0
         
         return {
             "success": True,
@@ -179,13 +178,7 @@ async def create_report(request: CreateReportRequest):
         video_ids_json = json.dumps(video_ids) if video_ids else None
         video_titles_json = json.dumps(video_titles) if video_titles else None
         
-        with get_db_connection() as cursor:
-            cursor.execute("""
-                INSERT INTO vss_reports (USER_ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, title, description, content, word_count, video_ids_json, video_titles_json))
-            
-            report_id = cursor.lastrowid
+        report_id = create_report_db(user_id, title, description, content, word_count, video_ids_json, video_titles_json)
         
         logger.info(f"보고서 생성 완료: USER_ID={user_id}, REPORT_ID={report_id}, TITLE={title}")
         
@@ -479,13 +472,7 @@ async def create_word_report(request: CreateWordReportRequest):
         doc.save(str(file_path))
         
         # 데이터베이스에 보고서 저장 (Word 파일 경로 포함)
-        with get_db_connection() as cursor:
-            cursor.execute("""
-                INSERT INTO vss_reports (USER_ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, title, description, report_content, word_count, video_ids_json, video_titles_json))
-            
-            report_id = cursor.lastrowid
+        report_id = create_report_db(user_id, title, description, report_content, word_count, video_ids_json, video_titles_json)
         
         # 보고서 ID를 사용하여 파일명 재생성 및 파일명 변경
         final_filename = f"report_{report_id}_{timestamp}.docx"
@@ -521,40 +508,8 @@ async def get_reports(
         
         verify_user_exists(user_id)
         
-        with get_db_connection() as cursor:
-            # vss_reports 테이블이 없으면 빈 목록 반환
-            try:
-                cursor.execute("SELECT COUNT(*) FROM vss_reports WHERE USER_ID = ?", (user_id,))
-            except Exception as e:
-                # 테이블이 없으면 빈 목록 반환
-                logger.warning(f"vss_reports 테이블이 없습니다: {e}")
-                return {
-                    "success": True,
-                    "reports": [],
-                    "total": 0,
-                    "page": page,
-                    "page_size": page_size,
-                    "pages": 0
-                }
-            
-            # 전체 개수 조회
-            cursor.execute("SELECT COUNT(*) FROM vss_reports WHERE USER_ID = ?", (user_id,))
-            total = cursor.fetchone()[0]
-            
-            # 페이지네이션 계산
-            offset = (page - 1) * page_size
-            pages = max(1, (total + page_size - 1) // page_size)
-            
-            # 보고서 목록 조회 (최신순)
-            cursor.execute("""
-                SELECT ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES, CREATED_AT, UPDATED_AT
-                FROM vss_reports
-                WHERE USER_ID = ?
-                ORDER BY CREATED_AT DESC
-                LIMIT ? OFFSET ?
-            """, (user_id, page_size, offset))
-            
-            rows = cursor.fetchall()
+        rows, total = get_reports_db(user_id, page, page_size)
+        pages = max(1, (total + page_size - 1) // page_size) if total > 0 else 0
         
         # context manager 밖에서 데이터 처리
         reports = []
@@ -619,15 +574,7 @@ async def get_report(
         
         verify_user_exists(user_id)
         
-        with get_db_connection() as cursor:
-            # 보고서 조회
-            cursor.execute("""
-                SELECT ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES, CREATED_AT, UPDATED_AT
-                FROM vss_reports
-                WHERE ID = ? AND USER_ID = ?
-            """, (report_id, user_id))
-            
-            row = cursor.fetchone()
+        row = get_report_db(report_id, user_id)
         
         if not row:
             raise HTTPException(status_code=404, detail="보고서를 찾을 수 없습니다.")
@@ -682,17 +629,9 @@ async def delete_report(
         
         verify_user_exists(user_id)
         
-        with get_db_connection() as cursor:
-            # 먼저 보고서 존재 여부 및 소유권 확인
-            cursor.execute("""
-                SELECT ID FROM vss_reports
-                WHERE ID = ? AND USER_ID = ?
-            """, (report_id, user_id))
-            
-            existing_report = cursor.fetchone()
-            
-            if not existing_report:
-                raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
+        existing = get_report_db(report_id, user_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
         
         # Word 파일 삭제 시도
         pattern = str(REPORTS_DIR / f"report_{report_id}_*.docx")
@@ -706,13 +645,7 @@ async def delete_report(
                 logger.warning(f"Word 파일 삭제 실패 ({file_path}): {e}")
         
         # 보고서 삭제
-        with get_db_connection() as cursor:
-            cursor.execute("""
-                DELETE FROM vss_reports
-                WHERE ID = ? AND USER_ID = ?
-            """, (report_id, user_id))
-            
-            deleted_count = cursor.rowcount
+        deleted_count = delete_report_db(report_id, user_id)
         
         if deleted_count == 0:
             # 이미 삭제되었을 수 있음
@@ -751,19 +684,10 @@ async def add_clips_to_report(
         
         verify_user_exists(user_id)
         
-        with get_db_connection() as cursor:
-            # 기존 보고서 확인
-            cursor.execute("""
-                SELECT ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT, VIDEO_IDS, VIDEO_TITLES
-                FROM vss_reports
-                WHERE ID = ? AND USER_ID = ?
-            """, (report_id, user_id))
-            
-            row = cursor.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
-            
-            report_id_db, title, description, existing_content, word_count, video_ids_json, video_titles_json = row
+        row = get_report_db(report_id, user_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
+        report_id_db, title, description, existing_content, word_count, video_ids_json, video_titles_json, _, _ = row
         
         # 기존 클립 개수 계산 (콘텐츠에서 ## 숫자. 패턴으로 찾기)
         existing_clip_count = len(re.findall(r'## \d+\.', existing_content))
@@ -1031,12 +955,8 @@ async def add_clips_to_report(
         doc.save(str(word_file_path))
         
         # 데이터베이스 업데이트 (description 포함)
-        with get_db_connection() as cursor:
-            cursor.execute("""
-                UPDATE vss_reports
-                SET CONTENT = ?, DESCRIPTION = ?, WORD_COUNT = ?, VIDEO_IDS = ?, VIDEO_TITLES = ?, UPDATED_AT = CURRENT_TIMESTAMP
-                WHERE ID = ? AND USER_ID = ?
-            """, (new_content, updated_description, word_count, video_ids_json, video_titles_json, report_id, user_id))
+        # Update via service (repository/ORM)
+        update_report_content_db(report_id, user_id, new_content, updated_description, word_count, video_ids_json, video_titles_json)
         
         logger.info(f"보고서에 클립 추가 완료: USER_ID={user_id}, REPORT_ID={report_id}, 추가된 클립 수={len(clips)}")
         
@@ -1068,19 +988,10 @@ async def update_report(
         
         verify_user_exists(user_id)
         
-        with get_db_connection() as cursor:
-            # 기존 보고서 확인
-            cursor.execute("""
-                SELECT ID, TITLE, DESCRIPTION, CONTENT, WORD_COUNT
-                FROM vss_reports
-                WHERE ID = ? AND USER_ID = ?
-            """, (report_id, user_id))
-            
-            row = cursor.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
-            
-            report_id_db, existing_title, existing_description, existing_content, existing_word_count = row
+        row = get_report_db(report_id, user_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
+        report_id_db, existing_title, existing_description, existing_content, existing_word_count = row
         
         # 업데이트할 필드 준비
         title = request.title if request.title is not None else existing_title
@@ -1200,12 +1111,7 @@ async def update_report(
                 # Word 파일 재생성 실패해도 DB 업데이트는 계속 진행
         
         # 데이터베이스 업데이트
-        with get_db_connection() as cursor:
-            cursor.execute("""
-                UPDATE vss_reports
-                SET TITLE = ?, DESCRIPTION = ?, CONTENT = ?, WORD_COUNT = ?, UPDATED_AT = CURRENT_TIMESTAMP
-                WHERE ID = ? AND USER_ID = ?
-            """, (title, description, content, word_count, report_id, user_id))
+        update_report_db(report_id, user_id, title, description, content, word_count)
         
         logger.info(f"보고서 수정 완료: USER_ID={user_id}, REPORT_ID={report_id}")
         
@@ -1295,49 +1201,50 @@ def get_original_video_path(source_video: str, user_id: Optional[str] = None) ->
     # 데이터베이스에서 실제 파일 경로 조회 (user_id가 있는 경우)
     if user_id:
         try:
-            with get_db_connection() as cursor:
-                # FILE_NAME으로 정확히 일치하는 경우
-                cursor.execute("""
-                    SELECT FILE_PATH, FILE_URL FROM vss_videos 
-                    WHERE USER_ID = ? AND FILE_NAME = ?
-                    ORDER BY CREATED_AT DESC
-                    LIMIT 1
-                """, (user_id, video_filename))
-                row = cursor.fetchone()
-                if row:
-                    file_path, file_url = row
-                    logger.info(f"DB에서 파일 정보 찾음: FILE_PATH={file_path}, FILE_URL={file_url}")
-                    
-                    # FILE_PATH (구 backend/videos 등 DB 절대 경로 포함 → result/ 로 해석)
-                    if file_path:
-                        resolved_fp = resolve_storage_file_path(file_path)
-                        if resolved_fp:
-                            logger.info(f"원본 동영상 찾음 (DB FILE_PATH): {resolved_fp}")
-                            return str(resolved_fp)
-                    
-                    # FILE_PATH가 상대 경로인 경우 VIDEOS_DIR 기준으로 찾기
-                    if file_path:
-                        local_path = VIDEOS_DIR / os.path.basename(file_path)
-                        if os.path.exists(local_path):
-                            logger.info(f"원본 동영상 찾음 (DB FILE_PATH 상대 경로): {local_path}")
-                            return str(local_path)
-                    
-                    # FILE_URL에서 파일명 추출하여 찾기
-                    if file_url:
-                        url_filename = os.path.basename(file_url.split('?')[0])
-                        local_path = VIDEOS_DIR / url_filename
-                        if os.path.exists(local_path):
-                            logger.info(f"원본 동영상 찾음 (DB FILE_URL): {local_path}")
-                            return str(local_path)
-                        
-                        # CONVERTED_VIDEOS_DIR에서도 찾기
-                        local_path = CONVERTED_VIDEOS_DIR / url_filename
-                        if os.path.exists(local_path):
-                            logger.info(f"원본 동영상 찾음 (DB FILE_URL converted): {local_path}")
-                            return str(local_path)
+            # FILE_NAME으로 정확히 일치하는 경우 (service)
+            v = VSSVideoService.find_by_filename(user_id, video_filename)
+            if v:
+                file_path = getattr(v, 'FILE_PATH', None)
+                file_url = getattr(v, 'FILE_URL', None)
+                logger.info(f"DB에서 파일 정보 찾음: FILE_PATH={file_path}, FILE_URL={file_url}")
+                if file_path:
+                    resolved_fp = resolve_storage_file_path(file_path)
+                    if resolved_fp:
+                        logger.info(f"원본 동영상 찾음 (DB FILE_PATH): {resolved_fp}")
+                        return str(resolved_fp)
+                if file_path:
+                    local_path = VIDEOS_DIR / os.path.basename(file_path)
+                    if os.path.exists(local_path):
+                        logger.info(f"원본 동영상 찾음 (DB FILE_PATH 상대 경로): {local_path}")
+                        return str(local_path)
+                if file_url:
+                    url_filename = os.path.basename(file_url.split('?')[0])
+                    local_path = VIDEOS_DIR / url_filename
+                    if os.path.exists(local_path):
+                        logger.info(f"원본 동영상 찾음 (DB FILE_URL): {local_path}")
+                        return str(local_path)
+                    local_path = CONVERTED_VIDEOS_DIR / url_filename
+                    if os.path.exists(local_path):
+                        logger.info(f"원본 동영상 찾음 (DB FILE_URL converted): {local_path}")
+                        return str(local_path)
+            # 부분 일치 검색 (service)
+            v2 = VSSVideoService.find_partial_by_filename(user_id, video_filename)
+            if v2:
+                file_path = getattr(v2, 'FILE_PATH', None)
+                file_url = getattr(v2, 'FILE_URL', None)
+                logger.info(f"DB에서 부분 일치 파일 찾음: FILE_PATH={file_path}, FILE_URL={file_url}")
+                if file_path:
+                    resolved_fp = resolve_storage_file_path(file_path)
+                    if resolved_fp:
+                        logger.info(f"원본 동영상 찾음 (DB 부분 일치 FILE_PATH): {resolved_fp}")
+                        return str(resolved_fp)
+                if file_path:
+                    local_path = VIDEOS_DIR / os.path.basename(file_path)
+                    if os.path.exists(local_path):
+                        logger.info(f"원본 동영상 찾음 (DB 부분 일치 상대 경로): {local_path}")
+                        return str(local_path)
         except Exception as e:
             logger.warning(f"DB에서 원본 동영상 조회 실패: {e}")
-    
     # VIDEOS_DIR에서 직접 찾기
     local_path = VIDEOS_DIR / video_filename
     logger.info(f"VIDEOS_DIR에서 직접 찾기 시도: {local_path}")
@@ -1352,35 +1259,7 @@ def get_original_video_path(source_video: str, user_id: Optional[str] = None) ->
         logger.info(f"원본 동영상 찾음 (CONVERTED_VIDEOS_DIR 직접): {local_path}")
         return str(local_path)
     
-    # 부분 일치 검색 (파일명의 일부만 일치하는 경우)
-    if user_id:
-        try:
-            with get_db_connection() as cursor:
-                # 파일명의 일부가 포함된 경우 (예: robbery.mp4가 robbery_1234567890.mp4에 포함)
-                cursor.execute("""
-                    SELECT FILE_PATH, FILE_URL FROM vss_videos 
-                    WHERE USER_ID = ? AND (FILE_NAME LIKE ? OR FILE_NAME LIKE ?)
-                    ORDER BY CREATED_AT DESC
-                    LIMIT 1
-                """, (user_id, f"%{video_filename}", f"{video_filename}%"))
-                row = cursor.fetchone()
-                if row:
-                    file_path, file_url = row
-                    logger.info(f"DB에서 부분 일치 파일 찾음: FILE_PATH={file_path}, FILE_URL={file_url}")
-                    
-                    if file_path:
-                        resolved_fp = resolve_storage_file_path(file_path)
-                        if resolved_fp:
-                            logger.info(f"원본 동영상 찾음 (DB 부분 일치 FILE_PATH): {resolved_fp}")
-                            return str(resolved_fp)
-                    
-                    if file_path:
-                        local_path = VIDEOS_DIR / os.path.basename(file_path)
-                        if os.path.exists(local_path):
-                            logger.info(f"원본 동영상 찾음 (DB 부분 일치 상대 경로): {local_path}")
-                            return str(local_path)
-        except Exception as e:
-            logger.warning(f"DB에서 부분 일치 원본 동영상 조회 실패: {e}")
+    
     
     # 직접 파일 경로인 경우 (또는 DB에 남은 구 경로 → result/)
     resolved_src = resolve_storage_file_path(source_video)
@@ -1457,13 +1336,17 @@ def get_video_thumbnail(video_url: str, time_seconds: float = 0.0) -> Optional[b
             return None
         
         # moviepy로 비디오 열기
-        video = VideoFileClip(video_path)
-        
+        VFC = get_VideoFileClip()
+        video = VFC(video_path)
+
         # 지정된 시간의 프레임 추출 (기본값: 첫 프레임)
-        frame_time = min(time_seconds, video.duration - 0.1) if video.duration else 0.0
-        logger.info(f"프레임 추출 시간: {frame_time}초 (비디오 길이: {video.duration}초)")
+        frame_time = min(time_seconds, getattr(video, 'duration', 0) - 0.1) if getattr(video, 'duration', None) else 0.0
+        logger.info(f"프레임 추출 시간: {frame_time}초 (비디오 길이: {getattr(video, 'duration', None)}초)")
         frame = video.get_frame(frame_time)
-        video.close()
+        try:
+            video.close()
+        except Exception:
+            pass
         
         # PIL Image로 변환
         img = Image.fromarray(frame)
@@ -1558,19 +1441,10 @@ async def get_report_pdf(
         
         verify_user_exists(user_id)
         
-        with get_db_connection() as cursor:
-            # 보고서 확인
-            cursor.execute("""
-                SELECT ID, TITLE, FILE_URL
-                FROM vss_reports
-                WHERE ID = ? AND USER_ID = ?
-            """, (report_id, user_id))
-            
-            row = cursor.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
-            
-            report_id_db, title, file_url = row
+        row = get_report_db(report_id, user_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
+        report_id_db, title, _, _, _, _, file_url, _, _ = row
         
         # Word 파일 경로 찾기
         pattern = str(REPORTS_DIR / f"report_{report_id_db}_*.docx")
@@ -1625,19 +1499,10 @@ async def regenerate_report_pdf(
         
         verify_user_exists(user_id)
         
-        with get_db_connection() as cursor:
-            # 보고서 확인
-            cursor.execute("""
-                SELECT ID, TITLE
-                FROM vss_reports
-                WHERE ID = ? AND USER_ID = ?
-            """, (report_id, user_id))
-            
-            row = cursor.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
-            
-            report_id_db, title = row
+        row = get_report_db(report_id, user_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
+        report_id_db, title, _, _, _, _, _, _, _ = row
         
         # Word 파일 경로 찾기
         pattern = str(REPORTS_DIR / f"report_{report_id_db}_*.docx")
