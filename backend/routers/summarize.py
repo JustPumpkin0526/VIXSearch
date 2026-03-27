@@ -18,12 +18,7 @@ from utils.helpers import (
     get_recommended_chunk_size
 )
 from utils.video_utils import get_VideoFileClip
-from database.services.vss_summaries_service import (
-    get_summaries_batch as svc_get_summaries_batch,
-    get_summaries as svc_get_summaries,
-    get_summary as svc_get_summary,
-    delete_summaries_by_internal_ids as svc_delete_summaries_by_internal_ids,
-)
+from database.services.vss_summaries_service import SummaryService
 from exceptions import NotFoundException, DatabaseException, ValidationException
 
 logger = logging.getLogger(__name__)
@@ -456,7 +451,7 @@ def get_summaries_batch(
             raise HTTPException(status_code=400, detail=f"Invalid video_ids format: {str(e)}")
         
         # 사용자 존재 확인 + 배치로 요약 상태 조회 via service
-        summary_map = svc_get_summaries_batch(video_id_list, user_id)
+        summary_map = SummaryService.get_summaries_batch(video_id_list, user_id)
         
         # 모든 video_id에 대해 응답 생성 (요약이 없는 것도 포함)
         results = {}
@@ -486,7 +481,7 @@ def get_summaries(user_id: str = Query(...)):
     """사용자 요약 결과 목록 조회"""
     try:
         # use summaries service to get results
-        rows = svc_get_summaries(user_id)
+        rows = SummaryService.get_summaries(user_id)
         summaries = []
         for r in rows:
             summaries.append({
@@ -517,7 +512,7 @@ def get_summary(
     """특정 동영상의 요약 결과 조회 (VIA 서버 video_id 기준)"""
     logger.info(f"[get_summary] 요약 결과 조회 요청: VIDEO_ID={video_id}, USER_ID={user_id}")
     try:
-        row = svc_get_summary(video_id, user_id)
+        row = SummaryService.get_summary(video_id, user_id)
         if not row:
             logger.info(f"[get_summary] 요약 결과 없음: VIDEO_ID={video_id}, USER_ID={user_id}")
             return {"success": False, "message": "요약 결과가 없습니다."}
@@ -543,7 +538,7 @@ async def delete_summaries(request: DeleteSummaryRequest):
         if not request.video_ids or len(request.video_ids) == 0:
             raise ValidationException("video_ids는 비어있지 않은 배열이어야 합니다.")
         # delegate deletion logic to service (maps internal ids -> video_ids and deletes)
-        deleted_count = svc_delete_summaries_by_internal_ids(request.video_ids, request.user_id)
+        deleted_count = SummaryService.delete_summaries_by_internal_ids(request.video_ids, request.user_id)
 
         if deleted_count == 0:
             return {"success": True, "message": "삭제할 요약 결과가 없습니다.", "deleted_count": 0}

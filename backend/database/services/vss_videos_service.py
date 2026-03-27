@@ -64,7 +64,7 @@ def _format_datetime(value):
         return None
     return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
-class VSSVideoService:
+class VideoService:
     @staticmethod
     async def _process_video(request, video, videos_dir: str, converted_videos_dir: str):
         valid_file_url = ""

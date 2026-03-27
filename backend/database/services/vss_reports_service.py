@@ -13,71 +13,72 @@ from database.repositories.vss_user_repo import UserRepository
 
 logger = logging.getLogger(__name__)
 
+class ReportService:
+    @staticmethod
+    def check_title_exists(user_id: str, title: str) -> bool:
+        with get_db_connection() as db:
+            return db.query(VSSReport).filter(VSSReport.USER_ID == user_id, VSSReport.TITLE == title).count() > 0
 
-def check_title_exists(user_id: str, title: str) -> bool:
-    with get_db_connection() as db:
-        return db.query(VSSReport).filter(VSSReport.USER_ID == user_id, VSSReport.TITLE == title).count() > 0
+    @staticmethod
+    def create_report(user_id: str, title: str, description: str, content: str, word_count: int, video_ids_json: Optional[str], video_titles_json: Optional[str]) -> int:
+        with get_db_connection() as db:
+            # ensure user exists
+            if not UserRepository.exists(db, user_id):
+                raise Exception("사용자를 찾을 수 없습니다.")
 
+            report = VSSReport(
+                USER_ID=user_id,
+                TITLE=title,
+                DESCRIPTION=description,
+                CONTENT=content,
+                WORD_COUNT=word_count,
+                VIDEO_IDS=video_ids_json,
+                VIDEO_TITLES=video_titles_json
+            )
+            created = ReportRepository.create(report, db)
+            # Session will be committed by context manager
+            return getattr(created, "ID", None)
 
-def create_report_db(user_id: str, title: str, description: str, content: str, word_count: int, video_ids_json: Optional[str], video_titles_json: Optional[str]) -> int:
-    with get_db_connection() as db:
-        # ensure user exists
-        if not UserRepository.exists(db, user_id):
-            raise Exception("사용자를 찾을 수 없습니다.")
+    @staticmethod
+    def get_reports(user_id: str, page: int, page_size: int) -> Tuple[list, int]:
+        with get_db_connection() as db:
+            try:
+                rows, total = ReportRepository.list_by_user(user_id, page, page_size, db)
+            except Exception as e:
+                logger.warning(f"vss_reports table missing or list failed: {e}")
+                return [], 0
 
-        report = VSSReport(
-            USER_ID=user_id,
-            TITLE=title,
-            DESCRIPTION=description,
-            CONTENT=content,
-            WORD_COUNT=word_count,
-            VIDEO_IDS=video_ids_json,
-            VIDEO_TITLES=video_titles_json
-        )
-        created = ReportRepository.create(report, db)
-        # Session will be committed by context manager
-        return getattr(created, "ID", None)
+            # map ORM objects to tuple shape expected by router
+            mapped = []
+            for r in rows:
+                mapped.append((r.ID, r.TITLE, r.DESCRIPTION, r.CONTENT, r.WORD_COUNT, r.VIDEO_IDS, r.VIDEO_TITLES, r.CREATED_AT, r.UPDATED_AT))
+            return mapped, total
 
+    @staticmethod
+    def get_report(report_id: int, user_id: str):
+        with get_db_connection() as db:
+            r = ReportRepository.get_by_id_and_user(report_id, user_id, db)
+            if not r:
+                return None
+            return (r.ID, r.TITLE, r.DESCRIPTION, r.CONTENT, r.WORD_COUNT, r.VIDEO_IDS, r.VIDEO_TITLES, r.CREATED_AT, r.UPDATED_AT)
 
-def get_reports_db(user_id: str, page: int, page_size: int) -> Tuple[list, int]:
-    with get_db_connection() as db:
-        try:
-            rows, total = ReportRepository.list_by_user(user_id, page, page_size, db)
-        except Exception as e:
-            logger.warning(f"vss_reports table missing or list failed: {e}")
-            return [], 0
+    @staticmethod
+    def delete_report(report_id: int, user_id: str) -> int:
+        with get_db_connection() as db:
+            return ReportRepository.delete_by_id_and_user(report_id, user_id, db)
 
-        # map ORM objects to tuple shape expected by router
-        mapped = []
-        for r in rows:
-            mapped.append((r.ID, r.TITLE, r.DESCRIPTION, r.CONTENT, r.WORD_COUNT, r.VIDEO_IDS, r.VIDEO_TITLES, r.CREATED_AT, r.UPDATED_AT))
-        return mapped, total
+    @staticmethod
+    def update_report(report_id: int, user_id: str, title: str, description: str, content: str, word_count: int):
+        with get_db_connection() as db:
+            r = ReportRepository.get_by_id_and_user(report_id, user_id, db)
+            if not r:
+                raise Exception("보고서를 찾을 수 없습니다.")
+            ReportRepository.update_fields(r, title, description, content, word_count, db)
 
-
-def get_report_db(report_id: int, user_id: str):
-    with get_db_connection() as db:
-        r = ReportRepository.get_by_id_and_user(report_id, user_id, db)
-        if not r:
-            return None
-        return (r.ID, r.TITLE, r.DESCRIPTION, r.CONTENT, r.WORD_COUNT, r.VIDEO_IDS, r.VIDEO_TITLES, r.CREATED_AT, r.UPDATED_AT)
-
-
-def delete_report_db(report_id: int, user_id: str) -> int:
-    with get_db_connection() as db:
-        return ReportRepository.delete_by_id_and_user(report_id, user_id, db)
-
-
-def update_report_db(report_id: int, user_id: str, title: str, description: str, content: str, word_count: int):
-    with get_db_connection() as db:
-        r = ReportRepository.get_by_id_and_user(report_id, user_id, db)
-        if not r:
-            raise Exception("보고서를 찾을 수 없습니다.")
-        ReportRepository.update_fields(r, title, description, content, word_count, db)
-
-
-def update_report_content_db(report_id: int, user_id: str, content: str, description: str, word_count: int, video_ids_json: Optional[str], video_titles_json: Optional[str]):
-    with get_db_connection() as db:
-        r = ReportRepository.get_by_id_and_user(report_id, user_id, db)
-        if not r:
-            raise Exception("보고서를 찾을 수 없습니다.")
-        ReportRepository.update_content_and_videos(r, content, description, word_count, video_ids_json, video_titles_json, db)
+    @staticmethod
+    def update_report_content(report_id: int, user_id: str, content: str, description: str, word_count: int, video_ids_json: Optional[str], video_titles_json: Optional[str]):
+        with get_db_connection() as db:
+            r = ReportRepository.get_by_id_and_user(report_id, user_id, db)
+            if not r:
+                raise Exception("보고서를 찾을 수 없습니다.")
+            ReportRepository.update_content_and_videos(r, content, description, word_count, video_ids_json, video_titles_json, db)

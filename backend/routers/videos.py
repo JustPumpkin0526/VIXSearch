@@ -21,7 +21,7 @@ from services.video_service import upload_to_via_server_background
 from app_config.settings import UNSUPPORTED_VIDEO_FORMATS
 from exceptions import NotFoundException, ValidationException, DatabaseException
 
-from database.services.vss_videos_service import VSSVideoService
+from database.services.vss_videos_service import VideoService
 
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,7 @@ async def get_videos(
     user_id: str = Query(...)
 ):
     try:
-        return await VSSVideoService.get_videos(request, user_id, VIDEOS_DIR, CONVERTED_VIDEOS_DIR)
+        return await VideoService.get_videos(request, user_id, VIDEOS_DIR, CONVERTED_VIDEOS_DIR)
     except Exception:
         raise HTTPException(
             status_code=500,
@@ -118,7 +118,7 @@ async def delete_video(
 ):
     """동영상 삭제"""
     try:
-        result = VSSVideoService.delete_video(video_id, user_id)
+        result = VideoService.delete_video(video_id, user_id)
         return result
     except NotFoundException:
         raise
@@ -137,7 +137,7 @@ async def upload_video(
 ):
     """동영상 또는 이미지 파일을 서버에 업로드하고 DB에 저장"""
     try:
-        return await VSSVideoService.upload_video(request, file, user_id)
+        return await VideoService.upload_video(request, file, user_id)
     except (ValidationException, NotFoundException):
         raise
     except Exception as e:

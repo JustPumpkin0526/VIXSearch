@@ -32,11 +32,8 @@ from app_config.settings import (
 )
 from routers.auth import verify_user_exists
 from dependencies import verify_user_dependency
-from database.services.vss_reports_service import (
-    check_title_exists, create_report_db, get_reports_db, get_report_db,
-    delete_report_db, update_report_db, update_report_content_db
-)
-from database.services.vss_videos_service import VSSVideoService
+from database.services.vss_reports_service import ReportService
+from database.services.vss_videos_service import VideoService
 from exceptions import NotFoundException, ValidationException, DatabaseException
 from fastapi import Depends
 
@@ -129,32 +126,33 @@ class UpdateReportRequest(BaseModel):
     content: Optional[str] = None
 
 # ==================== 엔드포인트 ====================
-@router.get("/check-title")
-async def check_report_title(
-    title: str = Query(..., description="확인할 보고서 제목"),
-    user_id: str = Depends(verify_user_dependency)
-):
-    """보고서 제목 중복 확인"""
-    try:
-        if not title:
-            raise ValidationException("보고서 제목이 필요합니다.")
+# @router.get("/check-title")
+# async def check_report_title(
+#     title: str = Query(..., description="확인할 보고서 제목"),
+#     user_id: str = Depends(verify_user_dependency)
+# ):
+#     """보고서 제목 중복 확인"""
+#     try:
+#         if not title:
+#             raise ValidationException("보고서 제목이 필요합니다.")
         
-        count_exists = check_title_exists(user_id, title)
-        count = 1 if count_exists else 0
+#         count_exists = check_title_exists(user_id, title)
+#         count = 1 if count_exists else 0
         
-        return {
-            "success": True,
-            "exists": count > 0,
-            "message": "이미 존재하는 보고서 제목입니다." if count > 0 else "사용 가능한 제목입니다."
-        }
-    except (ValidationException, NotFoundException):
-        raise
-    except Exception as e:
-        logger.error(f"보고서 제목 확인 실패: {e}")
-        raise DatabaseException(f"보고서 제목 확인 중 오류가 발생했습니다: {str(e)}")
+#         return {
+#             "success": True,
+#             "exists": count > 0,
+#             "message": "이미 존재하는 보고서 제목입니다." if count > 0 else "사용 가능한 제목입니다."
+#         }
+#     except (ValidationException, NotFoundException):
+#         raise
+#     except Exception as e:
+#         logger.error(f"보고서 제목 확인 실패: {e}")
+#         raise DatabaseException(f"보고서 제목 확인 중 오류가 발생했습니다: {str(e)}")
 
 @router.post("", response_model=CreateReportResponse)
 async def create_report(request: CreateReportRequest):
+    logger.info("[VSS] create_report")
     """보고서 생성"""
     try:
         user_id = request.user_id
@@ -177,8 +175,10 @@ async def create_report(request: CreateReportRequest):
         # 보고서 저장
         video_ids_json = json.dumps(video_ids) if video_ids else None
         video_titles_json = json.dumps(video_titles) if video_titles else None
-        
-        report_id = create_report_db(user_id, title, description, content, word_count, video_ids_json, video_titles_json)
+
+        logger.info(f"video_ids_json={video_ids_json}, video_titles_json={video_titles_json}")
+
+        report_id = create_report_service(user_id, title, description, content, word_count, video_ids_json, video_titles_json)
         
         logger.info(f"보고서 생성 완료: USER_ID={user_id}, REPORT_ID={report_id}, TITLE={title}")
         
@@ -195,6 +195,7 @@ async def create_report(request: CreateReportRequest):
 
 @router.post("/create-word")
 async def create_word_report(request: CreateWordReportRequest):
+    logger.info("[VSS] create_word_report")
     """워드 파일 형식의 보고서 생성"""
     try:
         user_id = request.user_id
@@ -489,7 +490,7 @@ async def create_word_report(request: CreateWordReportRequest):
         doc.save(str(file_path))
         
         # 데이터베이스에 보고서 저장 (Word 파일 경로 포함)
-        report_id = create_report_db(user_id, title, description, report_content, word_count, video_ids_json, video_titles_json)
+        report_id = create_report_service(user_id, title, description, report_content, word_count, video_ids_json, video_titles_json)
         
         # 보고서 ID를 사용하여 파일명 재생성 및 파일명 변경
         final_filename = f"report_{report_id}_{timestamp}.docx"
@@ -518,6 +519,7 @@ async def get_reports(
     page: int = Query(1, ge=1, description="페이지 번호"),
     page_size: int = Query(10, ge=1, le=100, description="페이지당 항목 수")
 ):
+    logger.info("[VSS] get_reports")
     """보고서 목록 조회 (페이지네이션 지원)"""
     try:
         if not user_id:
@@ -525,7 +527,7 @@ async def get_reports(
         
         verify_user_exists(user_id)
         
-        rows, total = get_reports_db(user_id, page, page_size)
+        rows, total = ReportService.get_reports(user_id, page, page_size)
         pages = max(1, (total + page_size - 1) // page_size) if total > 0 else 0
         
         # context manager 밖에서 데이터 처리
@@ -581,9 +583,11 @@ async def get_reports(
 
 @router.get("/{report_id}")
 async def get_report(
+
     report_id: int,
     user_id: str = Query(..., description="사용자 ID")
 ):
+    logger.info("[VSS] get_report")
     """보고서 상세 조회"""
     try:
         if not user_id:
@@ -591,7 +595,7 @@ async def get_report(
         
         verify_user_exists(user_id)
         
-        row = get_report_db(report_id, user_id)
+        row = ReportService.get_report(report_id, user_id)
         
         if not row:
             raise HTTPException(status_code=404, detail="보고서를 찾을 수 없습니다.")
@@ -639,6 +643,7 @@ async def delete_report(
     report_id: int,
     user_id: str = Query(..., description="사용자 ID")
 ):
+    logger.info("[VSS] delete_report")
     """보고서 삭제"""
     try:
         if not user_id:
@@ -646,7 +651,7 @@ async def delete_report(
         
         verify_user_exists(user_id)
         
-        existing = get_report_db(report_id, user_id)
+        existing = ReportService.get_report(report_id, user_id)
         if not existing:
             raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
         
@@ -662,7 +667,7 @@ async def delete_report(
                 logger.warning(f"Word 파일 삭제 실패 ({file_path}): {e}")
         
         # 보고서 삭제
-        deleted_count = delete_report_db(report_id, user_id)
+        deleted_count = ReportService.delete_report(report_id, user_id)
         
         if deleted_count == 0:
             # 이미 삭제되었을 수 있음
@@ -689,6 +694,7 @@ async def add_clips_to_report(
     report_id: int,
     request: AddClipsToReportRequest
 ):
+    logger.info("add_clips_to_report")
     """기존 보고서에 클립 추가"""
     try:
         user_id = request.user_id
@@ -701,7 +707,7 @@ async def add_clips_to_report(
         
         verify_user_exists(user_id)
         
-        row = get_report_db(report_id, user_id)
+        row = ReportService.get_report(report_id, user_id)
         if not row:
             raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
         report_id_db, title, description, existing_content, word_count, video_ids_json, video_titles_json, _, _ = row
@@ -989,7 +995,7 @@ async def add_clips_to_report(
         
         # 데이터베이스 업데이트 (description 포함)
         # Update via service (repository/ORM)
-        update_report_content_db(report_id, user_id, new_content, updated_description, word_count, video_ids_json, video_titles_json)
+        ReportService.update_report_content(report_id, user_id, new_content, updated_description, word_count, video_ids_json, video_titles_json)
         
         logger.info(f"보고서에 클립 추가 완료: USER_ID={user_id}, REPORT_ID={report_id}, 추가된 클립 수={len(clips)}")
         
@@ -1012,6 +1018,7 @@ async def update_report(
     report_id: int,
     request: UpdateReportRequest
 ):
+    logger.info("[VSS] update_report")
     """보고서 내용 수정"""
     try:
         user_id = request.user_id
@@ -1021,7 +1028,7 @@ async def update_report(
         
         verify_user_exists(user_id)
         
-        row = get_report_db(report_id, user_id)
+        row = get_report(report_id, user_id)
         if not row:
             raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
         report_id_db, existing_title, existing_description, existing_content, existing_word_count = row
@@ -1144,7 +1151,7 @@ async def update_report(
                 # Word 파일 재생성 실패해도 DB 업데이트는 계속 진행
         
         # 데이터베이스 업데이트
-        update_report_db(report_id, user_id, title, description, content, word_count)
+        ReportService.update_report(report_id, user_id, title, description, content, word_count)
         
         logger.info(f"보고서 수정 완료: USER_ID={user_id}, REPORT_ID={report_id}")
         
@@ -1161,6 +1168,7 @@ async def update_report(
         raise HTTPException(status_code=500, detail=f"보고서 수정 중 오류가 발생했습니다: {str(e)}")
 
 def format_time(seconds: Optional[float]) -> str:
+    logger.info(f"[VSS] format_time 호출: seconds={seconds}")
     """초를 MM:SS 형식으로 변환"""
     if seconds is None:
         return ""
@@ -1169,6 +1177,7 @@ def format_time(seconds: Optional[float]) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 def normalize_url(url: str) -> str:
+    logger.info(f"[VSS] normalize_url 호출: url={url}")
     """URL을 정규화 (상대 경로를 절대 URL로 변환)"""
     if not url:
         return url
@@ -1186,6 +1195,7 @@ def normalize_url(url: str) -> str:
     return url
 
 def download_image(url: str, timeout: int = 10) -> Optional[bytes]:
+    logger.info(f"[VSS] download_image 호출: url={url}")
     """이미지 URL에서 이미지 다운로드"""
     try:
         # URL 정규화 (상대 경로를 절대 URL로 변환)
@@ -1202,6 +1212,7 @@ def download_image(url: str, timeout: int = 10) -> Optional[bytes]:
         return None
 
 def get_original_video_path(source_video: str, user_id: Optional[str] = None) -> Optional[str]:
+    logger.info(f"[VSS] get_original_video_path 호출: source_video={source_video}, user_id={user_id}")
     """원본 동영상 파일 경로 찾기"""
     if not source_video:
         return None
@@ -1235,7 +1246,7 @@ def get_original_video_path(source_video: str, user_id: Optional[str] = None) ->
     if user_id:
         try:
             # FILE_NAME으로 정확히 일치하는 경우 (service)
-            v = VSSVideoService.find_by_filename(user_id, video_filename)
+            v = VideoService.find_by_filename(user_id, video_filename)
             if v:
                 file_path = getattr(v, 'FILE_PATH', None)
                 file_url = getattr(v, 'FILE_URL', None)
@@ -1261,7 +1272,7 @@ def get_original_video_path(source_video: str, user_id: Optional[str] = None) ->
                         logger.info(f"원본 동영상 찾음 (DB FILE_URL converted): {local_path}")
                         return str(local_path)
             # 부분 일치 검색 (service)
-            v2 = VSSVideoService.find_partial_by_filename(user_id, video_filename)
+            v2 = VideoService.find_partial_by_filename(user_id, video_filename)
             if v2:
                 file_path = getattr(v2, 'FILE_PATH', None)
                 file_url = getattr(v2, 'FILE_URL', None)
@@ -1312,6 +1323,7 @@ def get_original_video_path(source_video: str, user_id: Optional[str] = None) ->
     return None
 
 def get_video_thumbnail(video_url: str, time_seconds: float = 0.0) -> Optional[bytes]:
+    logger.info(f"[VSS] get_video_thumbnail 호출: video_url={video_url}, time_seconds={time_seconds}")
     """비디오 URL에서 썸네일 추출 (지정된 시간의 프레임)"""
     video_path = None
     is_temp_file = False
@@ -1413,6 +1425,7 @@ def get_video_thumbnail(video_url: str, time_seconds: float = 0.0) -> Optional[b
                 pass
 
 def convert_docx_to_pdf(docx_path: str, pdf_path: Optional[str] = None) -> Optional[str]:
+    logger.info(f"[VSS] convert_docx_to_pdf 호출: docx_path={docx_path}, pdf_path={pdf_path}")
     """DOCX 파일을 PDF로 변환
     
     Args:
@@ -1464,6 +1477,7 @@ async def get_report_pdf(
     report_id: int,
     user_id: str = Query(..., description="사용자 ID")
 ):
+    logger.info(f"[VSS] get_report_pdf 호출: report_id={report_id}, user_id={user_id}")
     """보고서를 PDF로 변환하여 반환"""
     try:
         if not user_id:
@@ -1474,7 +1488,7 @@ async def get_report_pdf(
         
         verify_user_exists(user_id)
         
-        row = get_report_db(report_id, user_id)
+        row = get_report(report_id, user_id)
         if not row:
             raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
         report_id_db, title, _, _, _, _, file_url, _, _ = row
@@ -1522,6 +1536,7 @@ async def regenerate_report_pdf(
     report_id: int,
     user_id: str = Query(..., description="사용자 ID")
 ):
+    logger.info(f"[VSS] regenerate_report_pdf 호출: report_id={report_id}, user_id={user_id}")
     """보고서 PDF를 강제로 재생성"""
     try:
         if not user_id:
@@ -1532,7 +1547,7 @@ async def regenerate_report_pdf(
         
         verify_user_exists(user_id)
         
-        row = get_report_db(report_id, user_id)
+        row = get_report(report_id, user_id)
         if not row:
             raise HTTPException(status_code=404, detail="보고서를 찾을 수 없거나 권한이 없습니다.")
         report_id_db, title, _, _, _, _, _, _, _ = row
