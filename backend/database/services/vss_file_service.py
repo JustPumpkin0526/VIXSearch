@@ -6,7 +6,13 @@ from typing import Optional
 
 from fastapi import HTTPException
 
-from app_config.settings import PROFILE_IMAGES_DIR, ALLOWED_IMAGE_EXTENSIONS, REPORTS_DIR
+try:
+    # prefer package-style import when running as a package
+    from backend.app_config.settings import PROFILE_IMAGES_DIR, ALLOWED_IMAGE_EXTENSIONS, REPORTS_DIR
+except Exception:
+    # fallback for script mode or different import contexts
+    from app_config.settings import PROFILE_IMAGES_DIR, ALLOWED_IMAGE_EXTENSIONS, REPORTS_DIR
+
 from exceptions import NotFoundException, ValidationException, DatabaseException, ForbiddenException
 
 logger = logging.getLogger(__name__)

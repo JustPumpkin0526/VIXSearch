@@ -95,7 +95,7 @@ class CORSStaticFiles(StaticFiles):
                                     content_type_set = True
                                     break
                             if not content_type_set:
-                                headers.append([b"content-type", b"video/x-msvideo"])
+                                headers.append((b"content-type", b"video/x-msvideo"))
                         else:
                             # 다른 파일 형식에 대해서도 MIME 타입 설정
                             content_type, _ = mimetypes.guess_type(path)
@@ -107,12 +107,12 @@ class CORSStaticFiles(StaticFiles):
                                         content_type_set = True
                                         break
                                 if not content_type_set:
-                                    headers.append([b"content-type", content_type.encode()])
+                                    headers.append((b"content-type", content_type.encode()))
                     
                     # CORS 헤더 (* 와 credentials 동시 사용은 스펙 위반이라 브라우저가 미디어 CORS를 거부할 수 있음)
-                    headers.append([b"access-control-allow-origin", b"*"])
-                    headers.append([b"access-control-allow-methods", b"GET, HEAD, OPTIONS"])
-                    headers.append([b"access-control-allow-headers", b"*"])
+                    headers.append((b"access-control-allow-origin", b"*"))
+                    headers.append((b"access-control-allow-methods", b"GET, HEAD, OPTIONS"))
+                    headers.append((b"access-control-allow-headers", b"*"))
                     message["headers"] = headers
                 await send(message)
             

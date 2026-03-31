@@ -155,6 +155,7 @@
                   <img 
                     v-if="profileImageUrl" 
                     :src="profileImageUrl" 
+                    @error="onProfileImageError"
                     :alt="userId"
                     class="w-full h-full object-cover aspect-square"
                   />
@@ -177,6 +178,7 @@
                 <img 
                   v-if="profileImageUrl" 
                   :src="profileImageUrl" 
+                  @error="onProfileImageError"
                   :alt="userId"
                   class="w-full h-full object-cover aspect-square"
                 />
@@ -276,6 +278,7 @@
                       <img 
                         v-if="profileImageUrl" 
                         :src="profileImageUrl" 
+                        @error="onProfileImageError"
                         :alt="userId"
                         class="w-full h-full object-cover aspect-square"
                       />
@@ -979,6 +982,15 @@ async function handleImageUpload(event) {
       profileImageInputRef.value.value = '';
     }
   }
+}
+
+function onProfileImageError(event) {
+  // Prevent infinite loops if fallback image also fails
+  if (event && event.target) {
+    event.target.onerror = null;
+  }
+  // Fallback to initials (clearing the URL causes template to render initials)
+  profileImageUrl.value = null;
 }
 
 // 외부 클릭 시 컨텍스트 메뉴 닫기
