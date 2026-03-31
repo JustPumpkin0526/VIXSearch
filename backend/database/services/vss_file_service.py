@@ -6,7 +6,13 @@ from typing import Optional
 
 from fastapi import HTTPException
 
-from app_config.settings import PROFILE_IMAGES_DIR, ALLOWED_IMAGE_EXTENSIONS, REPORTS_DIR
+try:
+    # prefer package-style import when running as a package
+    from backend.app_config.settings import PROFILE_IMAGES_DIR, ALLOWED_IMAGE_EXTENSIONS, REPORTS_DIR
+except Exception:
+    # fallback for script mode or different import contexts
+    from app_config.settings import PROFILE_IMAGES_DIR, ALLOWED_IMAGE_EXTENSIONS, REPORTS_DIR
+
 from exceptions import NotFoundException, ValidationException, DatabaseException, ForbiddenException
 
 logger = logging.getLogger(__name__)
@@ -137,8 +143,11 @@ class FileService:
 
         return str(final_file_path), final_filename
 
+
+    # 리포트 파일 전용 함수인 것 같음
     @staticmethod
     def find_report_file(report_id: int) -> Optional[str]:
+        """로컬에 저장된 보고서 파일을 찾는 함수"""
         pattern = str(REPORTS_DIR / f"report_{report_id}_*.docx")
         from glob import glob
         matches = glob(pattern)
@@ -148,6 +157,7 @@ class FileService:
 
     @staticmethod
     def delete_report_files(report_id: int):
+        """보고서 파일을 삭제하는 함수 (report_id로 패턴 매칭하여 삭제)"""
         path = FileService.find_report_file(report_id)
         if path and os.path.exists(path):
             try:

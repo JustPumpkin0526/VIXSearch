@@ -5,7 +5,6 @@ import os
 import time
 import glob
 import re
-from datetime import datetime
 from typing import Optional, List
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
@@ -15,12 +14,10 @@ import io
 import tempfile
 import base64
 from docx import Document
-from docx.shared import Inches, Pt
+from docx.shared import Inches
 from PIL import Image
 
 from routers.auth import verify_user_exists
-from dependencies import verify_user_dependency
-from exceptions import NotFoundException, ValidationException, DatabaseException
 
 # 서비스 레이어 분리: 썸네일/문서/파일/리포트 오케스트레이터
 # ReportService 클래스 기반 서비스 사용
@@ -82,22 +79,17 @@ async def create_report(request: CreateReportRequest):
     logger.info("[VSS] create_report")
     """보고서 생성"""
     try:
-        user_id = request.user_id
-        title = request.title
-        description = request.description or ""
-        content = request.content
-        word_count = request.word_count or 0
+        if not request.user_id:
+            raise HTTPException(status_code=400, detail="사용자 ID가 필요합니다.")
+        if not request.title:
+            raise HTTPException(status_code=400, detail="보고서 제목이 필요합니다.")
+        if not request.content:
+            raise HTTPException(status_code=400, detail="보고서 내용이 필요합니다.")
+
         video_ids = request.video_ids or []
         video_titles = request.video_titles or []
         
-        if not user_id:
-            raise HTTPException(status_code=400, detail="사용자 ID가 필요합니다.")
-        if not title:
-            raise HTTPException(status_code=400, detail="보고서 제목이 필요합니다.")
-        if not content:
-            raise HTTPException(status_code=400, detail="보고서 내용이 필요합니다.")
-        
-        verify_user_exists(user_id)
+        verify_user_exists(request.user_id)
         
         # 보고서 저장
         video_ids_json = json.dumps(video_ids) if video_ids else None
@@ -105,9 +97,9 @@ async def create_report(request: CreateReportRequest):
 
         logger.info(f"video_ids_json={video_ids_json}, video_titles_json={video_titles_json}")
 
-        report_id = ReportService.create_report(user_id, title, description, content, word_count, video_ids_json, video_titles_json)
+        report_id = ReportService.create_report(request.user_id, request.title, request.description or "", request.content, request.word_count or 0, video_ids_json, video_titles_json)
         
-        logger.info(f"보고서 생성 완료: USER_ID={user_id}, REPORT_ID={report_id}, TITLE={title}")
+        logger.info(f"보고서 생성 완료: USER_ID={request.user_id}, REPORT_ID={report_id}, TITLE={request.title}")
         
         return {
             "success": True,
