@@ -11,6 +11,14 @@ class ReportRepository:
         db.add(report)
         db.flush()
         return report
+    
+    @staticmethod
+    def exists_by_title(user_id: str, title: str, db: Session) -> bool:
+        total = db.query(func.count(VSSReport.ID)).filter(
+            VSSReport.USER_ID == user_id,
+            VSSReport.TITLE == title
+        ).scalar() or 0
+        return total > 0
 
     @staticmethod
     def get_by_id_and_user(report_id: int, user_id: str, db: Session) -> Optional[VSSReport]:

@@ -1,5 +1,6 @@
 from exceptions import NotFoundException, ValidationException
 from app_config.settings import VIDEOS_DIR, CONVERTED_VIDEOS_DIR, BACKEND_DIR, resolve_storage_file_path
+from pathlib import Path
 
 # Allowed extensions (duplicate of routers.videos constants to avoid circular import)
 ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v'}
@@ -82,7 +83,7 @@ class VideoService:
             else:
                 base_name = Path(original_filename).stem
 
-                converted_filename = await VSSVideoService._find_converted_file(base_name, converted_videos_dir)
+                converted_filename = await VideoService._find_converted_file(base_name, converted_videos_dir)
 
                 if converted_filename:
                     converted_url = f"/converted-videos/{converted_filename}"
@@ -140,7 +141,7 @@ class VideoService:
 
         # ORM 객체 → dict 변환 + 기존 process_video_row 재사용
         tasks = [
-            VSSVideoService._process_video(request, video, videos_dir, converted_videos_dir)
+            VideoService._process_video(request, video, videos_dir, converted_videos_dir)
             for video in videos
         ]
 
@@ -281,7 +282,7 @@ class VideoService:
 
         # 5. 후처리 (비동기) - DB에 저장된 레코드를 사용
         asyncio.create_task(
-            VSSVideoService._post_process(created, file_path, user_id)
+            VideoService._post_process(created, file_path, user_id)
         )
 
         return {

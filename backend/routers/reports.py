@@ -2,84 +2,33 @@
 import json
 import logging
 import os
-import tempfile
-import io
-import base64
 import time
 import glob
 import re
-from datetime import datetime
 from typing import Optional, List
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+import io
+import tempfile
+import base64
 from docx import Document
-from docx.shared import Inches, Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
+from docx.shared import Inches
 from PIL import Image
-import requests
-from utils.video_utils import get_VideoFileClip
-from app_config.settings import (
-    FAST_SEARCH_OUTPUT_DIR,
-    VIDEOS_DIR,
-    CONVERTED_VIDEOS_DIR,
-    REPORTS_DIR,
-    API_BASE_URL,
-    resolve_storage_file_path,
-)
+
 from routers.auth import verify_user_exists
-from dependencies import verify_user_dependency
+
+# 서비스 레이어 분리: 썸네일/문서/파일/리포트 오케스트레이터
+# ReportService 클래스 기반 서비스 사용
 from database.services.vss_reports_service import ReportService
-from database.services.vss_videos_service import VideoService
-from exceptions import NotFoundException, ValidationException, DatabaseException
+from database.services.vss_file_service import FileService
+from database.services.vss_thumbnail_service import ThumbnailService
+from database.services.vss_document_service import DocumentService
+from app_config.settings import REPORTS_DIR
 from fastapi import Depends
 
 logger = logging.getLogger(__name__)
-
-# PDF 변환 라이브러리 import (Windows: docx2pdf, Linux: LibreOffice)
-try:
-    from docx2pdf import convert
-    PDF_CONVERSION_AVAILABLE = True
-    PDF_CONVERSION_METHOD = "docx2pdf"
-except ImportError:
-    PDF_CONVERSION_AVAILABLE = False
-    PDF_CONVERSION_METHOD = None
-    logger.warning("docx2pdf가 설치되지 않았습니다. PDF 변환 기능을 사용할 수 없습니다.")
-
-def add_horizontal_line(paragraph):
-    """단락에 구분선(horizontal rule) 추가 (Word에서 --- 입력 후 엔터와 동일한 효과)"""
-    p = paragraph._element
-    pPr = p.get_or_add_pPr()
-    
-    # 단락 테두리 요소 생성
-    pBdr = OxmlElement('w:pBdr')
-    
-    # 다른 속성들보다 앞에 삽입
-    pPr.insert_element_before(
-        pBdr,
-        'w:shd', 'w:tabs', 'w:suppressAutoHyphens', 'w:kinsoku', 'w:wordWrap',
-        'w:overflowPunct', 'w:topLinePunct', 'w:autoSpaceDE', 'w:autoSpaceDN',
-        'w:bidi', 'w:adjustRightInd', 'w:snapToGrid', 'w:spacing', 'w:ind',
-        'w:contextualSpacing', 'w:mirrorIndents', 'w:suppressOverlap', 'w:jc',
-        'w:textDirection', 'w:textAlignment', 'w:textboxTightWrap',
-        'w:outlineLvl', 'w:divId', 'w:cnfStyle', 'w:rPr', 'w:sectPr',
-        'w:pPrChange'
-    )
-    
-    # 하단 테두리 요소 생성 (구분선)
-    bottom = OxmlElement('w:bottom')
-    bottom.set(qn('w:val'), 'single')  # 단일 선 스타일
-    bottom.set(qn('w:sz'), '6')        # 선 두께 (1/8 pt 단위, 6 = 0.75pt)
-    bottom.set(qn('w:space'), '1')     # 텍스트와 테두리 사이 간격
-    bottom.set(qn('w:color'), 'auto')  # 테두리 색상 (자동)
-    
-    # 하단 테두리를 단락 테두리에 추가
-    pBdr.append(bottom)
-    
-    return paragraph
 
 router = APIRouter()
 
@@ -125,52 +74,22 @@ class UpdateReportRequest(BaseModel):
     description: Optional[str] = None
     content: Optional[str] = None
 
-# ==================== 엔드포인트 ====================
-# @router.get("/check-title")
-# async def check_report_title(
-#     title: str = Query(..., description="확인할 보고서 제목"),
-#     user_id: str = Depends(verify_user_dependency)
-# ):
-#     """보고서 제목 중복 확인"""
-#     try:
-#         if not title:
-#             raise ValidationException("보고서 제목이 필요합니다.")
-        
-#         count_exists = check_title_exists(user_id, title)
-#         count = 1 if count_exists else 0
-        
-#         return {
-#             "success": True,
-#             "exists": count > 0,
-#             "message": "이미 존재하는 보고서 제목입니다." if count > 0 else "사용 가능한 제목입니다."
-#         }
-#     except (ValidationException, NotFoundException):
-#         raise
-#     except Exception as e:
-#         logger.error(f"보고서 제목 확인 실패: {e}")
-#         raise DatabaseException(f"보고서 제목 확인 중 오류가 발생했습니다: {str(e)}")
-
 @router.post("", response_model=CreateReportResponse)
 async def create_report(request: CreateReportRequest):
     logger.info("[VSS] create_report")
     """보고서 생성"""
     try:
-        user_id = request.user_id
-        title = request.title
-        description = request.description or ""
-        content = request.content
-        word_count = request.word_count or 0
+        if not request.user_id:
+            raise HTTPException(status_code=400, detail="사용자 ID가 필요합니다.")
+        if not request.title:
+            raise HTTPException(status_code=400, detail="보고서 제목이 필요합니다.")
+        if not request.content:
+            raise HTTPException(status_code=400, detail="보고서 내용이 필요합니다.")
+
         video_ids = request.video_ids or []
         video_titles = request.video_titles or []
         
-        if not user_id:
-            raise HTTPException(status_code=400, detail="사용자 ID가 필요합니다.")
-        if not title:
-            raise HTTPException(status_code=400, detail="보고서 제목이 필요합니다.")
-        if not content:
-            raise HTTPException(status_code=400, detail="보고서 내용이 필요합니다.")
-        
-        verify_user_exists(user_id)
+        verify_user_exists(request.user_id)
         
         # 보고서 저장
         video_ids_json = json.dumps(video_ids) if video_ids else None
@@ -178,9 +97,9 @@ async def create_report(request: CreateReportRequest):
 
         logger.info(f"video_ids_json={video_ids_json}, video_titles_json={video_titles_json}")
 
-        report_id = create_report_service(user_id, title, description, content, word_count, video_ids_json, video_titles_json)
+        report_id = ReportService.create_report(request.user_id, request.title, request.description or "", request.content, request.word_count or 0, video_ids_json, video_titles_json)
         
-        logger.info(f"보고서 생성 완료: USER_ID={user_id}, REPORT_ID={report_id}, TITLE={title}")
+        logger.info(f"보고서 생성 완료: USER_ID={request.user_id}, REPORT_ID={report_id}, TITLE={request.title}")
         
         return {
             "success": True,
@@ -196,315 +115,30 @@ async def create_report(request: CreateReportRequest):
 @router.post("/create-word")
 async def create_word_report(request: CreateWordReportRequest):
     logger.info("[VSS] create_word_report")
-    """워드 파일 형식의 보고서 생성"""
     try:
-        user_id = request.user_id
-        title = request.title
-        author = request.author or user_id  # 작성자가 없으면 user_id 사용
-        description = request.description or ""
-        query = request.query or ""
-        clips = request.clips
-        
-        if not user_id:
+        if not request.user_id:
             raise HTTPException(status_code=400, detail="사용자 ID가 필요합니다.")
-        if not title:
+        if not request.title:
             raise HTTPException(status_code=400, detail="보고서 제목이 필요합니다.")
-        if not clips or len(clips) == 0:
+        if not request.clips or len(request.clips) == 0:
             raise HTTPException(status_code=400, detail="클립 데이터가 필요합니다.")
-        
-        verify_user_exists(user_id)
-        
-        # 워드 문서 생성
-        doc = Document()
-        
-        # 페이지 여백 설정 (상하좌우 1인치)
-        sections = doc.sections
-        for section in sections:
-            section.top_margin = Inches(1)
-            section.bottom_margin = Inches(1)
-            section.left_margin = Inches(1)
-            section.right_margin = Inches(1)
-        
-        # ==================== 보고서 구조 ====================
-        # 1. 보고서 제목
-        title_heading = doc.add_heading(title, level=1)
-        title_heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        title_run = title_heading.runs[0]
-        title_run.font.size = Pt(24)
-        title_run.bold = True
-        title_run.font.color.rgb = RGBColor(0, 51, 102)  # 진한 파란색
-        
-        doc.add_paragraph()  # 빈 줄
-        doc.add_paragraph()  # 빈 줄
-        
-        # 구분선 추가
-        separator_para = doc.add_paragraph()
-        add_horizontal_line(separator_para)
-        
-        doc.add_paragraph()  # 빈 줄
-        doc.add_paragraph()  # 빈 줄
-        
-        # 2. 작성자 및 작성 일자 (테이블 형태)
-        current_date = datetime.now().strftime("%Y년 %m월 %d일")
-        info_table = doc.add_table(rows=2, cols=2)
-        info_table.style = 'Light Grid Accent 1'
-        
-        # 작성자 행
-        author_row = info_table.rows[0]
-        author_row.cells[0].text = "작성자"
-        author_row.cells[0].paragraphs[0].runs[0].bold = True
-        author_row.cells[0].paragraphs[0].runs[0].font.size = Pt(12)
-        author_row.cells[1].text = author
-        author_row.cells[1].paragraphs[0].runs[0].font.size = Pt(12)
-        
-        # 작성 일자 행
-        date_row = info_table.rows[1]
-        date_row.cells[0].text = "작성 일자"
-        date_row.cells[0].paragraphs[0].runs[0].bold = True
-        date_row.cells[0].paragraphs[0].runs[0].font.size = Pt(12)
-        date_row.cells[1].text = current_date
-        date_row.cells[1].paragraphs[0].runs[0].font.size = Pt(12)
-        
-        doc.add_paragraph()  # 빈 줄
-        doc.add_paragraph()  # 빈 줄
-        
-        # 구분선 추가
-        separator_para2 = doc.add_paragraph()
-        add_horizontal_line(separator_para2)
-        
-        doc.add_paragraph()  # 빈 줄
-        doc.add_paragraph()  # 빈 줄
-        
-        # 3. Q. 검색어 섹션
-        query_section_para = doc.add_paragraph()
-        query_label = query_section_para.add_run("Q. 검색어")
-        query_label.bold = True
-        query_label.font.size = Pt(16)
-        query_label.font.color.rgb = RGBColor(0, 102, 204)  # 파란색
-        
-        doc.add_paragraph()  # 빈 줄
-        
-        # 검색어 내용 박스 (들여쓰기)
-        query_content_para = doc.add_paragraph()
-        query_content_para.paragraph_format.left_indent = Inches(0.5)
-        query_content_para.paragraph_format.space_before = Pt(6)
-        query_content_para.paragraph_format.space_after = Pt(6)
-        
-        query_content = query if query else "검색어가 제공되지 않았습니다."
-        query_content_run = query_content_para.add_run(query_content)
-        query_content_run.font.size = Pt(13)
-        
-        doc.add_paragraph()  # 빈 줄
-        doc.add_paragraph()  # 빈 줄
-        
-        # 구분선 추가
-        separator_para3 = doc.add_paragraph()
-        add_horizontal_line(separator_para3)
-        
-        doc.add_paragraph()  # 빈 줄
-        doc.add_paragraph()  # 빈 줄
-        
-        # 4. A. 검색 결과 섹션
-        answer_para = doc.add_paragraph()
-        answer_label = answer_para.add_run("A. 검색 결과")
-        answer_label.bold = True
-        answer_label.font.size = Pt(16)
-        answer_label.font.color.rgb = RGBColor(0, 102, 204)  # 파란색
-        
-        doc.add_paragraph()  # 빈 줄
-        
-        # 검색 결과 클립 및 설명
-        for idx, clip in enumerate(clips, 1):
-            # 클립 항목 구분선 (첫 번째 항목이 아닌 경우)
-            if idx > 1:
-                clip_separator = doc.add_paragraph()
-                clip_separator.paragraph_format.space_before = Pt(12)
-                clip_separator.paragraph_format.space_after = Pt(12)
-                add_horizontal_line(clip_separator)
-                doc.add_paragraph()  # 빈 줄
-            
-            # 클립 번호 및 설명 (들여쓰기)
-            clip_para = doc.add_paragraph()
-            clip_para.paragraph_format.left_indent = Inches(0.3)
-            clip_para.paragraph_format.space_before = Pt(8)
-            clip_para.paragraph_format.space_after = Pt(4)
-            
-            clip_number = clip_para.add_run(f"[{idx}] ")
-            clip_number.bold = True
-            clip_number.font.size = Pt(13)
-            clip_number.font.color.rgb = RGBColor(51, 51, 51)  # 진한 회색
-            
-            # 클립 설명 텍스트
-            sentence = clip.sentence if clip.sentence else clip.title
-            if sentence:
-                clip_desc = clip_para.add_run(sentence)
-                clip_desc.font.size = Pt(13)
-            
-            # 시간 정보가 있으면 추가
-            if clip.start_time is not None and clip.end_time is not None:
-                time_info = f" (시간: {clip.start_time:.2f}초 - {clip.end_time:.2f}초)"
-                time_run = clip_para.add_run(time_info)
-                time_run.font.size = Pt(11)
-                time_run.italic = True
-                time_run.font.color.rgb = RGBColor(128, 128, 128)  # 회색
-            
-            doc.add_paragraph()  # 빈 줄
-            
-            # 썸네일 이미지 추가 시도 (들여쓰기)
-            # 원본 동영상에서 시작 타임스탬프 부분을 썸네일로 사용
-            image_data = None
-            if clip.sourceVideo and clip.start_time is not None:
-                try:
-                    logger.info(f"원본 동영상 경로 찾기 시도: sourceVideo={clip.sourceVideo}, start_time={clip.start_time}, user_id={request.user_id}")
-                    # 원본 동영상 경로 찾기
-                    original_video_path = get_original_video_path(clip.sourceVideo, request.user_id)
-                    if original_video_path:
-                        logger.info(f"✅ 원본 동영상 경로 찾음: {original_video_path}")
-                        logger.info(f"원본 동영상에서 썸네일 추출: {original_video_path}, 시간: {clip.start_time}")
-                        image_data = get_video_thumbnail(original_video_path, clip.start_time)
-                        if image_data:
-                            logger.info(f"✅ 원본 동영상에서 썸네일 추출 성공: {len(image_data)} bytes")
-                        else:
-                            logger.warning("⚠️ 원본 동영상에서 썸네일 추출 실패 (None 반환)")
-                    else:
-                        logger.warning(f"⚠️ 원본 동영상을 찾을 수 없음: {clip.sourceVideo}")
-                except Exception as e:
-                    logger.warning(f"원본 동영상 썸네일 추출 실패 ({clip.sourceVideo}): {e}")
-                    import traceback
-                    logger.warning(f"원본 동영상 썸네일 추출 실패 상세: {traceback.format_exc()}")
-            
-            # 원본 동영상에서 썸네일을 가져오지 못한 경우 기존 로직 사용 (fallback)
-            if not image_data and clip.url:
-                try:
-                    if clip.url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
-                        image_data = download_image(clip.url)
-                    else:
-                        thumbnail_time = clip.start_time if clip.start_time is not None else 0.0
-                        image_data = get_video_thumbnail(clip.url, thumbnail_time)
-                except Exception as e:
-                    logger.warning(f"썸네일 처리 실패 (클립 {idx}, URL: {clip.url}): {e}")
-            
-            if image_data:
-                try:
-                    logger.info(f"썸네일 이미지 데이터 수신: {len(image_data)} bytes (클립 {idx})")
-                    image = Image.open(io.BytesIO(image_data))
-                    max_width = 5.0  # 인치 단위 (약간 더 크게)
-                    width, height = image.size
-                    logger.info(f"이미지 크기: {width}x{height} (클립 {idx})")
-                    # 너비가 최대 너비보다 크면 리사이즈
-                    if width > max_width * 72:  # 72 DPI 기준
-                        ratio = (max_width * 72) / width
-                        new_width = int(width * ratio)
-                        new_height = int(height * ratio)
-                        image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                        logger.info(f"이미지 리사이즈: {new_width}x{new_height} (클립 {idx})")
-                    
-                    img_byte_arr = io.BytesIO()
-                    image.save(img_byte_arr, format='PNG')
-                    img_byte_arr.seek(0)
 
-                    # 이미지 단락에 들여쓰기 추가
-                    img_para = doc.add_paragraph()
-                    img_para.paragraph_format.left_indent = Inches(0.5)
-                    img_para.paragraph_format.space_before = Pt(6)
-                    img_para.paragraph_format.space_after = Pt(12)
+        verify_user_exists(request.user_id)
 
-                    # 이미지를 단락에 추가 (BytesIO로 실패하면 임시 파일로 재시도)
-                    run = img_para.add_run()
-                    try:
-                        run.add_picture(img_byte_arr, width=Inches(max_width))
-                        logger.info(f"✅ 썸네일 이미지 추가 성공 (클립 {idx})")
-                    except Exception as pic_err:
-                        logger.warning(f"run.add_picture(BytesIO) 실패, 임시 파일로 재시도: {pic_err}")
-                        try:
-                            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
-                                tmp_img.write(img_byte_arr.getvalue())
-                                tmp_path = tmp_img.name
-                            run.add_picture(tmp_path, width=Inches(max_width))
-                            logger.info(f"✅ 썸네일 이미지 추가 성공 (임시파일) (클립 {idx})")
-                        except Exception as tmp_err:
-                            logger.warning(f"임시 파일로도 이미지 추가 실패: {tmp_err}")
-                        finally:
-                            try:
-                                if 'tmp_path' in locals() and os.path.exists(tmp_path):
-                                    os.unlink(tmp_path)
-                            except Exception:
-                                pass
-                except Exception as e:
-                    logger.warning(f"이미지 추가 실패 (클립 {idx}): {e}")
-                    import traceback
-                    logger.warning(f"이미지 추가 실패 상세: {traceback.format_exc()}")
-            else:
-                logger.warning(f"⚠️ 썸네일 이미지 데이터 없음 (클립 {idx})")
-            
-            doc.add_paragraph()  # 빈 줄
-        
-        # 보고서 내용을 텍스트로 변환 (데이터베이스 저장용) - 새로운 구조
-        report_content = f"# {title}\n\n"
-        report_content += f"**작성자:** {author}\n\n"
-        report_content += f"**작성 일자:** {current_date}\n\n"
-        report_content += "=" * 50 + "\n\n"
-        report_content += "## Q. 검색어\n\n"
-        report_content += f"{query if query else '검색어가 제공되지 않았습니다.'}\n\n"
-        report_content += "=" * 50 + "\n\n"
-        report_content += "## A. 검색 결과\n\n"
-        
-        for idx, clip in enumerate(clips, 1):
-            sentence = clip.sentence if clip.sentence else clip.title
-            if sentence:
-                report_content += f"{idx}. {sentence}"
-                if clip.start_time is not None and clip.end_time is not None:
-                    report_content += f" ({clip.start_time:.2f}초 - {clip.end_time:.2f}초)"
-                report_content += "\n\n"
-        
-        # 단어 수 계산
-        word_count = len(report_content.split())
-        
-        # 데이터베이스에 보고서 저장
-        video_ids = []
-        video_titles = []
-        for clip in clips:
-            if clip.id:
-                try:
-                    video_ids.append(int(clip.id))
-                except (ValueError, TypeError):
-                    pass
-            if clip.title:
-                video_titles.append(clip.title)
-        
-        video_ids_json = json.dumps(video_ids) if video_ids else None
-        video_titles_json = json.dumps(video_titles) if video_titles else None
-        
-        # Word 파일 저장
-        REPORTS_DIR.mkdir(exist_ok=True, parents=True)
-        
-        # 파일명 생성 (보고서 ID를 사용하기 위해 먼저 DB에 저장)
-        # 임시로 타임스탬프 사용
-        timestamp = int(time.time() * 1000)
-        safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        safe_title = safe_title.replace(' ', '_')[:50]  # 파일명 길이 제한
-        filename = f"{safe_title}_{timestamp}.docx"
-        file_path = REPORTS_DIR / filename
-        
-        # Word 문서 저장
-        doc.save(str(file_path))
-        
-        # 데이터베이스에 보고서 저장 (Word 파일 경로 포함)
-        report_id = create_report_service(user_id, title, description, report_content, word_count, video_ids_json, video_titles_json)
-        
-        # 보고서 ID를 사용하여 파일명 재생성 및 파일명 변경
-        final_filename = f"report_{report_id}_{timestamp}.docx"
-        final_file_path = REPORTS_DIR / final_filename
-        if file_path.exists():
-            file_path.rename(final_file_path)
-        final_file_url = f"/reports-files/{final_filename}"
-        
-        logger.info(f"워드 보고서 생성 완료: USER_ID={user_id}, REPORT_ID={report_id}, TITLE={title}, CLIPS={len(clips)}, FILE={final_filename}")
-        
+        # 서비스 레이어에 위임 (문서 생성 -> DB 저장 -> 파일 저장)
+        res = ReportService.create_word_report(
+            request.user_id,
+            request.title,
+            request.author or request.user_id,
+            request.description or "",
+            request.query or "",
+            [c.dict() for c in request.clips]
+        )
+
         return {
             "success": True,
-            "report_id": report_id,
-            "file_url": final_file_url,
+            "report_id": res.get('report_id'),
+            "file_url": res.get('file_url'),
             "message": "보고서가 성공적으로 생성되었습니다."
         }
     except HTTPException:
@@ -796,7 +430,7 @@ async def add_clips_to_report(
         for idx, clip in enumerate(clips, new_clip_start_idx):
             # 구분선 추가 (이전 클립과 구분)
             separator_para = doc.add_paragraph()
-            add_horizontal_line(separator_para)
+            DocumentService.add_horizontal_line(separator_para)
             
             # 클립 번호 및 제목
             doc.add_heading(f"{idx}. {clip.title}", level=1)
@@ -818,11 +452,11 @@ async def add_clips_to_report(
                 try:
                     logger.info(f"원본 동영상 경로 찾기 시도: sourceVideo={clip.sourceVideo}, start_time={clip.start_time}, user_id={user_id}")
                     # 원본 동영상 경로 찾기
-                    original_video_path = get_original_video_path(clip.sourceVideo, user_id)
+                    original_video_path = ThumbnailService.get_original_video_path(clip.sourceVideo, user_id)
                     if original_video_path:
                         logger.info(f"✅ 원본 동영상 경로 찾음: {original_video_path}")
                         logger.info(f"원본 동영상에서 썸네일 추출: {original_video_path}, 시간: {clip.start_time}")
-                        image_data = get_video_thumbnail(original_video_path, clip.start_time)
+                        image_data = ThumbnailService.get_video_thumbnail(original_video_path, clip.start_time)
                         if image_data:
                             logger.info(f"✅ 원본 동영상에서 썸네일 추출 성공: {len(image_data)} bytes")
                         else:
@@ -838,10 +472,10 @@ async def add_clips_to_report(
             if not image_data and clip.url:
                 try:
                     if clip.url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
-                        image_data = download_image(clip.url)
+                        image_data = ThumbnailService.download_image(clip.url)
                     else:
                         thumbnail_time = clip.start_time if clip.start_time is not None else 0.0
-                        image_data = get_video_thumbnail(clip.url, thumbnail_time)
+                        image_data = ThumbnailService.get_video_thumbnail(clip.url, thumbnail_time)
                 except Exception as e:
                     logger.warning(f"썸네일 처리 실패 ({clip.url}): {e}")
             
@@ -1106,7 +740,7 @@ async def update_report(
                     elif re.match(r'^={3,}$', line) or re.match(r'^-{3,}$', line):
                         in_list = False
                         separator_para = doc.add_paragraph()
-                        add_horizontal_line(separator_para)
+                        DocumentService.add_horizontal_line(separator_para)
                         current_paragraph = None
                     # 볼드/이탤릭 처리 (**text** 또는 *text*)
                     elif '**' in line or '*' in line:
@@ -1176,301 +810,9 @@ def format_time(seconds: Optional[float]) -> str:
     secs = int(seconds % 60)
     return f"{minutes:02d}:{secs:02d}"
 
-def normalize_url(url: str) -> str:
-    logger.info(f"[VSS] normalize_url 호출: url={url}")
-    """URL을 정규화 (상대 경로를 절대 URL로 변환)"""
-    if not url:
-        return url
-    
-    # 이미 전체 URL인 경우 (http:// 또는 https://로 시작)
-    if url.startswith('http://') or url.startswith('https://'):
-        return url
-    
-    # 상대 경로인 경우 API_BASE_URL과 결합
-    if url.startswith('/'):
-        base_url = API_BASE_URL.rstrip('/')
-        return f"{base_url}{url}"
-    
-    # 그 외의 경우 그대로 반환
-    return url
+# 썸네일/문서/파일 서비스는 `backend/database/services`로 이동했습니다.
 
-def download_image(url: str, timeout: int = 10) -> Optional[bytes]:
-    logger.info(f"[VSS] download_image 호출: url={url}")
-    """이미지 URL에서 이미지 다운로드"""
-    try:
-        # URL 정규화 (상대 경로를 절대 URL로 변환)
-        normalized_url = normalize_url(url)
-        logger.info(f"이미지 다운로드 시도: {normalized_url}")
-        response = requests.get(normalized_url, timeout=timeout, stream=True)
-        if response.status_code == 200:
-            return response.content
-        else:
-            logger.warning(f"이미지 다운로드 실패: HTTP {response.status_code} ({normalized_url})")
-        return None
-    except Exception as e:
-        logger.warning(f"이미지 다운로드 실패 ({url}): {e}")
-        return None
-
-def get_original_video_path(source_video: str, user_id: Optional[str] = None) -> Optional[str]:
-    logger.info(f"[VSS] get_original_video_path 호출: source_video={source_video}, user_id={user_id}")
-    """원본 동영상 파일 경로 찾기"""
-    if not source_video:
-        return None
-    
-    logger.info(f"원본 동영상 경로 찾기 시작: source_video={source_video}, user_id={user_id}")
-    
-    # URL인 경우 정규화
-    normalized_url = normalize_url(source_video) if source_video.startswith('/') or not source_video.startswith('http') else source_video
-    
-    # /video-files/ URL인 경우
-    if '/video-files/' in normalized_url:
-        filename = os.path.basename(normalized_url.split('/video-files/')[-1].split('?')[0])
-        local_path = VIDEOS_DIR / filename
-        logger.info(f"VIDEOS_DIR에서 찾기 시도: {local_path}")
-        if os.path.exists(local_path):
-            logger.info(f"원본 동영상 찾음 (VIDEOS_DIR): {local_path}")
-            return str(local_path)
-    # /converted-videos/ URL인 경우
-    elif '/converted-videos/' in normalized_url:
-        filename = os.path.basename(normalized_url.split('/converted-videos/')[-1].split('?')[0])
-        local_path = CONVERTED_VIDEOS_DIR / filename
-        logger.info(f"CONVERTED_VIDEOS_DIR에서 찾기 시도: {local_path}")
-        if os.path.exists(local_path):
-            logger.info(f"원본 동영상 찾음 (CONVERTED_VIDEOS_DIR): {local_path}")
-            return str(local_path)
-    
-    # 파일명만 있는 경우 (경로 없음)
-    video_filename = os.path.basename(source_video.split('?')[0])  # 쿼리 파라미터 제거
-    
-    # 데이터베이스에서 실제 파일 경로 조회 (user_id가 있는 경우)
-    if user_id:
-        try:
-            # FILE_NAME으로 정확히 일치하는 경우 (service)
-            v = VideoService.find_by_filename(user_id, video_filename)
-            if v:
-                file_path = getattr(v, 'FILE_PATH', None)
-                file_url = getattr(v, 'FILE_URL', None)
-                logger.info(f"DB에서 파일 정보 찾음: FILE_PATH={file_path}, FILE_URL={file_url}")
-                if file_path:
-                    resolved_fp = resolve_storage_file_path(file_path)
-                    if resolved_fp:
-                        logger.info(f"원본 동영상 찾음 (DB FILE_PATH): {resolved_fp}")
-                        return str(resolved_fp)
-                if file_path:
-                    local_path = VIDEOS_DIR / os.path.basename(file_path)
-                    if os.path.exists(local_path):
-                        logger.info(f"원본 동영상 찾음 (DB FILE_PATH 상대 경로): {local_path}")
-                        return str(local_path)
-                if file_url:
-                    url_filename = os.path.basename(file_url.split('?')[0])
-                    local_path = VIDEOS_DIR / url_filename
-                    if os.path.exists(local_path):
-                        logger.info(f"원본 동영상 찾음 (DB FILE_URL): {local_path}")
-                        return str(local_path)
-                    local_path = CONVERTED_VIDEOS_DIR / url_filename
-                    if os.path.exists(local_path):
-                        logger.info(f"원본 동영상 찾음 (DB FILE_URL converted): {local_path}")
-                        return str(local_path)
-            # 부분 일치 검색 (service)
-            v2 = VideoService.find_partial_by_filename(user_id, video_filename)
-            if v2:
-                file_path = getattr(v2, 'FILE_PATH', None)
-                file_url = getattr(v2, 'FILE_URL', None)
-                logger.info(f"DB에서 부분 일치 파일 찾음: FILE_PATH={file_path}, FILE_URL={file_url}")
-                if file_path:
-                    resolved_fp = resolve_storage_file_path(file_path)
-                    if resolved_fp:
-                        logger.info(f"원본 동영상 찾음 (DB 부분 일치 FILE_PATH): {resolved_fp}")
-                        return str(resolved_fp)
-                if file_path:
-                    local_path = VIDEOS_DIR / os.path.basename(file_path)
-                    if os.path.exists(local_path):
-                        logger.info(f"원본 동영상 찾음 (DB 부분 일치 상대 경로): {local_path}")
-                        return str(local_path)
-        except Exception as e:
-            logger.warning(f"DB에서 원본 동영상 조회 실패: {e}")
-    # VIDEOS_DIR에서 직접 찾기
-    local_path = VIDEOS_DIR / video_filename
-    logger.info(f"VIDEOS_DIR에서 직접 찾기 시도: {local_path}")
-    if os.path.exists(local_path):
-        logger.info(f"원본 동영상 찾음 (VIDEOS_DIR 직접): {local_path}")
-        return str(local_path)
-    
-    # CONVERTED_VIDEOS_DIR에서 찾기
-    local_path = CONVERTED_VIDEOS_DIR / video_filename
-    logger.info(f"CONVERTED_VIDEOS_DIR에서 직접 찾기 시도: {local_path}")
-    if os.path.exists(local_path):
-        logger.info(f"원본 동영상 찾음 (CONVERTED_VIDEOS_DIR 직접): {local_path}")
-        return str(local_path)
-    
-    
-    
-    # 직접 파일 경로인 경우 (또는 DB에 남은 구 경로 → result/)
-    resolved_src = resolve_storage_file_path(source_video)
-    if resolved_src:
-        logger.info(f"원본 동영상 찾음 (경로 해석): {resolved_src}")
-        return str(resolved_src)
-    if os.path.exists(source_video):
-        logger.info(f"원본 동영상 찾음 (직접 경로): {source_video}")
-        return source_video
-    
-    # URL인 경우 다운로드 필요 (나중에 처리)
-    if normalized_url.startswith('http://') or normalized_url.startswith('https://'):
-        logger.info(f"원본 동영상 URL 반환 (다운로드 필요): {normalized_url}")
-        return normalized_url
-    
-    logger.warning(f"원본 동영상을 찾을 수 없음: {source_video} (검색 경로: {VIDEOS_DIR}, {CONVERTED_VIDEOS_DIR})")
-    return None
-
-def get_video_thumbnail(video_url: str, time_seconds: float = 0.0) -> Optional[bytes]:
-    logger.info(f"[VSS] get_video_thumbnail 호출: video_url={video_url}, time_seconds={time_seconds}")
-    """비디오 URL에서 썸네일 추출 (지정된 시간의 프레임)"""
-    video_path = None
-    is_temp_file = False
-    
-    try:
-        # URL 정규화 (상대 경로를 절대 URL로 변환)
-        normalized_url = normalize_url(video_url)
-        logger.info(f"비디오 썸네일 추출 시도: {normalized_url}")
-        
-        # URL을 로컬 파일 경로로 변환 시도
-        local_path = None
-        
-        # /fast-search-output/ URL인 경우 (고속 검색 CV 출력)
-        if '/fast-search-output/' in normalized_url:
-            filename = os.path.basename(normalized_url.split('/fast-search-output/')[-1].split('?')[0])
-            local_path = FAST_SEARCH_OUTPUT_DIR / filename
-        # /video-files/ URL인 경우
-        elif '/video-files/' in normalized_url:
-            filename = os.path.basename(normalized_url.split('/video-files/')[-1].split('?')[0])  # 쿼리 파라미터 제거
-            local_path = VIDEOS_DIR / filename
-        # /converted-videos/ URL인 경우
-        elif '/converted-videos/' in normalized_url:
-            filename = os.path.basename(normalized_url.split('/converted-videos/')[-1].split('?')[0])  # 쿼리 파라미터 제거
-            local_path = CONVERTED_VIDEOS_DIR / filename
-        
-        # 로컬 파일 경로가 존재하는 경우 사용
-        if local_path and os.path.exists(local_path):
-            video_path = str(local_path)
-            logger.info(f"로컬 파일 사용: {video_path}")
-        # 직접 파일 경로인 경우
-        elif os.path.exists(video_url):
-            video_path = video_url
-            logger.info(f"직접 파일 경로 사용: {video_path}")
-        else:
-            # URL인 경우 임시 파일로 다운로드
-            try:
-                logger.info(f"URL에서 비디오 다운로드 시도: {normalized_url}")
-                response = requests.get(normalized_url, timeout=30, stream=True)
-                if response.status_code != 200:
-                    logger.warning(f"비디오 다운로드 실패: HTTP {response.status_code} ({normalized_url})")
-                    return None
-                
-                # 임시 파일 생성
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        tmp_file.write(chunk)
-                    video_path = tmp_file.name
-                    is_temp_file = True
-                    logger.info(f"비디오 다운로드 완료: {video_path}")
-            except Exception as e:
-                logger.warning(f"비디오 다운로드 실패 ({normalized_url}): {e}")
-                return None
-        
-        if not video_path or not os.path.exists(video_path):
-            return None
-        
-        # moviepy로 비디오 열기
-        VFC = get_VideoFileClip()
-        video = VFC(video_path)
-
-        # 지정된 시간의 프레임 추출 (기본값: 첫 프레임)
-        frame_time = min(time_seconds, getattr(video, 'duration', 0) - 0.1) if getattr(video, 'duration', None) else 0.0
-        logger.info(f"프레임 추출 시간: {frame_time}초 (비디오 길이: {getattr(video, 'duration', None)}초)")
-        frame = video.get_frame(frame_time)
-        try:
-            video.close()
-        except Exception:
-            pass
-        
-        # PIL Image로 변환
-        img = Image.fromarray(frame)
-        logger.info(f"프레임 추출 성공: {img.width}x{img.height}")
-        
-        # 이미지 크기 조정 (최대 너비 800px)
-        max_width = 800
-        if img.width > max_width:
-            ratio = max_width / img.width
-            new_size = (max_width, int(img.height * ratio))
-            img = img.resize(new_size, Image.Resampling.LANCZOS)
-            logger.info(f"이미지 리사이즈: {new_size}")
-        
-        # BytesIO로 변환
-        img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='PNG')
-        img_byte_arr.seek(0)
-        
-        result_size = len(img_byte_arr.getvalue())
-        logger.info(f"✅ 썸네일 추출 완료: {result_size} bytes")
-        return img_byte_arr.getvalue()
-    except Exception as e:
-        logger.warning(f"비디오 썸네일 추출 실패 ({video_url}): {e}")
-        return None
-    finally:
-        # 임시 파일 정리 (URL에서 다운로드한 경우만)
-        if is_temp_file and video_path and os.path.exists(video_path):
-            try:
-                os.unlink(video_path)
-            except:
-                pass
-
-def convert_docx_to_pdf(docx_path: str, pdf_path: Optional[str] = None) -> Optional[str]:
-    logger.info(f"[VSS] convert_docx_to_pdf 호출: docx_path={docx_path}, pdf_path={pdf_path}")
-    """DOCX 파일을 PDF로 변환
-    
-    Args:
-        docx_path: DOCX 파일 경로
-        pdf_path: 출력 PDF 파일 경로 (None이면 자동 생성)
-    
-    Returns:
-        PDF 파일 경로 (성공 시), None (실패 시)
-    """
-    if not PDF_CONVERSION_AVAILABLE:
-        logger.error("PDF 변환 라이브러리가 설치되지 않았습니다.")
-        return None
-    
-    try:
-        docx_path_obj = Path(docx_path)
-        if not docx_path_obj.exists():
-            logger.error(f"DOCX 파일을 찾을 수 없습니다: {docx_path}")
-            return None
-        
-        # PDF 경로가 지정되지 않으면 자동 생성
-        if pdf_path is None:
-            pdf_path = str(docx_path_obj.with_suffix('.pdf'))
-        else:
-            pdf_path_obj = Path(pdf_path)
-            pdf_path_obj.parent.mkdir(parents=True, exist_ok=True)
-        
-        # PDF 변환 실행
-        if PDF_CONVERSION_METHOD == "docx2pdf":
-            # Windows: docx2pdf 사용 (MS Word 필요)
-            convert(docx_path, pdf_path)
-        else:
-            logger.error(f"지원하지 않는 PDF 변환 방법: {PDF_CONVERSION_METHOD}")
-            return None
-        
-        # 변환된 PDF 파일 확인
-        if os.path.exists(pdf_path):
-            logger.info(f"PDF 변환 완료: {docx_path} -> {pdf_path}")
-            return pdf_path
-        else:
-            logger.error(f"PDF 변환 실패: 파일이 생성되지 않았습니다. {pdf_path}")
-            return None
-            
-    except Exception as e:
-        logger.error(f"PDF 변환 중 오류 발생: {e}")
-        return None
+# PDF 변환은 document service로 이동했습니다 (vss_document_service.convert_docx_to_pdf)
 
 @router.get("/{report_id}/pdf")
 async def get_report_pdf(
@@ -1483,9 +825,7 @@ async def get_report_pdf(
         if not user_id:
             raise HTTPException(status_code=400, detail="사용자 ID가 필요합니다.")
         
-        if not PDF_CONVERSION_AVAILABLE:
-            raise HTTPException(status_code=503, detail="PDF 변환 기능을 사용할 수 없습니다. 서버에 docx2pdf가 설치되어 있는지 확인하세요.")
-        
+        # PDF 변환은 document service에서 처리합니다.
         verify_user_exists(user_id)
         
         row = get_report(report_id, user_id)
@@ -1511,7 +851,7 @@ async def get_report_pdf(
         
         if not pdf_exists or docx_mtime > pdf_mtime:
             # PDF 변환 실행
-            converted_pdf_path = convert_docx_to_pdf(docx_file_path, pdf_file_path)
+            converted_pdf_path = DocumentService.convert_docx_to_pdf(docx_file_path, pdf_file_path)
             if not converted_pdf_path:
                 raise HTTPException(status_code=500, detail="PDF 변환에 실패했습니다.")
         
@@ -1542,9 +882,7 @@ async def regenerate_report_pdf(
         if not user_id:
             raise HTTPException(status_code=400, detail="사용자 ID가 필요합니다.")
         
-        if not PDF_CONVERSION_AVAILABLE:
-            raise HTTPException(status_code=503, detail="PDF 변환 기능을 사용할 수 없습니다.")
-        
+        # PDF 변환은 document service에서 처리합니다.
         verify_user_exists(user_id)
         
         row = get_report(report_id, user_id)
@@ -1569,7 +907,7 @@ async def regenerate_report_pdf(
                 logger.warning(f"기존 PDF 파일 삭제 실패: {e}")
         
         # PDF 변환 실행
-        converted_pdf_path = convert_docx_to_pdf(docx_file_path, pdf_file_path)
+        converted_pdf_path = DocumentService.convert_docx_to_pdf(docx_file_path, pdf_file_path)
         if not converted_pdf_path:
             raise HTTPException(status_code=500, detail="PDF 변환에 실패했습니다.")
         
