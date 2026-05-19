@@ -1215,45 +1215,57 @@ function state_up() {
     echo "[INFO] Downloading alerts models from NGC..."
 
     if [[ "${dry_run}" == "true" ]]; then
-      echo "[DRY-RUN] rm -rf ${data_directory}/models"
+      echo "[DRY-RUN] keep existing ${data_directory}/models (no delete)"
       echo "[DRY-RUN] mkdir -p ${data_directory}/models/rtdetr-its"
       echo "[DRY-RUN] mkdir -p ${data_directory}/models/gdino"
       echo "[DRY-RUN] NGC_CLI_API_KEY=<ngc-cli-api-key> ngc registry model download-version nvidia/tao/trafficcamnet_transformer_lite:deployable_resnet50_v2.0"
-      echo "[DRY-RUN] mv trafficcamnet_transformer_lite_vdeployable_resnet50_v2.0/resnet50_trafficcamnet_rtdetr.fp16.onnx ${data_directory}/models/rtdetr-its/model_epoch_035.fp16.onnx"
-      echo "[DRY-RUN] rm -rf trafficcamnet_transformer_lite_vdeployable_resnet50_v2.0"
+      echo "[DRY-RUN] cp trafficcamnet_transformer_lite_vdeployable_resnet50_v2.0/resnet50_trafficcamnet_rtdetr.fp16.onnx ${data_directory}/models/rtdetr-its/model_epoch_035.fp16.onnx"
       echo "[DRY-RUN] NGC_CLI_API_KEY=<ngc-cli-api-key> ngc registry model download-version nvidia/tao/mask_grounding_dino:mask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm"
-      echo "[DRY-RUN] mv mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm/mgdino_mask_head_pruned_dynamic_batch.onnx ${data_directory}/models/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx"
-      echo "[DRY-RUN] rm -rf mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm"
+      echo "[DRY-RUN] cp mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm/mgdino_mask_head_pruned_dynamic_batch.onnx ${data_directory}/models/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx"
       echo "[DRY-RUN] chmod -R 777 ${data_directory}/models"
     else
-      rm -rf "${data_directory}/models"
-
       mkdir -p "${data_directory}/models/rtdetr-its"
       mkdir -p "${data_directory}/models/gdino"
 
-      # Download and install trafficcamnet RT-DETR model
-      NGC_CLI_API_KEY="${ngc_cli_api_key}" ngc \
-        registry \
-        model \
-        download-version \
-        nvidia/tao/trafficcamnet_transformer_lite:deployable_resnet50_v2.0
+      # Download and install trafficcamnet RT-DETR model only when missing.
+      if [[ ! -f "${data_directory}/models/rtdetr-its/model_epoch_035.fp16.onnx" ]]; then
+        if [[ -f "trafficcamnet_transformer_lite_vdeployable_resnet50_v2.0/resnet50_trafficcamnet_rtdetr.fp16.onnx" ]]; then
+          echo "[INFO] Found pre-downloaded trafficcamnet RT-DETR model, copying..."
+          cp trafficcamnet_transformer_lite_vdeployable_resnet50_v2.0/resnet50_trafficcamnet_rtdetr.fp16.onnx \
+            "${data_directory}/models/rtdetr-its/model_epoch_035.fp16.onnx"
+        else
+          NGC_CLI_API_KEY="${ngc_cli_api_key}" ngc \
+            registry \
+            model \
+            download-version \
+            nvidia/tao/trafficcamnet_transformer_lite:deployable_resnet50_v2.0
 
-      mv trafficcamnet_transformer_lite_vdeployable_resnet50_v2.0/resnet50_trafficcamnet_rtdetr.fp16.onnx \
-        "${data_directory}/models/rtdetr-its/model_epoch_035.fp16.onnx"
+          cp trafficcamnet_transformer_lite_vdeployable_resnet50_v2.0/resnet50_trafficcamnet_rtdetr.fp16.onnx \
+            "${data_directory}/models/rtdetr-its/model_epoch_035.fp16.onnx"
+        fi
+      else
+        echo "[INFO] Reusing existing alerts RT-DETR model: ${data_directory}/models/rtdetr-its/model_epoch_035.fp16.onnx"
+      fi
 
-      rm -rf trafficcamnet_transformer_lite_vdeployable_resnet50_v2.0
+      # Download and install grounding DINO model only when missing.
+      if [[ ! -f "${data_directory}/models/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx" ]]; then
+        if [[ -f "mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm/mgdino_mask_head_pruned_dynamic_batch.onnx" ]]; then
+          echo "[INFO] Found pre-downloaded grounding DINO model, copying..."
+          cp mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm/mgdino_mask_head_pruned_dynamic_batch.onnx \
+            "${data_directory}/models/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx"
+        else
+          NGC_CLI_API_KEY="${ngc_cli_api_key}" ngc \
+            registry \
+            model \
+            download-version \
+            nvidia/tao/mask_grounding_dino:mask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm
 
-      # Download and install grounding DINO model
-      NGC_CLI_API_KEY="${ngc_cli_api_key}" ngc \
-        registry \
-        model \
-        download-version \
-        nvidia/tao/mask_grounding_dino:mask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm
-
-      mv mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm/mgdino_mask_head_pruned_dynamic_batch.onnx \
-        "${data_directory}/models/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx"
-
-      rm -rf mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm
+          cp mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm/mgdino_mask_head_pruned_dynamic_batch.onnx \
+            "${data_directory}/models/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx"
+        fi
+      else
+        echo "[INFO] Reusing existing alerts GDINO model: ${data_directory}/models/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx"
+      fi
 
       chmod -R 777 "${data_directory}/models"
       echo "[INFO] Alerts models downloaded and installed to ${data_directory}/models"
@@ -1265,42 +1277,80 @@ function state_up() {
     echo "[INFO] Downloading models from NGC..."
 
     if [[ "${dry_run}" == "true" ]]; then
-      echo "[DRY-RUN] rm -rf ${data_directory}/models"
+      echo "[DRY-RUN] keep existing ${data_directory}/models (no delete)"
       echo "[DRY-RUN] mkdir -p ${data_directory}/models"
       echo "[DRY-RUN] NGC_CLI_API_KEY=<ngc-cli-api-key> ngc registry model download-version nvidia/tao/rtdetr_2d_warehouse:deployable_efficientvit_l2_v1.0.1"
       echo "[DRY-RUN] NGC_CLI_API_KEY=<ngc-cli-api-key> ngc registry model download-version nvidia/tao/radio-clip:deployable_v1.0"
-      echo "[DRY-RUN] mv rtdetr_2d_warehouse_vdeployable_efficientvit_l2_v1.0.1/rtdetr_warehouse_v1.0.1.fp16.onnx ${data_directory}/models/rtdetr_warehouse_v1.0.1.fp16.onnx"
-      echo "[DRY-RUN] mv radio-clip_vdeployable_v1.0/radio-clip_v1.0.onnx ${data_directory}/models/radio-clip_v1.0.onnx"
-      echo "[DRY-RUN] mv radio-clip_vdeployable_v1.0/radio-clip_v1.0_weights.bin ${data_directory}/models/radio-clip_v1.0_weights.bin"
-      echo "[DRY-RUN] mv radio-clip_vdeployable_v1.0/radio-clip_v1.0_tokenizer ${data_directory}/models/radio-clip_v1.0_tokenizer"
-      echo "[DRY-RUN] rm -rf rtdetr_2d_warehouse_vdeployable_efficientvit_l2_v1.0.1"
-      echo "[DRY-RUN] rm -rf radio-clip_vdeployable_v1.0"
+      echo "[DRY-RUN] cp rtdetr_2d_warehouse_vdeployable_efficientvit_l2_v1.0.1/rtdetr_warehouse_v1.0.1.fp16.onnx ${data_directory}/models/rtdetr_warehouse_v1.0.1.fp16.onnx"
+      echo "[DRY-RUN] cp radio-clip_vdeployable_v1.0/radio-clip_v1.0.onnx ${data_directory}/models/radio-clip_v1.0.onnx"
+      echo "[DRY-RUN] cp radio-clip_vdeployable_v1.0/radio-clip_v1.0_weights.bin ${data_directory}/models/radio-clip_v1.0_weights.bin"
+      echo "[DRY-RUN] cp -r radio-clip_vdeployable_v1.0/radio-clip_v1.0_tokenizer ${data_directory}/models/radio-clip_v1.0_tokenizer"
       echo "[DRY-RUN] chmod -R 777 ${data_directory}/models"
     else
-      rm -rf "${data_directory}/models"
-
       mkdir -p "${data_directory}/models"
 
-      # Download and install RT-DETR warehouse model (TAO)
-      NGC_CLI_API_KEY="${ngc_cli_api_key}" ngc \
-        registry \
-        model \
-        download-version \
-        nvidia/tao/rtdetr_2d_warehouse:deployable_efficientvit_l2_v1.0.1
+      _search_models_dir="${data_directory}/models"
+      _skip_search_model_download="${VSS_SKIP_SEARCH_MODEL_DOWNLOAD:-false}"
+      _has_rtdetr="false"
+      _has_radio_onnx="false"
+      _has_radio_weights="false"
+      _has_radio_tokenizer="false"
 
-      NGC_CLI_API_KEY="${ngc_cli_api_key}" ngc \
-        registry \
-        model \
-        download-version \
-        nvidia/tao/radio-clip:deployable_v1.0
+      [[ -f "${_search_models_dir}/rtdetr_warehouse_v1.0.1.fp16.onnx" ]] && _has_rtdetr="true"
+      [[ -f "${_search_models_dir}/radio-clip_v1.0.onnx" ]] && _has_radio_onnx="true"
+      [[ -f "${_search_models_dir}/radio-clip_v1.0_weights.bin" ]] && _has_radio_weights="true"
+      [[ -d "${_search_models_dir}/radio-clip_v1.0_tokenizer" ]] && _has_radio_tokenizer="true"
 
-      mv rtdetr_2d_warehouse_vdeployable_efficientvit_l2_v1.0.1/rtdetr_warehouse_v1.0.1.fp16.onnx "${data_directory}/models/rtdetr_warehouse_v1.0.1.fp16.onnx"
-      mv radio-clip_vdeployable_v1.0/radio-clip_v1.0.onnx "${data_directory}/models/radio-clip_v1.0.onnx"
-      mv radio-clip_vdeployable_v1.0/radio-clip_v1.0_weights.bin "${data_directory}/models/radio-clip_v1.0_weights.bin"
-      mv radio-clip_vdeployable_v1.0/radio-clip_v1.0_tokenizer "${data_directory}/models/radio-clip_v1.0_tokenizer"
+      # If all four required artifacts are already present, never hit NGC.
+      if [[ "${_has_rtdetr}" == "true" ]] && [[ "${_has_radio_onnx}" == "true" ]] && [[ "${_has_radio_weights}" == "true" ]] && [[ "${_has_radio_tokenizer}" == "true" ]]; then
+        echo "[INFO] Reusing pre-staged search models in ${_search_models_dir}; skipping NGC download"
+      else
+        if [[ "${_skip_search_model_download,,}" == "true" ]]; then
+          echo "[ERROR] VSS_SKIP_SEARCH_MODEL_DOWNLOAD=true but one or more required search model artifacts are missing in ${_search_models_dir}"
+          echo "[ERROR] Required: rtdetr_warehouse_v1.0.1.fp16.onnx, radio-clip_v1.0.onnx, radio-clip_v1.0_weights.bin, radio-clip_v1.0_tokenizer/"
+          exit 1
+        fi
 
-      rm -rf rtdetr_2d_warehouse_vdeployable_efficientvit_l2_v1.0.1
-      rm -rf radio-clip_vdeployable_v1.0
+        # Download and install RT-DETR warehouse model only when missing.
+        if [[ "${_has_rtdetr}" != "true" ]]; then
+          if [[ -f "rtdetr_2d_warehouse_vdeployable_efficientvit_l2_v1.0.1/rtdetr_warehouse_v1.0.1.fp16.onnx" ]]; then
+            echo "[INFO] Found pre-downloaded RT-DETR warehouse model, copying..."
+            cp rtdetr_2d_warehouse_vdeployable_efficientvit_l2_v1.0.1/rtdetr_warehouse_v1.0.1.fp16.onnx "${_search_models_dir}/rtdetr_warehouse_v1.0.1.fp16.onnx"
+          else
+            NGC_CLI_API_KEY="${ngc_cli_api_key}" ngc \
+              registry \
+              model \
+              download-version \
+              nvidia/tao/rtdetr_2d_warehouse:deployable_efficientvit_l2_v1.0.1
+
+            cp rtdetr_2d_warehouse_vdeployable_efficientvit_l2_v1.0.1/rtdetr_warehouse_v1.0.1.fp16.onnx "${_search_models_dir}/rtdetr_warehouse_v1.0.1.fp16.onnx"
+          fi
+        else
+          echo "[INFO] Reusing existing search RT-DETR model: ${_search_models_dir}/rtdetr_warehouse_v1.0.1.fp16.onnx"
+        fi
+
+        # Download and install radio-clip model files only when missing.
+        if [[ "${_has_radio_onnx}" != "true" ]] || [[ "${_has_radio_weights}" != "true" ]] || [[ "${_has_radio_tokenizer}" != "true" ]]; then
+          if [[ -f "radio-clip_vdeployable_v1.0/radio-clip_v1.0.onnx" ]]; then
+            echo "[INFO] Found pre-downloaded radio-clip model, copying..."
+            cp radio-clip_vdeployable_v1.0/radio-clip_v1.0.onnx "${_search_models_dir}/radio-clip_v1.0.onnx"
+            [[ -f "radio-clip_vdeployable_v1.0/radio-clip_v1.0_weights.bin" ]] && cp radio-clip_vdeployable_v1.0/radio-clip_v1.0_weights.bin "${_search_models_dir}/radio-clip_v1.0_weights.bin"
+            [[ -d "radio-clip_vdeployable_v1.0/radio-clip_v1.0_tokenizer" ]] && cp -r radio-clip_vdeployable_v1.0/radio-clip_v1.0_tokenizer "${_search_models_dir}/radio-clip_v1.0_tokenizer"
+          else
+            NGC_CLI_API_KEY="${ngc_cli_api_key}" ngc \
+              registry \
+              model \
+              download-version \
+              nvidia/tao/radio-clip:deployable_v1.0
+
+            cp radio-clip_vdeployable_v1.0/radio-clip_v1.0.onnx "${_search_models_dir}/radio-clip_v1.0.onnx"
+            cp radio-clip_vdeployable_v1.0/radio-clip_v1.0_weights.bin "${_search_models_dir}/radio-clip_v1.0_weights.bin"
+            cp -r radio-clip_vdeployable_v1.0/radio-clip_v1.0_tokenizer "${_search_models_dir}/radio-clip_v1.0_tokenizer"
+          fi
+        else
+          echo "[INFO] Reusing existing search radio-clip model files in ${_search_models_dir}"
+        fi
+      fi
 
       chmod -R 777 "${data_directory}/models"
       echo "[INFO] Search models downloaded and installed to ${data_directory}/models"

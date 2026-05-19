@@ -32,5 +32,8 @@
         "@next/swc-win32-arm64-msvc": "15.5.11",
         "@next/swc-win32-x64-msvc": "15.5.11"
     },
-    "packageManager": "npm@9.0.0"
+    "packageManager": "npm@9.0.0",
+    "dependencies": {
+        "pg": "^8.21.0"
+    }
 }
