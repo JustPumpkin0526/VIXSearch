@@ -5,6 +5,7 @@ import { appWithTranslation } from 'next-i18next';
 import type { AppProps } from 'next/app';
 import { Inter } from 'next/font/google';
 import { useEffect } from 'react';
+import { useAuth } from '../hooks/useAuth';
 
 import '../styles/globals.css';
 import 'rsuite/dist/rsuite.min.css';
@@ -49,6 +50,29 @@ function App({ Component, pageProps }: AppProps) {
       window.fetch = originalFetch;
     };
   }, []);
+
+  // Enforce login: redirect unauthenticated users to /auth/login
+  // Use a safe client-only redirect to avoid calling `useRouter()` during SSR
+  const { ready, isAuthenticated } = useAuth();
+  useEffect(() => {
+    if (!ready) return;
+    const path = typeof window !== 'undefined' ? window.location.pathname : '';
+    const isAuthPath = path.startsWith('/auth');
+    if (!isAuthenticated && !isAuthPath) {
+      (async () => {
+        try {
+          const mod = await import('next/router');
+          if (mod && mod.default && typeof mod.default.replace === 'function') {
+            mod.default.replace('/auth/login');
+            return;
+          }
+        } catch (e) {
+          // fall through to hard redirect
+        }
+        window.location.replace('/auth/login');
+      })();
+    }
+  }, [ready, isAuthenticated]);
 
   return (
     <div className={inter.className}>

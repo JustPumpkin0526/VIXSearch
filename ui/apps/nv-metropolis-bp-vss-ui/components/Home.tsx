@@ -36,6 +36,7 @@ import packageJson from '../package.json';
 import { APPLICATION_TITLE, APPLICATION_SUBTITLE } from '../constants/constants';
 
 import { ModeControlsSection } from './ModeControlsSection';
+import HeaderLogin from './HeaderLogin';
 
 
 // Type definitions for SSR data
@@ -747,6 +748,8 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
             >
               {isDark ? <IconSun size={24} /> : <IconMoon size={24} />}
             </button>
+            {/* Header login placed to the right of theme control */}
+            <HeaderLogin />
           </div>
         </div>
       </header>

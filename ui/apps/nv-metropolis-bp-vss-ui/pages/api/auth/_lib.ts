@@ -28,13 +28,19 @@ function parseDurationSeconds(raw: string | undefined, fallbackSec: number): num
 }
 
 function getPool(): Pool {
-  if (!DATABASE_URL) {
-    throw new Error('UI_AUTH_DATABASE_URL is required in DB-only auth mode');
-  }
   if (!pool) {
-    pool = new Pool({
-      connectionString: DATABASE_URL,
-    });
+    if (DATABASE_URL) {
+      pool = new Pool({ connectionString: DATABASE_URL });
+    } else {
+      // Fallback: build connection string from common env vars when UI_AUTH_DATABASE_URL is not provided
+      const host = String(process.env.UI_AUTH_DB_HOST || process.env.POSTGRES_HOST || 'localhost');
+      const port = String(process.env.UI_AUTH_DB_PORT || process.env.AUTH_DB_PORT || process.env.POSTGRES_PORT || '5432');
+      const user = String(process.env.UI_AUTH_DB_USER || process.env.POSTGRES_USER || 'vss');
+      const password = String(process.env.UI_AUTH_DB_PASSWORD || process.env.POSTGRES_PASSWORD || '');
+      const database = String(process.env.UI_AUTH_DB_NAME || process.env.POSTGRES_DB || 'vss_ui_auth');
+      const conn = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
+      pool = new Pool({ connectionString: conn });
+    }
   }
   return pool;
 }
@@ -49,6 +55,18 @@ async function initPostgresStore(): Promise<void> {
             username TEXT PRIMARY KEY,
             password_hash TEXT NOT NULL,
             salt TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
+        `);
+        // Table for storing uploaded videos per user (lightweight schema)
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS user_videos (
+            id SERIAL PRIMARY KEY,
+            sensor_id TEXT,
+            video_name TEXT,
+            timestamp TIMESTAMPTZ,
+            file_path TEXT,
+            current_user_id TEXT,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           );
         `);
@@ -86,7 +104,7 @@ export async function findUserByUsername(username: string): Promise<StoredUser |
 export async function insertUser(user: StoredUser): Promise<boolean> {
   await initPostgresStore();
   const insertSql = `INSERT INTO ui_auth_users (username, password_hash, salt, created_at)\n     VALUES ($1, $2, $3, $4)\n     ON CONFLICT (username) DO NOTHING`;
-  console.log('[insertUser] SQL:', insertSql, 'params:', [user.username, user.passwordHash, user.salt, user.createdAt]);
+  // Avoid logging password hash/salt to reduce risk of leakage in logs
   const result = await getPool().query(
     insertSql,
     [user.username, user.passwordHash, user.salt, user.createdAt]
