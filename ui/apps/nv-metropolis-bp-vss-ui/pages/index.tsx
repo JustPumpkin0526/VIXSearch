@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 import { GetServerSideProps } from 'next';
 import Head from 'next/head';
+import dynamic from 'next/dynamic';
 
-import Home from '../components/Home';
+// Load the main Home UI only on the client to avoid evaluating browser-only code during SSR
+const Home = dynamic(() => import('../components/Home'), { ssr: false });
 import { APPLICATION_TITLE } from '../constants/constants';
 
 // Server-side props with data fetching

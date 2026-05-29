@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { env } from 'next-runtime-env';
 import type { ChatSidebarControlHandlers } from '@nemo-agent-toolkit/ui';
-import { RuntimeConfigProvider } from '@nemo-agent-toolkit/ui';
+import { RuntimeConfigProvider, useWorkflowName } from '@nemo-agent-toolkit/ui';
 import type { 
   AlertsSidebarControlHandlers,
   SearchSidebarControlHandlers,
@@ -90,20 +90,18 @@ interface TabConfig {
 // Dynamic component imports based on configuration
 // These are loaded at runtime only if the corresponding tab is enabled
 const dynamicComponents = {
-  NemoAgentToolkitApp: dynamic(() => 
+  NemoAgentToolkitApp: dynamic(() =>
     import('@nemo-agent-toolkit/ui').then(mod => mod.NemoAgentToolkitApp).catch((error) => {
       console.error('[DynamicImport] Failed to load NemoAgentToolkitApp:', error);
       return () => (
         <div className="flex-1 p-6 overflow-auto">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Chat</h2>
-          <p className="text-gray-600 dark:text-gray-400">
-            NemoAgentToolkit component library not available. Please install @nemo-agent-toolkit/ui package.
-          </p>
+          <p className="text-gray-600 dark:text-gray-400">NemoAgentToolkit component library not available. Please install @nemo-agent-toolkit/ui package.</p>
         </div>
       );
     }),
     { 
-      ssr: true,
+      ssr: false,
       loading: () => (
         <div className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-center h-full">
@@ -113,20 +111,18 @@ const dynamicComponents = {
       )
     }
   ),
-  AlertsComponent: dynamic(() => 
+  AlertsComponent: dynamic(() =>
     import('@nv-metropolis-bp-vss-ui/all').then(mod => mod.AlertsComponent).catch((error) => {
       console.error('[DynamicImport] Failed to load AlertsComponent:', error);
       return () => (
         <div className="flex-1 p-6 overflow-auto">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Alerts</h2>
-          <p className="text-gray-600 dark:text-gray-400">
-            Alerts component library not available. Please install @nv-metropolis-bp-vss-ui/all package.
-          </p>
+          <p className="text-gray-600 dark:text-gray-400">Alerts component library not available. Please install @nv-metropolis-bp-vss-ui/all package.</p>
         </div>
       );
     }),
     { 
-      ssr: true,
+      ssr: false,
       loading: () => (
         <div className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-center h-full">
@@ -136,20 +132,18 @@ const dynamicComponents = {
       )
     }
   ),
-  SearchComponent: dynamic(() => 
+  SearchComponent: dynamic(() =>
     import('@nv-metropolis-bp-vss-ui/all').then(mod => mod.SearchComponent).catch((error) => {
       console.error('[DynamicImport] Failed to load SearchComponent:', error);
       return () => (
         <div className="flex-1 p-6 overflow-auto">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Search</h2>
-          <p className="text-gray-600 dark:text-gray-400">
-            Search component library not available. Please install @nv-metropolis-bp-vss-ui/all package.
-          </p>
+          <p className="text-gray-600 dark:text-gray-400">Search component library not available. Please install @nv-metropolis-bp-vss-ui/all package.</p>
         </div>
       );
     }),
     { 
-      ssr: true,
+      ssr: false,
       loading: () => (
         <div className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-center h-full">
@@ -159,20 +153,18 @@ const dynamicComponents = {
       )
     }
   ),
-  DashboardComponent: dynamic(() => 
+  DashboardComponent: dynamic(() =>
     import('@nv-metropolis-bp-vss-ui/all').then(mod => mod.DashboardComponent).catch((error) => {
       console.error('[DynamicImport] Failed to load DashboardComponent:', error);
       return () => (
         <div className="flex-1 p-6 overflow-auto">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Dashboard</h2>
-          <p className="text-gray-600 dark:text-gray-400">
-            Dashboard component library not available. Please install @nv-metropolis-bp-vss-ui/all package.
-          </p>
+          <p className="text-gray-600 dark:text-gray-400">Dashboard component library not available. Please install @nv-metropolis-bp-vss-ui/all package.</p>
         </div>
       );
     }),
     { 
-      ssr: true,
+      ssr: false,
       loading: () => (
         <div className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-center h-full">
@@ -182,20 +174,18 @@ const dynamicComponents = {
       )
     }
   ),
-  MapComponent: dynamic(() => 
+  MapComponent: dynamic(() =>
     import('@nv-metropolis-bp-vss-ui/all').then(mod => mod.MapComponent).catch((error) => {
       console.error('[DynamicImport] Failed to load MapComponent:', error);
       return () => (
         <div className="flex-1 p-6 overflow-auto">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Map</h2>
-          <p className="text-gray-600 dark:text-gray-400">
-            Map component library not available. Please install @nv-metropolis-bp-vss-ui/all package.
-          </p>
+          <p className="text-gray-600 dark:text-gray-400">Map component library not available. Please install @nv-metropolis-bp-vss-ui/all package.</p>
         </div>
       );
     }),
     { 
-      ssr: true,
+      ssr: false,
       loading: () => (
         <div className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-center h-full">
@@ -205,24 +195,43 @@ const dynamicComponents = {
       )
     }
   ),
-  VideoManagementComponent: dynamic(() => 
+  VideoManagementComponent: dynamic(() =>
     import('@nv-metropolis-bp-vss-ui/all').then(mod => mod.VideoManagementComponent).catch((error) => {
       console.error('[DynamicImport] Failed to load VideoManagementComponent:', error);
       return () => (
         <div className="flex-1 p-6 overflow-auto">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Video Management</h2>
-          <p className="text-gray-600 dark:text-gray-400">
-            Video Management component library not available.
-          </p>
+          <p className="text-gray-600 dark:text-gray-400">Video Management component library not available.</p>
         </div>
       );
     }),
     { 
-      ssr: true,
+      ssr: false,
       loading: () => (
         <div className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-center h-full">
             <p className="text-gray-600 dark:text-gray-400">Loading Video Management...</p>
+          </div>
+        </div>
+      )
+    }
+  ),
+  ReportComponent: dynamic(() =>
+    import('./ReportPlaceholder').then(mod => mod.default).catch((error) => {
+      console.error('[DynamicImport] Failed to load ReportPlaceholder:', error);
+      return () => (
+        <div className="flex-1 p-6 overflow-auto">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Report</h2>
+          <p className="text-gray-600 dark:text-gray-400">Report component unavailable.</p>
+        </div>
+      );
+    }),
+    {
+      ssr: false,
+      loading: () => (
+        <div className="flex-1 p-6 overflow-auto">
+          <div className="flex items-center justify-center h-full">
+            <p className="text-gray-600 dark:text-gray-400">Loading Report...</p>
           </div>
         </div>
       )
@@ -249,57 +258,93 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
     };
   }, []); // Empty deps - env vars don't change during runtime
 
+  // Runtime workflow name (may be overridden via RuntimeConfigProvider)
+  const workflow = useWorkflowName();
+  const isSearchProfile = (workflow || '').toLowerCase().includes('search');
+
   // Define all possible tabs with their configuration - memoize to prevent recreation
-  const allTabs: TabConfig[] = useMemo(() => [
-    { 
-      id: 'chat', 
-      label: 'Chat', 
-      icon: <IconMessageCircle size={18} />, 
-      alt: 'Chat with Agent',
-      enabled: deploymentConfig.enableChatTab,
-      component: 'NemoAgentToolkitApp'
-    },
-    { 
-      id: 'search', 
-      label: 'Search', 
-      icon: <IconSearch size={18} />, 
-      alt: 'Search',
-      enabled: deploymentConfig.enableSearchTab,
-      component: 'SearchComponent'
-    },
-    { 
-      id: 'alerts', 
-      label: 'Alerts', 
-      icon: <IconAlertTriangle size={18} />, 
-      alt: 'Alerts List',
-      enabled: deploymentConfig.enableAlertsTab,
-      component: 'AlertsComponent'
-    },
-    { 
-      id: 'dashboard', 
-      label: 'Dashboard', 
-      icon: <IconLayoutDashboard size={18} />, 
-      alt: 'Dashboard',
-      enabled: deploymentConfig.enableDashboardTab,
-      component: 'DashboardComponent'
-    },
-    { 
-      id: 'map', 
-      label: 'Map', 
-      icon: <IconMapPin size={18} />, 
-      alt: 'Map',
-      enabled: deploymentConfig.enableMapTab,
-      component: 'MapComponent'
-    },
-    { 
-      id: 'video-management', 
-      label: 'Video Management', 
-      icon: <IconVideo size={18} />, 
-      alt: 'Video Management',
-      enabled: deploymentConfig.enableVideoManagementTab,
-      component: 'VideoManagementComponent'
-    },
-  ], [deploymentConfig]);
+  const allTabs: TabConfig[] = useMemo(() => {
+    // For Search profile, show only: Search, Report, Video Management (in that order)
+    if (isSearchProfile) {
+      return [
+        {
+          id: 'search',
+          label: 'Search',
+          icon: <IconSearch size={18} />,
+          alt: 'Search',
+          enabled: true,
+          component: 'SearchComponent'
+        },
+        {
+          id: 'dashboard',
+          label: 'Report',
+          icon: <IconLayoutDashboard size={18} />,
+          alt: 'Report',
+          enabled: true,
+          component: 'ReportComponent'
+        },
+        {
+          id: 'video-management',
+          label: 'Video Management',
+          icon: <IconVideo size={18} />,
+          alt: 'Video Management',
+          enabled: true,
+          component: 'VideoManagementComponent'
+        },
+      ];
+    }
+
+    return [
+      {
+        id: 'chat',
+        label: 'Chat',
+        icon: <IconMessageCircle size={18} />,
+        alt: 'Chat with Agent',
+        enabled: deploymentConfig.enableChatTab,
+        component: 'NemoAgentToolkitApp'
+      },
+      {
+        id: 'search',
+        label: 'Search',
+        icon: <IconSearch size={18} />,
+        alt: 'Search',
+        enabled: deploymentConfig.enableSearchTab,
+        component: 'SearchComponent'
+      },
+      {
+        id: 'alerts',
+        label: 'Alerts',
+        icon: <IconAlertTriangle size={18} />,
+        alt: 'Alerts List',
+        enabled: deploymentConfig.enableAlertsTab,
+        component: 'AlertsComponent'
+      },
+      {
+        id: 'dashboard',
+        label: 'Dashboard',
+        icon: <IconLayoutDashboard size={18} />,
+        alt: 'Dashboard',
+        enabled: deploymentConfig.enableDashboardTab,
+        component: 'DashboardComponent'
+      },
+      {
+        id: 'map',
+        label: 'Map',
+        icon: <IconMapPin size={18} />,
+        alt: 'Map',
+        enabled: deploymentConfig.enableMapTab,
+        component: 'MapComponent'
+      },
+      {
+        id: 'video-management',
+        label: 'Video Management',
+        icon: <IconVideo size={18} />,
+        alt: 'Video Management',
+        enabled: deploymentConfig.enableVideoManagementTab,
+        component: 'VideoManagementComponent'
+      },
+    ];
+  }, [deploymentConfig, isSearchProfile]);
 
   // Filter tabs based on deployment configuration
   const visibleTabs = useMemo(() => 
