@@ -21,6 +21,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const isFilled = username.trim() !== '' && password.trim() !== '';
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -80,7 +82,13 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 rounded-lg btn-primary font-bold text-lg shadow disabled:opacity-60 transition-colors"
+                className={`w-full py-3 rounded-lg font-bold text-lg shadow transition-colors ${
+                  loading
+                    ? 'opacity-60 cursor-not-allowed bg-gray-600 text-gray-300'
+                    : isFilled
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                    : 'bg-gray-700 text-gray-400'
+                }`}
               >
                 {loading ? '로그인 중...' : '로그인'}
               </button>

@@ -29,6 +29,13 @@ export default function RegisterPage() {
   const [verified, setVerified] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
 
+  const isEmailValid = (emailToCheck: string) => {
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return re.test(emailToCheck);
+  };
+
+  const isFilled = username.trim() !== '' && password.trim() !== '' && isEmailValid(email);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -201,7 +208,13 @@ export default function RegisterPage() {
               <button
                 type="submit"
                 disabled={loading || !verified}
-                className={`w-full py-3 rounded-lg font-bold text-lg shadow transition-colors ${verified ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-600 text-gray-300 cursor-not-allowed'}`}
+                className={`w-full py-3 rounded-lg font-bold text-lg shadow transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                  loading
+                    ? 'bg-gray-600 text-gray-300'
+                    : isFilled
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-gray-600 text-gray-300'
+                }`}
               >
                 {loading ? '계정 생성 중...' : '계정 생성'}
               </button>
