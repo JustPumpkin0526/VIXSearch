@@ -33,8 +33,6 @@ async function ensureTable(): Promise<void> {
         uploaded_at TIMESTAMPTZ,
         bytes BIGINT,
         sensor_id TEXT,
-        stream_id TEXT,
-        file_path TEXT,
         timestamp TEXT
       );
     `);
@@ -167,14 +165,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ON CONFLICT DO NOTHING
       `;
 
-      // Prefer username from verified token subject if present
+      // Prefer username from verified token subject if present (use token subject first)
       const tokenUsername = verification.payload?.sub ?? null;
+      const insertUsername = tokenUsername ?? bodyUsername ?? null;
       const params = [
         // Determine a stable video identifier: prefer explicit video_id, then streamId/effective_sensor_id, then file path or filename
         video_id ?? null,
         filename ?? null,
         video_url ?? null,
-        bodyUsername ?? tokenUsername ?? null,
+        insertUsername,
         uploaded_at ? new Date(uploaded_at) : null,
         typeof bytes === 'number' ? bytes : null,
         sensor_id ?? null,
@@ -186,7 +185,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       // Also insert a lightweight per-user video record for filtering by owner
       try {
-        const owner = bodyUsername ?? tokenUsername ?? null;
+        // Prefer token subject as owner if available
+        const owner = tokenUsername ?? bodyUsername ?? null;
         if (owner) {
           const userVideoSql = `
             INSERT INTO user_videos (sensor_id, video_name, timestamp, file_path, current_user_id)

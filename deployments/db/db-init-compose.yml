@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  db-init:
+    image: postgres:15
+    container_name: vss-ui-db-init
+    restart: "no"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vss}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vss_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-vss_ui_auth}
+      VSS_UI_AUTH_DB_USER: ${VSS_UI_AUTH_DB_USER:-vss_ui_auth}
+      VSS_UI_AUTH_DB_PASSWORD: ${VSS_UI_AUTH_DB_PASSWORD:-vss_ui_auth}
+    entrypoint: ["/bin/sh", "/scripts/ui_auth_init.sh"]
+    volumes:
+      - ./init/ui_auth_init.sh:/scripts/ui_auth_init.sh:ro
+    networks:
+      - mdx
+
+networks:
+  mdx:
+    external:
+      name: mdx_default

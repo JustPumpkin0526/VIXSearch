@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  vss-ui-auth-db:
+    image: postgres:15
+    container_name: vss-ui-auth-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vss_ui_auth}
+      POSTGRES_USER: ${POSTGRES_USER:-vss}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vss_pass}
+    volumes:
+      - ${DB_DATA_DIR:-./deployments/data-dir}/postgres-auth:/var/lib/postgresql/data
+    ports:
+      - "${AUTH_DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vss} -d ${POSTGRES_DB:-vss_ui_auth}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - mdx_default
+
+  db-init:
+    image: postgres:15
+    container_name: vss-ui-db-init
+    restart: "no"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vss}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vss_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-vss_ui_auth}
+      VSS_UI_AUTH_DB_USER: ${VSS_UI_AUTH_DB_USER:-vss_ui_auth}
+      VSS_UI_AUTH_DB_PASSWORD: ${VSS_UI_AUTH_DB_PASSWORD:-vss_ui_auth}
+    entrypoint: ["/bin/sh", "/scripts/ui_auth_init.sh"]
+    volumes:
+      - ./init/ui_auth_init.sh:/scripts/ui_auth_init.sh:ro
+    depends_on:
+      vss-ui-auth-db:
+        condition: service_healthy
+    networks:
+      - mdx_default
+
+networks:
+  mdx_default:
+    external: true

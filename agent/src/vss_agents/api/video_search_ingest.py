@@ -35,6 +35,8 @@ from pydantic import Field
 from vss_agents.tools.vst.timeline import get_timeline
 from vss_agents.tools.vst.utils import VSTError
 from vss_agents.utils.url_translation import rewrite_url_host
+import os
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -329,6 +331,41 @@ def create_streaming_video_ingest_router(
 
                 # Extract chunks processed from response
                 chunks_processed = embed_result.get("usage", {}).get("total_chunks_processed", 0)
+
+            # Attempt to notify UI server so it can persist uploaded_videos row
+            try:
+                ui_complete_url = os.getenv("UI_API_COMPLETE_URL") or "http://localhost:3000/api/videos/complete"
+                ui_payload = {
+                    "video_id": vst_result.get('id'),
+                    "sensor_id": vst_sensor_id,
+                    "video_url": vst_file_path,
+                    "filename": vst_filename,
+                    "bytes": vst_result.get('bytes'),
+                    "timestamp": vst_result.get('timestamp'),
+                    "uploaded_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+                try:
+                    # Forward incoming Authorization header to UI so the UI can verify token and attribute owner
+                    auth_header = request.headers.get("authorization")
+                    headers = {"Authorization": auth_header} if auth_header else {}
+
+                    async with httpx.AsyncClient(timeout=30.0) as ui_client:
+                        # best-effort: POST to UI endpoint; do not require success for ingest to be considered complete
+                        ui_resp = await ui_client.post(ui_complete_url, json=ui_payload, headers=headers)
+                        if ui_resp.status_code >= 400:
+                            logger.warning(
+                                "UI /api/videos/complete returned %s: %s",
+                                ui_resp.status_code,
+                                ui_resp.text,
+                            )
+                        else:
+                            logger.info("Notified UI server of uploaded video: %s", ui_complete_url)
+                except Exception as e:
+                    logger.warning("Failed to notify UI server of uploaded video: %s", e)
+            except Exception:
+                # swallow any errors to avoid failing the ingest due to persistence problems
+                logger.exception("Unexpected error while attempting to persist uploaded video to UI server")
 
             return VideoIngestResponse(
                 message=f"Video {vst_filename} successfully uploaded to VST and embeddings generated",

@@ -58,7 +58,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const body = req.body || {};
-  const { video_id, sensorId, filePath, filename } = body;
+  // Accept both snake_case and camelCase keys from callers
+  const video_id = (body.video_id || body.videoId || null) as string | null;
+  const sensorId = (body.sensorId || body.sensor_id || body.sensor || null) as string | null;
+  const filePath = (body.filePath || body.file_path || body.video_url || body.videoUrl || null) as string | null;
+  const filename = (body.filename || body.file_name || body.name || null) as string | null;
 
   if (!video_id && !sensorId && !filePath && !filename) {
     return res.status(400).json({ error: 'Missing identifier to delete (video_id / sensorId / filePath / filename)' });
@@ -131,12 +135,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       if (filePath) {
-        if (userHasFilePath) {
-          userConditions.push(`file_path = $${idx}`);
-          userParams.push(filePath);
-          idx++;
-        }
-        // also check by file_path fallback to video URL field in user_videos insert logic
+        // Match against stored file_path (user_videos stores video_url in file_path column)
         userConditions.push(`file_path = $${idx}`);
         userParams.push(filePath);
         idx++;

@@ -132,6 +132,15 @@ export async function uploadFile(
 
       xhr.open('PUT', presignedUrl);
       xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
+      // Attach Authorization header from localStorage if available so the agent can forward it to the UI
+      try {
+        const token = typeof window !== 'undefined' ? window.localStorage.getItem('vss.auth.token') : null;
+        if (token) {
+          xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        }
+      } catch (e) {
+        // ignore if localStorage is unavailable
+      }
       xhr.send(file);
     });
   } finally {

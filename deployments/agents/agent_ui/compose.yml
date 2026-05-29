@@ -27,7 +27,7 @@ services:
         condition: service_healthy
     environment:
       RUN_APP_NAME: nv-metropolis-bp-vss-ui
-      UI_AUTH_DATABASE_URL: ${UI_AUTH_DATABASE_URL:-postgres://${VSS_UI_AUTH_DB_USER:-vss_ui_auth}:${VSS_UI_AUTH_DB_PASSWORD:-vss_ui_auth}@vss-ui-auth-db:5432/${VSS_UI_AUTH_DB_NAME:-vss_ui_auth}}
+      UI_AUTH_DATABASE_URL: "${UI_AUTH_DATABASE_URL:-postgres://vss_ui_auth:vss_ui_auth@vss-ui-auth-db:5432/vss_ui_auth}"
       NEXT_PUBLIC_APP_TITLE: '${NEXT_PUBLIC_APP_TITLE:-VSS BLUEPRINT}'
       NEXT_PUBLIC_APP_SUBTITLE: '${NEXT_PUBLIC_APP_SUBTITLE:-VISION}'
       # === Chat Tab Configuration ===

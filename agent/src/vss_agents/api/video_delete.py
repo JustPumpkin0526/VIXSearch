@@ -26,10 +26,12 @@ Supports two modes:
 import logging
 import os
 from typing import Any
+import asyncio
 
 from elasticsearch import AsyncElasticsearch
 from fastapi import APIRouter
 from fastapi import FastAPI
+from fastapi import Request
 import httpx
 from pydantic import BaseModel
 from pydantic import Field
@@ -132,27 +134,53 @@ async def _delete_es_documents(es_endpoint: str, index_pattern: str, id_value: s
         (success, message) tuple
     """
     es_client = AsyncElasticsearch(es_endpoint)
+    # Retry with exponential backoff in case ES is temporarily unavailable or slow
+    max_retries = 3
+    timeout = 5  # initial request timeout in seconds
     try:
-        result = await es_client.delete_by_query(
-            index=index_pattern,
-            body={
-                "query": {
-                    "term": {
-                        id_field: id_value,
-                    }
-                }
-            },
-            refresh=True,
-            conflicts="proceed",  # Don't fail on version conflicts
-        )
-        deleted = result.get("deleted", 0)
-        logger.info(f"Deleted {deleted} docs from ES index '{index_pattern}' (field={id_field}, value={id_value})")
-        return True, f"Deleted {deleted} documents"
-    except Exception as e:
-        logger.error(f"ES delete_by_query failed for index '{index_pattern}': {e}", exc_info=True)
-        return False, str(e)
+        for attempt in range(1, max_retries + 1):
+            try:
+                result = await es_client.delete_by_query(
+                    index=index_pattern,
+                    body={
+                        "query": {
+                            "term": {id_field: id_value}
+                        }
+                    },
+                    refresh=True,
+                    conflicts="proceed",
+                    request_timeout=timeout,
+                )
+                deleted = result.get("deleted", 0)
+                logger.info(
+                    f"Deleted {deleted} docs from ES index '{index_pattern}' (field={id_field}, value={id_value})"
+                )
+                return True, f"Deleted {deleted} documents"
+            except Exception as e:
+                # Detect connection/timeouts separately for clearer logging
+                err_msg = str(e)
+                logger.warning(
+                    "ES delete_by_query attempt %d/%d failed for index '%s': %s",
+                    attempt,
+                    max_retries,
+                    index_pattern,
+                    err_msg,
+                )
+                if attempt == max_retries:
+                    logger.error(
+                        f"ES delete_by_query failed for index '{index_pattern}': {err_msg}",
+                        exc_info=True,
+                    )
+                    return False, err_msg
+                # backoff before retrying
+                backoff = 2 ** (attempt - 1)
+                await asyncio.sleep(backoff)
+                timeout = min(timeout * 2, 60)
     finally:
-        await es_client.close()
+        try:
+            await es_client.close()
+        except Exception:
+            pass
 
 
 # ============================================================================
@@ -200,7 +228,7 @@ def create_video_delete_router(
         ),
         tags=["Video Management"],
     )
-    async def delete_video(video_id: str) -> DeleteVideoResponse:
+    async def delete_video(video_id: str, request: Request) -> DeleteVideoResponse:
         """
         Delete a video from the system by sensor/video ID.
 
@@ -297,6 +325,23 @@ def create_video_delete_router(
             message = f"Failed to delete video '{video_id}'"
 
         logger.info(f"Delete video '{video_id}' completed with status: {status}")
+
+        # Best-effort: notify UI server to remove DB records for this video
+        try:
+            ui_delete_url = os.getenv("UI_API_DELETE_URL") or "http://localhost:3000/api/videos/delete"
+            # Include multiple keys so UI delete handler matches uploaded rows regardless of naming
+            payload = {"video_id": video_id, "sensor_id": video_id, "sensorId": video_id}
+            # Forward Authorization header from original request if present
+            auth_header = request.headers.get("authorization")
+            headers = {"Authorization": auth_header} if auth_header else {}
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(ui_delete_url, json=payload, headers=headers)
+                if resp.status_code >= 400:
+                    logger.warning("UI /api/videos/delete returned %s: %s", resp.status_code, resp.text)
+                else:
+                    logger.info("Notified UI to delete DB records for video %s", video_id)
+        except Exception as e:
+            logger.warning("Failed to notify UI server to delete DB records: %s", e)
 
         return DeleteVideoResponse(
             status=status,
