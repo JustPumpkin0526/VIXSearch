@@ -71,16 +71,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const client = await getPool().connect();
     try {
-      // Check whether 'file_path' column exists in uploaded_videos and user_videos
+      // Check whether 'file_path' column exists in uploaded_videos
       const uploadedHasFilePathRes = await client.query(
         `SELECT 1 FROM information_schema.columns WHERE table_name = 'uploaded_videos' AND column_name = 'file_path' LIMIT 1`
       );
       const uploadedHasFilePath = uploadedHasFilePathRes.rowCount > 0;
-
-      const userHasFilePathRes = await client.query(
-        `SELECT 1 FROM information_schema.columns WHERE table_name = 'user_videos' AND column_name = 'file_path' LIMIT 1`
-      );
-      const userHasFilePath = userHasFilePathRes.rowCount > 0;
 
       // Build DELETE query for uploaded_videos dynamically to avoid referencing missing columns
       const uploadedConditions: string[] = [];
@@ -123,37 +118,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         uploadedRes = await client.query(deleteUploadedSql, uploadedParams);
       }
 
-      // Build DELETE for user_videos
-      const userConditions: string[] = [];
-      const userParams: any[] = [];
-      idx = 1;
-
-      if (sensorId) {
-        userConditions.push(`sensor_id = $${idx}`);
-        userParams.push(sensorId);
-        idx++;
-      }
-
-      if (filePath) {
-        // Match against stored file_path (user_videos stores video_url in file_path column)
-        userConditions.push(`file_path = $${idx}`);
-        userParams.push(filePath);
-        idx++;
-      }
-
-      if (filename) {
-        userConditions.push(`video_name = $${idx}`);
-        userParams.push(filename);
-        idx++;
-      }
-
-      let userRes = { rowCount: 0 } as any;
-      if (userConditions.length > 0) {
-        const deleteUserSql = `DELETE FROM user_videos WHERE ${userConditions.join(' OR ')}`;
-        userRes = await client.query(deleteUserSql, userParams);
-      }
-
-      return res.status(200).json({ ok: true, deleted: { uploaded: uploadedRes.rowCount, user: userRes.rowCount } });
+      return res.status(200).json({ ok: true, deleted: { uploaded: uploadedRes.rowCount } });
     } finally {
       client.release();
     }

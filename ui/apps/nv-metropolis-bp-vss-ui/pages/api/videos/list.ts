@@ -12,7 +12,7 @@ function base64url(input: Buffer | string): string {
 
 function getPool(): Pool {
   if (!DATABASE_URL) {
-    throw new Error('UI_AUTH_DATABASE_URL is required to read user_videos');
+    throw new Error('UI_AUTH_DATABASE_URL is required to read uploaded_videos');
   }
   if (!pool) {
     pool = new Pool({ connectionString: DATABASE_URL });
@@ -63,7 +63,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const client = await getPool().connect();
     try {
-      const q = `SELECT sensor_id, video_name, timestamp, file_path, current_user_id, created_at FROM user_videos WHERE current_user_id = $1 ORDER BY created_at DESC`;
+      const q = `SELECT sensor_id, filename, show_filename, timestamp, video_url, username, uploaded_at FROM uploaded_videos WHERE username = $1 ORDER BY uploaded_at DESC`;
       const result = await client.query(q, [username]);
       return res.status(200).json({ videos: result.rows });
     } finally {

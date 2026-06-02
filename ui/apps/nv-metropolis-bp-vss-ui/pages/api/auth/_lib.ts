@@ -45,41 +45,7 @@ function getPool(): Pool {
   return pool;
 }
 
-async function initPostgresStore(): Promise<void> {
-  if (!dbInitPromise) {
-    dbInitPromise = (async () => {
-      const client = await getPool().connect();
-      try {
-        await client.query(`
-          CREATE TABLE IF NOT EXISTS ui_auth_users (
-            username TEXT PRIMARY KEY,
-            password_hash TEXT NOT NULL,
-            salt TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-          );
-        `);
-        // Table for storing uploaded videos per user (lightweight schema)
-        await client.query(`
-          CREATE TABLE IF NOT EXISTS user_videos (
-            id SERIAL PRIMARY KEY,
-            sensor_id TEXT,
-            video_name TEXT,
-            timestamp TIMESTAMPTZ,
-            file_path TEXT,
-            current_user_id TEXT,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-          );
-        `);
-      } finally {
-        client.release();
-      }
-    })();
-  }
-  await dbInitPromise;
-}
-
 export async function findUserByUsername(username: string): Promise<StoredUser | null> {
-  await initPostgresStore();
   const result = await getPool().query(
     `SELECT username, password_hash, salt, created_at
      FROM ui_auth_users
@@ -102,7 +68,6 @@ export async function findUserByUsername(username: string): Promise<StoredUser |
 }
 
 export async function insertUser(user: StoredUser): Promise<boolean> {
-  await initPostgresStore();
   const insertSql = `INSERT INTO ui_auth_users (username, password_hash, salt, created_at)\n     VALUES ($1, $2, $3, $4)\n     ON CONFLICT (username) DO NOTHING`;
   // Avoid logging password hash/salt to reduce risk of leakage in logs
   const result = await getPool().query(

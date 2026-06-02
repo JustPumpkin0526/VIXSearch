@@ -45,7 +45,7 @@ export function useStreams({ vstApiUrl }: UseStreamsOptions = {}): UseStreamsRes
       // Fetch user's persisted video records from the UI API (user_videos) and
       // filter out any non-RTSP streams that are not present in the user's list.
       try {
-        let userVideos: Array<{ sensor_id?: string; video_name?: string; file_path?: string }> = [];
+        let userVideos: Array<{ sensor_id?: string; video_name?: string; file_path?: string; show_filename?: string }> = [];
         if (typeof window !== 'undefined') {
           const token = window.localStorage?.getItem('vss.auth.token');
           if (token) {
@@ -63,7 +63,27 @@ export function useStreams({ vstApiUrl }: UseStreamsOptions = {}): UseStreamsRes
         }
 
         if (Array.isArray(userVideos) && userVideos.length > 0) {
-          allStreams = allStreams.filter((stream) => {
+          allStreams = allStreams.map((stream) => {
+            // Keep RTSP streams as is
+            if (isRtspStream(stream)) return stream;
+
+            // For uploaded videos, find matching user_videos entry and update display name
+            const matchingVideo = userVideos.find((v) => {
+              if (!v) return false;
+              if (v.sensor_id && stream.sensorId && v.sensor_id === stream.sensorId) return true;
+              if (v.video_name && stream.name && (stream.name === v.video_name || stream.name === v.video_name.replace(/\.[^.]+$/, ''))) return true;
+              if (v.file_path && (stream.vodUrl === v.file_path || stream.url === v.file_path)) return true;
+              if (v.file_path && stream.vodUrl && stream.vodUrl.includes(v.file_path)) return true;
+              return false;
+            });
+
+            // Update stream.name with show_filename if match found
+            if (matchingVideo && matchingVideo.show_filename) {
+              return { ...stream, name: matchingVideo.show_filename };
+            }
+
+            return stream;
+          }).filter((stream) => {
             // Keep RTSP streams always
             if (isRtspStream(stream)) return true;
 

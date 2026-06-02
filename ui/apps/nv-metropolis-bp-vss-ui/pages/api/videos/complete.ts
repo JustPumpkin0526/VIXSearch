@@ -20,27 +20,6 @@ function getPool(): Pool {
   return pool;
 }
 
-async function ensureTable(): Promise<void> {
-  const client = await getPool().connect();
-  try {
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS uploaded_videos (
-        id SERIAL PRIMARY KEY,
-        video_id TEXT,
-        filename TEXT,
-        video_url TEXT,
-        username TEXT,
-        uploaded_at TIMESTAMPTZ,
-        bytes BIGINT,
-        sensor_id TEXT,
-        timestamp TEXT
-      );
-    `);
-  } finally {
-    client.release();
-  }
-}
-
 function verifyJwt(token: string): { valid: boolean; payload?: any; reason?: string } {
   try {
     const parts = token.split('.');
@@ -62,6 +41,60 @@ function verifyJwt(token: string): { valid: boolean; payload?: any; reason?: str
   }
 }
 
+function pickStringValue(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string') {
+      const v = value.trim();
+      if (v) return v;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return null;
+}
+
+function extractAccountIdFromJwtPayload(payload: any): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  return pickStringValue(
+    payload.sub,
+    payload.user_id,
+    payload.userId,
+    payload.uid,
+    payload.username,
+    payload.preferred_username,
+    payload.email
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function pickNextShowFilename(providedFilename: string, existingShowFilenames: Array<string | null | undefined>): string {
+  const escapedFilename = escapeRegExp(providedFilename);
+  const pattern = new RegExp(`^${escapedFilename}(?:_(\\d+))?$`);
+  const usedSuffixes = new Set<number>();
+
+  for (const existing of existingShowFilenames) {
+    if (!existing) continue;
+    const match = pattern.exec(existing);
+    if (!match) continue;
+
+    const suffix = match[1] ? Number.parseInt(match[1], 10) : 0;
+    if (Number.isInteger(suffix) && suffix >= 0) {
+      usedSuffixes.add(suffix);
+    }
+  }
+
+  let nextSuffix = 0;
+  while (usedSuffixes.has(nextSuffix)) {
+    nextSuffix += 1;
+  }
+
+  return nextSuffix === 0 ? providedFilename : `${providedFilename}_${nextSuffix}`;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -78,66 +111,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!verification.valid) {
     return res.status(401).json({ error: `Invalid token: ${verification.reason}` });
   }
+  const tokenAccountId = extractAccountIdFromJwtPayload(verification.payload);
+  if (!tokenAccountId) {
+    return res.status(401).json({ error: 'Token missing account identifier claim' });
+  }
 
   const body = req.body || {};
   // Accept both snake_case and camelCase from clients; prefer snake_case
-  let {
-    video_id,
-    sensor_id,
-    filename,
-    video_url,
-    username: bodyUsername,
-    bytes,
-    timestamp,
-    uploaded_at,
-  } = body as any;
-
-  // If crucial fields are missing, try to enrich them by querying the VST replay streams API.
-  // Configure VST base URL via env `VST_REPLAY_URL` (defaults to local port used in dev).
-  const VST_REPLAY_URL = process.env.VST_REPLAY_URL || 'http://172.16.7.64:30888';
-
-  if ((video_id || filename)) {
-    try {
-      const resp = await fetch(`${VST_REPLAY_URL}/vst/api/v1/replay/streams`);
-      if (resp.ok) {
-        const data = await resp.json();
-        let foundStreamId: string | null = null;
-        let foundFilePath: string | null = null;
-        let foundName: string | null = null;
-        for (const entry of data) {
-          for (const key of Object.keys(entry)) {
-            const items = entry[key];
-            if (!Array.isArray(items) || items.length === 0) continue;
-            const meta = items[0] as any;
-            // Match by stream id (key) or by name
-            if (video_id && key === video_id) {
-              foundStreamId = key;
-              foundFilePath = meta.vodUrl ?? meta.url ?? null;
-              foundName = meta.name ?? null;
-              break;
-            }
-            if (filename && (meta.name === filename || meta.name === filename.replace(/\.[^.]+$/, ''))) {
-              foundStreamId = key;
-              foundFilePath = meta.vodUrl ?? meta.url ?? null;
-              foundName = meta.name ?? null;
-              break;
-            }
-          }
-          if (foundStreamId) break;
-        }
-        if (foundStreamId) {
-          filename = filename ?? foundName ?? filename;
-          // enriched from VST: foundStreamId/foundFilePath/foundName (no debug log)
-        } else {
-          // no matching stream found in VST for provided identifiers
-        }
-      } else {
-        console.warn('[api/videos/complete] failed to query VST replay streams:', resp.status, await resp.text());
-      }
-    } catch (e) {
-      console.warn('[api/videos/complete] error querying VST replay streams:', String(e));
-    }
-  }
+  let video_id = body.video_id ?? body.videoId ?? null;
+  let sensor_id = body.sensor_id ?? body.sensorId ?? null;
+  let filename = body.filename ?? null;
+  let storage_filename = body.storage_filename ?? null;
+  let video_url = body.video_url ?? body.videoUrl ?? body.filePath ?? body.file_path ?? null;
+  let bytes = body.bytes ?? null;
+  let timestamp = body.timestamp ?? null;
+  let uploaded_at = body.uploaded_at ?? body.uploadedAt ?? null;
+  
 
   // If timestamp wasn't provided by the agent, fall back to uploaded_at (client-generated)
   if (!timestamp && uploaded_at) {
@@ -147,66 +136,74 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Debug: log incoming payload and token subject for troubleshooting
   // received payload and token subject intentionally not logged in normal operation
 
-  // Accept any reasonable identifier or fallback (video_id, sensorId, streamId, filename, or video_url/filePath)
-  // Accept any reasonable identifier or fallback (video_id, sensor_id/sensorId, streamId, filename, or video_url/file_path)
-  if (!video_id && !filename && !video_url && !sensor_id) {
-    return res.status(400).json({ error: 'Missing video identifier (video_id / sensor_id / filename / video_url)' });
+  // Only persist records that have both a stable ID and URL.
+  // This prevents duplicate/incomplete rows from secondary notifications.
+  const normalizedVideoId = video_id ? String(video_id).trim() : '';
+  const normalizedVideoUrl = video_url ? String(video_url).trim() : '';
+  if (!normalizedVideoId || !normalizedVideoUrl) {
+    return res.status(200).json({
+      ok: true,
+      skipped: true,
+      reason: 'Ignored incomplete payload (video_id and video_url are both required)',
+    });
   }
 
   try {
-    await ensureTable();
     const client = await getPool().connect();
     try {
+      // Compute per-user display name (show_filename) to only append numeric
+      // suffixes when the same account uploads identical original filenames.
+      // Keep `filename` as the original filename at all times.
+      const insertUsername = tokenAccountId;
+
+      // App-level idempotency: skip if the same user already has the same video_url.
+      const duplicateRes = await client.query(
+        `SELECT 1 FROM uploaded_videos WHERE video_url = $1 AND username IS NOT DISTINCT FROM $2 LIMIT 1`,
+        [normalizedVideoUrl, insertUsername]
+      );
+      if ((duplicateRes.rowCount ?? 0) > 0) {
+        return res.status(200).json({ ok: true, skipped: true, reason: 'Duplicate video_url for user' });
+      }
+
+      // Filename is already normalized by caller.
+      const providedFilename = filename ? String(filename).trim() : '';
+
+      let show_filename: string | null = providedFilename || null;
+      let normalizedFilename: string | null = providedFilename || null;
+
+      if (insertUsername && providedFilename) {
+        const existingNamesRes = await client.query(
+          `SELECT show_filename FROM uploaded_videos WHERE username = $1 AND filename = $2`,
+          [insertUsername, providedFilename]
+        );
+        const existingShowFilenames = existingNamesRes.rows.map(
+          (row: { show_filename: string | null }) => row.show_filename
+        );
+        show_filename = pickNextShowFilename(providedFilename, existingShowFilenames);
+      }
+
       // Insert into the DB using the agreed columns (snake_case identifiers)
       const insertSql = `
         INSERT INTO uploaded_videos (
-          video_id, filename, video_url, username, uploaded_at, bytes, sensor_id, timestamp
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+          video_id, filename, show_filename, storage_filename, video_url, username, uploaded_at, bytes, sensor_id, timestamp
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         ON CONFLICT DO NOTHING
       `;
-
-      // Prefer username from verified token subject if present (use token subject first)
-      const tokenUsername = verification.payload?.sub ?? null;
-      const insertUsername = tokenUsername ?? bodyUsername ?? null;
       const params = [
-        // Determine a stable video identifier: prefer explicit video_id, then streamId/effective_sensor_id, then file path or filename
-        video_id ?? null,
-        filename ?? null,
-        video_url ?? null,
+        normalizedVideoId,
+        normalizedFilename,
+        show_filename,
+        storage_filename,
+        normalizedVideoUrl,
         insertUsername,
-        uploaded_at ? new Date(uploaded_at) : null,
-        typeof bytes === 'number' ? bytes : null,
-        sensor_id ?? null,
-        timestamp ?? null,
+        uploaded_at = new Date(uploaded_at),
+        bytes,
+        sensor_id,
+        timestamp,
       ];
-      // insert params prepared (not logged)
 
       await client.query(insertSql, params);
 
-      // Also insert a lightweight per-user video record for filtering by owner
-      try {
-        // Prefer token subject as owner if available
-        const owner = tokenUsername ?? bodyUsername ?? null;
-        if (owner) {
-          const userVideoSql = `
-            INSERT INTO user_videos (sensor_id, video_name, timestamp, file_path, current_user_id)
-            VALUES ($1,$2,$3,$4,$5)
-            ON CONFLICT DO NOTHING
-          `;
-          const userVideoParams = [
-            sensor_id ?? null,
-            filename ?? null,
-            timestamp ? new Date(timestamp) : null,
-            video_url ?? null,
-            owner,
-          ];
-          // user_videos insert params prepared (not logged)
-          await client.query(userVideoSql, userVideoParams);
-        }
-      } catch (e) {
-        // Non-fatal: log and continue — uploaded_videos insert already performed
-        console.error('[api/videos/complete] failed to insert user_videos record:', e);
-      }
     } finally {
       client.release();
     }

@@ -170,6 +170,37 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
             progress: 100,
           } : p))
         );
+        // Notify server about completed upload so it can persist a user_videos record
+        try {
+          const token = typeof window !== 'undefined' ? window.localStorage.getItem('vss.auth.token') : null;
+          const payload = {
+            video_id: agentResponse?.streamId ?? agentResponse?.sensorId ?? agentResponse?.filePath ?? agentResponse?.filename ?? null,
+            filename: file?.name ?? agentResponse?.filename ?? null,
+            video_url: agentResponse?.filePath ?? null,
+            uploaded_at: new Date().toISOString(),
+            bytes: typeof agentResponse?.bytes === 'number' ? agentResponse.bytes : null,
+            sensor_id: agentResponse?.sensorId ?? null,
+            timestamp: agentResponse?.timestamp ?? null,
+          } as any;
+
+          if (!payload.video_id) {
+            // eslint-disable-next-line no-console
+            console.warn('Upload completed but no video identifier available in agent response', agentResponse);
+          }
+
+          await fetch('/api/videos/complete', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify(payload),
+          });
+        } catch (err) {
+          // Non-fatal: log and continue
+          // eslint-disable-next-line no-console
+          console.warn('Failed to notify server of completed upload', err);
+        }
       } catch (err) {
         if (!isSessionValid()) return;
 
