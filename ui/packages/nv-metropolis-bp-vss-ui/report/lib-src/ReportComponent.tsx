@@ -1,22 +1,25 @@
 import React, { useMemo, useState } from 'react';
 
-type ReportListItem = {
+export type ReportListItem = {
   id: string;
   title: string;
   createdAt: string;
 };
 
-const ReportPlaceholder: React.FC = () => {
+export interface ReportComponentProps {
+  reports?: ReportListItem[];
+}
+
+export const ReportComponent: React.FC<ReportComponentProps> = ({
+  reports = [],
+}) => {
   const [reportSearchQuery, setReportSearchQuery] = useState('');
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
-  const reports: ReportListItem[] = [];
   const normalizedQuery = reportSearchQuery.trim().toLowerCase();
   const filteredReports = useMemo(() => {
     if (!normalizedQuery) return reports;
 
-    return reports.filter((report) => {
-      return report.title.toLowerCase().includes(normalizedQuery);
-    });
+    return reports.filter((report) => report.title.toLowerCase().includes(normalizedQuery));
   }, [normalizedQuery, reports]);
 
   return (
@@ -35,7 +38,8 @@ const ReportPlaceholder: React.FC = () => {
                 <button
                   type="button"
                   disabled={!selectedReportId}
-                  className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 text-white dark:text-gray-900 focus:ring-green-500 dark:focus:ring-green-400 focus:ring-offset-gray-50 dark:focus:ring-offset-gray-900 cursor-pointer disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 disabled:hover:bg-gray-300 dark:disabled:bg-gray-600 dark:disabled:text-gray-300 dark:disabled:hover:bg-gray-600">
+                  className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 text-white dark:text-gray-900 focus:ring-green-500 dark:focus:ring-green-400 focus:ring-offset-gray-50 dark:focus:ring-offset-gray-900 cursor-pointer disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 disabled:hover:bg-gray-300 dark:disabled:bg-gray-600 dark:disabled:text-gray-300 dark:disabled:hover:bg-gray-600"
+                >
                   Export Report
                 </button>
               </div>
@@ -99,7 +103,7 @@ const ReportPlaceholder: React.FC = () => {
                 </div>
               ) : (
                 <div className="overflow-y-auto pt-3">
-                  {filteredReports.map((report: ReportListItem) => (
+                  {filteredReports.map((report) => (
                     <button
                       key={report.id}
                       type="button"
@@ -123,5 +127,3 @@ const ReportPlaceholder: React.FC = () => {
     </div>
   );
 };
-
-export default ReportPlaceholder;

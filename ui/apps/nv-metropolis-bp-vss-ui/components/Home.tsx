@@ -217,8 +217,8 @@ const dynamicComponents = {
     }
   ),
   ReportComponent: dynamic(() =>
-    import('./ReportPlaceholder').then(mod => mod.default).catch((error) => {
-      console.error('[DynamicImport] Failed to load ReportPlaceholder:', error);
+    import('@nv-metropolis-bp-vss-ui/all').then(mod => mod.ReportComponent).catch((error) => {
+      console.error('[DynamicImport] Failed to load ReportComponent:', error);
       return () => (
         <div className="flex-1 p-6 overflow-auto">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Report</h2>
@@ -258,9 +258,16 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
     };
   }, []); // Empty deps - env vars don't change during runtime
 
-  // Runtime workflow name (may be overridden via RuntimeConfigProvider)
+  // Runtime workflow name alone is not sufficient for developer search profile.
+  // In dev-profile-search, NEXT_PUBLIC_WORKFLOW can still be "VSS Agent",
+  // so also consider the profile-specific env markers.
   const workflow = useWorkflowName();
-  const isSearchProfile = (workflow || '').toLowerCase().includes('search');
+  const streamMode = env('STREAM_MODE') || process.env.STREAM_MODE || '';
+  const bpProfile = env('BP_PROFILE') || process.env.BP_PROFILE || '';
+  const appSubtitle = env('NEXT_PUBLIC_APP_SUBTITLE') || process.env.NEXT_PUBLIC_APP_SUBTITLE || '';
+  const isSearchProfile = [workflow, streamMode, bpProfile, appSubtitle].some((value) =>
+    String(value).toLowerCase().includes('search')
+  );
 
   // Define all possible tabs with their configuration - memoize to prevent recreation
   const allTabs: TabConfig[] = useMemo(() => {
@@ -649,6 +656,37 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
       };
       const tabChatInitialStateOverride = getTabChatInitialStateOverride(tabEnvKey);
       const ChatApp = dynamicComponents.NemoAgentToolkitApp;
+
+      if (tabConfig.id === 'search') {
+        return (
+          <div
+            key={tabConfig.id}
+            className="absolute inset-0 flex flex-col overflow-hidden"
+            style={{ display: isActive ? 'flex' : 'none' }}
+          >
+            <RuntimeConfigProvider value={tabRuntimeConfig}>
+              <div className="h-full w-full [&>main]:!h-full [&>main]:!w-full">
+                <ChatApp
+                  theme={theme}
+                  onThemeChange={handleThemeChange}
+                  isActive={isActive}
+                  initialStateOverride={tabChatInitialStateOverride}
+                  storageKeyPrefix={tabRuntimeConfig.storageKeyPrefix}
+                  renderControlsInLeftSidebar={false}
+                  renderApplicationHead={false}
+                  onAnswerComplete={() => {
+                    setSearchTabChatSidebarBusy(false);
+                  }}
+                  onMessageSubmitted={() => {
+                    setSearchTabChatSidebarBusy(true);
+                  }}
+                />
+              </div>
+            </RuntimeConfigProvider>
+          </div>
+        );
+      }
+
       return (
         <TabWithChatSidebarLayout
           tabId={tabConfig.id}

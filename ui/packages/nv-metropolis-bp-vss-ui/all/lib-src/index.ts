@@ -12,5 +12,8 @@ export type { DashboardComponentProps, DashboardSidebarControlHandlers } from '@
 export { MapComponent, MapSidebarControls } from '@nv-metropolis-bp-vss-ui/map';
 export type { MapComponentProps, MapSidebarControlHandlers } from '@nv-metropolis-bp-vss-ui/map';
 
+export { ReportComponent } from '@nv-metropolis-bp-vss-ui/report';
+export type { ReportComponentProps, ReportListItem } from '@nv-metropolis-bp-vss-ui/report';
+
 export { VideoManagementComponent } from '@nv-metropolis-bp-vss-ui/video-management';
 export type { VideoManagementComponentProps, VideoManagementSidebarControlHandlers, VideoManagementData } from '@nv-metropolis-bp-vss-ui/video-management';

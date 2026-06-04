@@ -16,6 +16,7 @@
 from collections.abc import AsyncGenerator
 import logging
 import re
+import urllib.parse
 
 from fastapi import HTTPException
 from nat.builder.builder import Builder
@@ -55,6 +56,11 @@ class VideoUploadURLInput(BaseModel):
     embedding: bool = Field(
         default=False,
         description="Whether to generate URL for video embedding/search ingestion",
+    )
+    chunk_duration: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional chunk duration in seconds for embedding generation (0 disables chunking)",
     )
 
 
@@ -100,11 +106,15 @@ async def video_upload_url(config: VideoUploadURLConfig, _builder: Builder) -> A
             filename_without_ext = filename.rsplit(".", 1)[0] or filename
 
             embedding = video_upload_url_input.embedding
+            chunk_duration = video_upload_url_input.chunk_duration
 
             # If embedding is requested, return the agent URL for video search
             if embedding:
                 agent_base_url = config.agent_base_url.rstrip("/")
                 url = f"{agent_base_url}/api/v1/videos-for-search/{filename_without_ext}"
+                if chunk_duration is not None:
+                    query_string = urllib.parse.urlencode({"chunk_duration": chunk_duration})
+                    url = f"{url}?{query_string}"
                 logger.info(f"Generated video embedding URL: {url}")
 
             # ELSE return the VST upload URL

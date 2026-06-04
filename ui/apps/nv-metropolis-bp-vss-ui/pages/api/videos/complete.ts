@@ -118,14 +118,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const body = req.body || {};
   // Accept both snake_case and camelCase from clients; prefer snake_case
-  let video_id = body.video_id ?? body.videoId ?? null;
-  let sensor_id = body.sensor_id ?? body.sensorId ?? null;
+  let video_id = body.video_id ?? null;
+  let sensor_id = body.sensor_id ?? null;
   let filename = body.filename ?? null;
   let storage_filename = body.storage_filename ?? null;
-  let video_url = body.video_url ?? body.videoUrl ?? body.filePath ?? body.file_path ?? null;
+  let video_url = body.video_url ?? null;
   let bytes = body.bytes ?? null;
   let timestamp = body.timestamp ?? null;
-  let uploaded_at = body.uploaded_at ?? body.uploadedAt ?? null;
+  let uploaded_at = body.uploaded_at ?? null;
   
 
   // If timestamp wasn't provided by the agent, fall back to uploaded_at (client-generated)
