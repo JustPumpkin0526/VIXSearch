@@ -7,6 +7,7 @@ const nextConfig = {
   },
   i18n,
   output: 'standalone',
+  transpilePackages: ['@nemo-agent-toolkit/ui'],
   typescript: {
     // !! WARN !!
     // Dangerously allow production builds to successfully complete even if
@@ -15,6 +16,7 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   experimental: {
+    esmExternals: 'loose',
     serverActions: {
       bodySizeLimit: '5mb',
     },

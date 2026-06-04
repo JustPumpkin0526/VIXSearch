@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import React from 'react';
-import { IconChevronDown, IconVideo, IconX } from '@tabler/icons-react';
+import { IconVideo, IconX } from '@tabler/icons-react';
 
 const INPUT_CLASS =
   'w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-[#76b900] focus:outline-none focus:ring-1 focus:ring-[#76b900] dark:border-gray-600 dark:bg-[#343541] dark:text-gray-300';
@@ -33,85 +33,9 @@ export const AgentUploadDialog: React.FC<AgentUploadDialogProps> = ({
   onAddMore,
   onClose,
   onConfirmUpload,
-  onToggleExpand,
   onRemoveFile,
-  onFieldChange,
 }) => {
   if (!open) return null;
-
-  const renderField = (fileItem: AgentUploadFileItem, field: any) => {
-    const fieldName = field['field-name'];
-    const value = fileItem.formData[fieldName] ?? field['field-default-value'];
-    const isChangeable = field['changeable'] !== false;
-
-    if (field['field-type'] === 'boolean') {
-      return (
-        <label
-          className={`flex items-center gap-2 ${
-            isChangeable ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
-          }`}
-        >
-          <button
-            type="button"
-            role="switch"
-            aria-checked={value}
-            disabled={!isChangeable}
-            onClick={() => isChangeable && onFieldChange(fileItem.id, fieldName, !value)}
-            className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#76b900] focus:ring-offset-2 ${
-              value ? 'bg-[#76b900]' : 'bg-gray-300 dark:bg-gray-600'
-            } ${isChangeable ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}
-          >
-            <span
-              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                value ? 'translate-x-4' : 'translate-x-0'
-              }`}
-            />
-          </button>
-          <span className="text-sm text-gray-700 dark:text-gray-300">{value ? 'Yes' : 'No'}</span>
-        </label>
-      );
-    }
-
-    if (field['field-type'] === 'select') {
-      return (
-        <select
-          value={value}
-          disabled={!isChangeable}
-          onChange={(e) => onFieldChange(fileItem.id, fieldName, e.target.value)}
-          className={`${INPUT_CLASS} ${!isChangeable ? 'cursor-not-allowed opacity-60' : ''}`}
-        >
-          {field['field-options']?.map((opt: any) => (
-            <option key={String(opt)} value={String(opt)}>
-              {String(opt)}
-            </option>
-          ))}
-        </select>
-      );
-    }
-
-    if (field['field-type'] === 'number') {
-      return (
-        <input
-          type="number"
-          value={value}
-          disabled={!isChangeable}
-          onChange={(e) => onFieldChange(fileItem.id, fieldName, Number(e.target.value))}
-          className={`${INPUT_CLASS} ${!isChangeable ? 'cursor-not-allowed opacity-60' : ''}`}
-        />
-      );
-    }
-
-    return (
-      <input
-        type="text"
-        value={value}
-        disabled={!isChangeable}
-        onChange={(e) => onFieldChange(fileItem.id, fieldName, e.target.value)}
-        className={`${INPUT_CLASS} ${!isChangeable ? 'cursor-not-allowed opacity-60' : ''}`}
-        placeholder={`Enter ${fieldName}`}
-      />
-    );
-  };
 
   return (
     <div className={POPUP_OVERLAY_CLASS}>
@@ -144,25 +68,13 @@ export const AgentUploadDialog: React.FC<AgentUploadDialogProps> = ({
           {files.length > 0 ? (
             <div className="max-h-96 space-y-2 overflow-y-auto">
               {files.map((item) => {
-                const hasExpandableContent = configTemplate && Array.isArray(configTemplate.fields) && configTemplate.fields.length > 0;
                 return (
                   <div
                     key={item.id}
                     className="overflow-hidden rounded-lg border border-gray-300 dark:border-gray-600"
                   >
                     <div className="flex items-center justify-between bg-white p-3 dark:bg-[#343541]">
-                      <div
-                        className={`flex flex-1 items-center gap-2 overflow-hidden ${hasExpandableContent ? 'cursor-pointer' : ''}`}
-                        onClick={() => hasExpandableContent && onToggleExpand(item.id)}
-                      >
-                        {hasExpandableContent && (
-                          <IconChevronDown
-                            size={16}
-                            className={`flex-shrink-0 text-gray-400 transition-transform duration-200 ${
-                              item.isExpanded ? 'rotate-180' : ''
-                            }`}
-                          />
-                        )}
+                      <div className="flex flex-1 items-center gap-2 overflow-hidden">
                         <IconVideo size={18} className="flex-shrink-0 text-[#76b900]" />
                         <span className="truncate text-sm text-gray-700 dark:text-gray-300">
                           {item.file.name}
@@ -179,21 +91,6 @@ export const AgentUploadDialog: React.FC<AgentUploadDialogProps> = ({
                         <IconX size={18} />
                       </button>
                     </div>
-
-                    {hasExpandableContent && item.isExpanded && (
-                      <div className="border-t border-gray-200 bg-gray-50 p-3 dark:border-gray-600 dark:bg-[#2a2a36]">
-                        <div className="mb-3 space-y-3">
-                          {configTemplate.fields.map((field: any) => (
-                            <div key={field['field-name']} className="flex items-center gap-3">
-                              <label className="w-24 flex-shrink-0 text-xs font-medium text-gray-600 dark:text-gray-400">
-                                {field['field-name']}
-                              </label>
-                              <div className="flex-1">{renderField(item, field)}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 );
               })}

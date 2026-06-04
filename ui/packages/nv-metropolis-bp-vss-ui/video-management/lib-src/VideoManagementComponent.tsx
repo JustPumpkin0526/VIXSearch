@@ -8,7 +8,6 @@ import { deleteRtspStream } from './rtspStream';
 import { deleteVideo } from './videoDelete';
 import { NUM_PARALLEL_FILE_UPLOADS } from './constants';
 import {
-  AddRtspDialog,
   EmptyState,
   LoadingState,
   StreamsGrid,
@@ -17,6 +16,10 @@ import {
   VideoManagementSidebarControls,
   AgentUploadDialog,
 } from './components';
+
+const UPLOAD_EMBEDDING_STORAGE_KEY = 'vss.videoManagement.upload.embedding';
+const UPLOAD_CHUNK_DURATION_STORAGE_KEY = 'vss.videoManagement.upload.chunkDuration';
+const DEFAULT_UPLOAD_CHUNK_DURATION = 5;
 
 export type { VideoManagementComponentProps, VideoManagementSidebarControlHandlers } from './types';
 
@@ -29,7 +32,6 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const vstApiUrl = videoManagementData?.vstApiUrl;
   const agentApiUrl = videoManagementData?.agentApiUrl;
   const chatUploadFileConfigTemplateJson = videoManagementData?.chatUploadFileConfigTemplateJson;
-  const enableAddRtspButton = videoManagementData?.enableAddRtspButton ?? true;
   const enableVideoUpload = videoManagementData?.enableVideoUpload ?? true;
 
   // Upload dialog state (chat-style upload with config fields)
@@ -54,25 +56,96 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     return null;
   }, [chatUploadFileConfigTemplateJson]);
 
-  // Generate default form data from config template (same as Chat component)
-  const generateDefaultFormData = useCallback((): Record<string, any> => {
-    if (!configTemplate || !Array.isArray(configTemplate.fields)) return {};
-    return configTemplate.fields.reduce((acc: Record<string, any>, field: any) => {
-      acc[field['field-name']] = field['field-default-value'];
-      return acc;
-    }, {} as Record<string, any>);
+  const defaultEmbeddingEnabled = useMemo(() => {
+    if (!configTemplate || !Array.isArray(configTemplate.fields)) {
+      return false;
+    }
+
+    const embeddingField = configTemplate.fields.find(
+      (field: any) => field?.['field-name'] === 'embedding'
+    );
+
+    return embeddingField?.['field-default-value'] === true;
   }, [configTemplate]);
+
+  const [uploadEmbeddingEnabled, setUploadEmbeddingEnabled] = useState(defaultEmbeddingEnabled);
+  const [uploadChunkDuration, setUploadChunkDuration] = useState(DEFAULT_UPLOAD_CHUNK_DURATION);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const savedValue = window.localStorage.getItem(UPLOAD_EMBEDDING_STORAGE_KEY);
+    if (savedValue == null) {
+      setUploadEmbeddingEnabled(defaultEmbeddingEnabled);
+      return;
+    }
+
+    setUploadEmbeddingEnabled(savedValue === 'true');
+  }, [defaultEmbeddingEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(UPLOAD_EMBEDDING_STORAGE_KEY, String(uploadEmbeddingEnabled));
+  }, [uploadEmbeddingEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const savedValue = window.localStorage.getItem(UPLOAD_CHUNK_DURATION_STORAGE_KEY);
+    if (savedValue == null) {
+      setUploadChunkDuration(DEFAULT_UPLOAD_CHUNK_DURATION);
+      return;
+    }
+
+    const parsedValue = Number(savedValue);
+    setUploadChunkDuration(Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : DEFAULT_UPLOAD_CHUNK_DURATION);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(UPLOAD_CHUNK_DURATION_STORAGE_KEY, String(uploadChunkDuration));
+  }, [uploadChunkDuration]);
+
+  // Generate default form data from config template (same as Chat component)
+  const generateDefaultFormData = useCallback(
+    (
+      embeddingEnabled: boolean = uploadEmbeddingEnabled,
+      chunkDuration: number = uploadChunkDuration
+    ): Record<string, any> => {
+      const baseFormData = !configTemplate || !Array.isArray(configTemplate.fields)
+        ? {}
+        : configTemplate.fields.reduce((acc: Record<string, any>, field: any) => {
+            acc[field['field-name']] = field['field-default-value'];
+            return acc;
+          }, {} as Record<string, any>);
+
+      return {
+        ...baseFormData,
+        embedding: embeddingEnabled,
+        chunk_duration: Math.max(0, chunkDuration),
+      };
+    },
+    [configTemplate, uploadChunkDuration, uploadEmbeddingEnabled]
+  );
 
   const generateFileId = useCallback(() => {
     return `file_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }, []);
 
-  const [isRtspModalOpen, setIsRtspModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
   const searchInputValueRef = useRef('');
   const [showVideos, setShowVideos] = useState(true);
-  const [showRtsps, setShowRtsps] = useState(true);
   const [selectedStreams, setSelectedStreams] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([]);
@@ -87,10 +160,6 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     isUploadingRef.current = isUploading;
   }, [isUploading]);
 
-  // Sync display filter state with enabled features so label and filter stay correct
-  useEffect(() => {
-    if (!enableAddRtspButton) setShowRtsps(false);
-  }, [enableAddRtspButton]);
   useEffect(() => {
     if (!enableVideoUpload) setShowVideos(false);
   }, [enableVideoUpload]);
@@ -99,8 +168,8 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const { getEndTimeForStream, getTimelineRangeForStream, refetch: refetchTimelines } = useStorageTimelines({ vstApiUrl });
 
   const filteredStreams = useMemo(
-    () => filterStreams(streams, showVideos, showRtsps, appliedSearchQuery),
-    [streams, showVideos, showRtsps, appliedSearchQuery]
+    () => filterStreams(streams, showVideos, false, appliedSearchQuery),
+    [streams, showVideos, appliedSearchQuery]
   );
 
   const refetchRef = useRef(refetch);
@@ -172,13 +241,20 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         );
         // Notify server about completed upload so it can persist a user_videos record
         try {
+          if (formData?.embedding !== false) {
+            return;
+          }
+
           const token = typeof window !== 'undefined' ? window.localStorage.getItem('vss.auth.token') : null;
+          const originalFilename = file?.name ?? null;
+          const normalizedFilename = originalFilename?.replace(/\.[^.]+$/, '') ?? originalFilename;
           const payload = {
-            video_id: agentResponse?.streamId ?? agentResponse?.sensorId ?? agentResponse?.filePath ?? agentResponse?.filename ?? null,
-            filename: file?.name ?? agentResponse?.filename ?? null,
+            video_id: agentResponse?.streamId ?? null,
+            filename: normalizedFilename,
+            storage_filename: agentResponse?.filename ?? null,
             video_url: agentResponse?.filePath ?? null,
             uploaded_at: new Date().toISOString(),
-            bytes: typeof agentResponse?.bytes === 'number' ? agentResponse.bytes : null,
+            bytes: agentResponse.bytes ?? null,
             sensor_id: agentResponse?.sensorId ?? null,
             timestamp: agentResponse?.timestamp ?? null,
           } as any;
@@ -250,11 +326,11 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
       id: generateFileId(),
       file,
       isExpanded: false,
-      formData: generateDefaultFormData(),
+      formData: generateDefaultFormData(uploadEmbeddingEnabled),
     }));
     setSelectedFiles((prev) => [...prev, ...newItems]);
     setShowUploadDialog(true);
-  }, [generateFileId, generateDefaultFormData]);
+  }, [generateDefaultFormData, generateFileId, uploadEmbeddingEnabled]);
 
   const uploadProgressRef = useRef<UploadProgress[]>([]);
 
@@ -303,19 +379,6 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
 
   const handleClearUploadProgress = useCallback(() => {
     setUploadProgress([]);
-  }, []);
-
-  const handleAddRtspClick = () => {
-    setIsRtspModalOpen(true);
-  };
-
-  const handleRtspDialogClose = () => {
-    setIsRtspModalOpen(false);
-  };
-
-  const handleRtspSuccess = useCallback(() => {
-    refetchRef.current();
-    refetchTimelinesRef.current();
   }, []);
 
   const handleSelectionChange = useCallback((streamId: string, selected: boolean) => {
@@ -434,8 +497,6 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         vstApiUrl={vstApiUrl}
         onSelectionChange={handleSelectionChange}
         onSelectAll={handleSelectAll}
-        showVideos={showVideos}
-        showRtsps={showRtsps}
         getEndTimeForStream={getEndTimeForStream}
       />
     );
@@ -457,7 +518,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
               id: generateFileId(),
               file,
               isExpanded: false,
-              formData: generateDefaultFormData(),
+              formData: generateDefaultFormData(uploadEmbeddingEnabled),
             }));
             setSelectedFiles((prev) => [...prev, ...newItems]);
           }
@@ -470,16 +531,14 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         searchQuery={searchQuery}
         onSearchChange={handleSearchChange}
         onSearch={handleSearch}
-        showVideos={showVideos}
-        showRtsps={showRtsps}
-        onShowVideosChange={setShowVideos}
-        onShowRtspsChange={setShowRtsps}
         onFilesSelected={handleFilesSelected}
-        onAddRtspClick={handleAddRtspClick}
+        uploadEmbeddingEnabled={uploadEmbeddingEnabled}
+        onUploadEmbeddingChange={setUploadEmbeddingEnabled}
+        uploadChunkDuration={uploadChunkDuration}
+        onUploadChunkDurationChange={setUploadChunkDuration}
         selectedCount={selectedStreams.size}
         onDeleteSelected={handleDeleteSelected}
         isDeleting={isDeleting}
-        enableAddRtspButton={enableAddRtspButton}
         enableVideoUpload={enableVideoUpload}
       />
 
@@ -496,7 +555,16 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
           onConfirmUpload={() => {
             if (selectedFiles.length === 0) return;
             
-            const entries = selectedFiles.map((f) => ({ id: f.id, file: f.file, formData: f.formData }));
+            const entries = selectedFiles.map((f) => ({
+              id: f.id,
+              file: f.file,
+              formData: {
+                ...generateDefaultFormData(uploadEmbeddingEnabled, uploadChunkDuration),
+                ...f.formData,
+                embedding: uploadEmbeddingEnabled,
+                chunk_duration: uploadChunkDuration,
+              },
+            }));
             
             // If already uploading, add to queue
             if (isUploadingRef.current) {
@@ -541,15 +609,6 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
 
       {/* Main content area */}
       {renderMainContent()}
-
-      {/* Add RTSP Dialog */}
-      <AddRtspDialog
-        isOpen={isRtspModalOpen}
-        agentApiUrl={agentApiUrl}
-        onClose={handleRtspDialogClose}
-        onSuccess={handleRtspSuccess}
-      />
-
       {/* Upload Progress Panel */}
       <UploadProgressPanel
         uploads={uploadProgress}

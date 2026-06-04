@@ -795,9 +795,6 @@ async def execute_core_search(
     # Build query_params for embed_search (used by embed-only and fusion paths)
     query_params: dict[str, str] = {"query": search_input.query}
 
-    if search_input.video_sources and len(search_input.video_sources) > 0:
-        query_params["video_sources"] = json.dumps(search_input.video_sources)
-
     if search_input.description:
         query_params["description"] = search_input.description
 

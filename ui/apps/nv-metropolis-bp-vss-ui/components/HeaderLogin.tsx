@@ -38,7 +38,7 @@ export default function HeaderLogin() {
             window.location.href = '/auth/login';
           }
         }}
-        className="flex items-center gap-2 px-3 py-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700"
+        className="flex items-center gap-2 rounded-md px-3 py-1 text-gray-700 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700"
         aria-label={isAuthenticated ? 'Profile' : 'Login'}
       >
         {isAuthenticated ? (
@@ -55,11 +55,11 @@ export default function HeaderLogin() {
       </button>
 
       {isAuthenticated && open && (
-        <div className="absolute right-0 mt-2 w-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg z-50">
+        <div className="absolute right-0 z-50 mt-2 w-40 rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
           <ul className="py-1">
             <li>
               <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700"
                 onClick={() => {
                   setOpen(false);
                   window.location.href = '/profile';
@@ -70,7 +70,7 @@ export default function HeaderLogin() {
             </li>
             <li>
               <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700"
                 onClick={() => {
                   setOpen(false);
                   window.location.href = '/settings';

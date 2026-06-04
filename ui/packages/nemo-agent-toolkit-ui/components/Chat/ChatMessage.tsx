@@ -25,6 +25,7 @@ import { BotAvatar } from '@/components/Avatar/BotAvatar';
 
 import { getReactMarkDownCustomComponents } from '../Markdown/CustomComponents';
 import { MemoizedReactMarkdown } from '../Markdown/MemoizedReactMarkdown';
+import { extractSearchResultsMessage, SearchResultsMessage } from './SearchResultsMessage';
 
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
@@ -62,6 +63,50 @@ export const ChatMessage: FC<Props> = memo(
       return getReactMarkDownCustomComponents(messageIndex, message?.id, isStreaming);
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [messageIndex, message?.id]); // Intentionally excluding isStreaming
+
+    function prepareContent({
+      message = {} as Message,
+      responseContent = true,
+      intermediateStepsContent = false,
+      role = 'assistant',
+    } = {}) {
+      const { content = '', intermediateSteps = [] } = message;
+
+      if (role === 'user') return content.trim();
+
+      let result = '';
+      if (intermediateStepsContent) {
+        result += generateContentIntermediate(intermediateSteps);
+      }
+
+      if (responseContent) {
+        result += result ? `\n\n${content}` : content;
+      }
+
+      // fixing malformed html and removing extra spaces to avoid markdown issues
+      return fixMalformedHtml(result)?.trim()?.replace(/\n\s+/, '\n ');
+    }
+
+    const assistantResponseContent = useMemo(() => {
+      if (message.role !== 'assistant') {
+        return '';
+      }
+
+      return prepareContent({
+        message,
+        role: 'assistant',
+        intermediateStepsContent: false,
+        responseContent: true,
+      });
+    }, [message]);
+
+    const parsedSearchResultsMessage = useMemo(() => {
+      if (message.role !== 'assistant' || !assistantResponseContent) {
+        return null;
+      }
+
+      return extractSearchResultsMessage(assistantResponseContent);
+    }, [assistantResponseContent, message.role]);
 
     // return if the there is nothing to show
     // no message and no intermediate steps
@@ -160,29 +205,6 @@ export const ChatMessage: FC<Props> = memo(
         }
       };
     }, []);
-
-    const prepareContent = ({
-      message = {} as Message,
-      responseContent = true,
-      intermediateStepsContent = false,
-      role = 'assistant',
-    } = {}) => {
-      const { content = '', intermediateSteps = [] } = message;
-
-      if (role === 'user') return content.trim();
-
-      let result = '';
-      if (intermediateStepsContent) {
-        result += generateContentIntermediate(intermediateSteps);
-      }
-
-      if (responseContent) {
-        result += result ? `\n\n${content}` : content;
-      }
-
-      // fixing malformed html and removing extra spaces to avoid markdown issues
-      return fixMalformedHtml(result)?.trim()?.replace(/\n\s+/, '\n ');
-    };
 
     return (
       <div
@@ -303,26 +325,44 @@ export const ChatMessage: FC<Props> = memo(
                   </div>
                   {/* for response content */}
                   <div className="overflow-x-auto prose dark:prose-invert flex-1 w-full flex-grow max-w-full whitespace-normal">
-                    <MemoizedReactMarkdown
-                      rehypePlugins={[rehypeRaw] as any}
-                      remarkPlugins={[
-                        remarkGfm,
-                        [
-                          remarkMath,
-                          {
-                            singleDollarTextMath: false,
-                          },
-                        ],
-                      ]}
-                      components={markdownComponents}
-                    >
-                      {prepareContent({
-                        message,
-                        role: 'assistant',
-                        intermediateStepsContent: false,
-                        responseContent: true,
-                      })}
-                    </MemoizedReactMarkdown>
+                    {parsedSearchResultsMessage ? (
+                      <div className="w-full">
+                        {parsedSearchResultsMessage.summary ? (
+                          <MemoizedReactMarkdown
+                            rehypePlugins={[rehypeRaw] as any}
+                            remarkPlugins={[
+                              remarkGfm,
+                              [
+                                remarkMath,
+                                {
+                                  singleDollarTextMath: false,
+                                },
+                              ],
+                            ]}
+                            components={markdownComponents}
+                          >
+                            {parsedSearchResultsMessage.summary}
+                          </MemoizedReactMarkdown>
+                        ) : null}
+                        <SearchResultsMessage results={parsedSearchResultsMessage.results} />
+                      </div>
+                    ) : (
+                      <MemoizedReactMarkdown
+                        rehypePlugins={[rehypeRaw] as any}
+                        remarkPlugins={[
+                          remarkGfm,
+                          [
+                            remarkMath,
+                            {
+                              singleDollarTextMath: false,
+                            },
+                          ],
+                        ]}
+                        components={markdownComponents}
+                      >
+                        {assistantResponseContent}
+                      </MemoizedReactMarkdown>
+                    )}
                   </div>
                   {(showMessageCopy || showMessageSpeaker) && (
                     <div className="mt-1 flex gap-1">

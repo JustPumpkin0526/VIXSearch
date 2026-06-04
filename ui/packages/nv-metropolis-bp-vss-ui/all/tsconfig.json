@@ -16,6 +16,7 @@
       "@nv-metropolis-bp-vss-ui/alerts": ["../alerts/lib-src/index.ts"],
       "@nv-metropolis-bp-vss-ui/dashboard": ["../dashboard/lib-src/index.ts"],
       "@nv-metropolis-bp-vss-ui/map": ["../map/lib-src/index.ts"],
+      "@nv-metropolis-bp-vss-ui/report": ["../report/lib-src/index.ts"],
       "@nv-metropolis-bp-vss-ui/search": ["../search/lib-src/index.ts"],
       "@nv-metropolis-bp-vss-ui/video-management": ["../video-management/lib-src/index.ts"]
     },

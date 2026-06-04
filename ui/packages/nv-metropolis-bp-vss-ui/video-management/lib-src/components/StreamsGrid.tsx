@@ -14,8 +14,6 @@ interface StreamsGridProps {
   vstApiUrl?: string | null;
   onSelectionChange: (streamId: string, selected: boolean) => void;
   onSelectAll: (selected: boolean) => void;
-  showVideos: boolean;
-  showRtsps: boolean;
   getEndTimeForStream: (streamId: string) => string | null;
 }
 
@@ -25,8 +23,6 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
   vstApiUrl,
   onSelectionChange,
   onSelectAll,
-  showVideos,
-  showRtsps,
   getEndTimeForStream,
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
@@ -114,13 +110,7 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
   const canSelectAll = streams.length > 0 && selectedStreams.size < streams.length;
   const canDeselectAll = selectedStreams.size > 0;
 
-  // Get viewing label based on filter state
-  const getViewingLabel = () => {
-    if (showVideos && showRtsps) return 'All Videos and RTSPs';
-    if (showVideos) return 'Videos only';
-    if (showRtsps) return 'RTSPs only';
-    return 'None';
-  };
+  const getViewingLabel = () => 'Videos';
 
   const handlePrevPage = () => {
     setCurrentPage((prev) => Math.max(1, prev - 1));

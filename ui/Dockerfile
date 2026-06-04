@@ -10,14 +10,27 @@ ARG GROUP_ID
 
 WORKDIR /repo
 
-# Copy source files
-COPY ui/ ui/
+# Copy workspace manifests first so dependency install can be cached
+COPY ui/package.json ui/package-lock.json ui/turbo.json /repo/ui/
+COPY ui/apps/nv-metropolis-bp-vss-ui/package.json /repo/ui/apps/nv-metropolis-bp-vss-ui/
+COPY ui/apps/nemo-agent-toolkit-ui/package.json /repo/ui/apps/nemo-agent-toolkit-ui/
+COPY ui/packages/nemo-agent-toolkit-ui/package.json /repo/ui/packages/nemo-agent-toolkit-ui/
+COPY ui/packages/nv-metropolis-bp-vss-ui/all/package.json /repo/ui/packages/nv-metropolis-bp-vss-ui/all/
+COPY ui/packages/nv-metropolis-bp-vss-ui/alerts/package.json /repo/ui/packages/nv-metropolis-bp-vss-ui/alerts/
+COPY ui/packages/nv-metropolis-bp-vss-ui/dashboard/package.json /repo/ui/packages/nv-metropolis-bp-vss-ui/dashboard/
+COPY ui/packages/nv-metropolis-bp-vss-ui/map/package.json /repo/ui/packages/nv-metropolis-bp-vss-ui/map/
+COPY ui/packages/nv-metropolis-bp-vss-ui/search/package.json /repo/ui/packages/nv-metropolis-bp-vss-ui/search/
+COPY ui/packages/nv-metropolis-bp-vss-ui/video-management/package.json /repo/ui/packages/nv-metropolis-bp-vss-ui/video-management/
 
 ENV NEXT_TELEMETRY_DISABLED 1
 ENV NEXT_BUILD_TRACES false
 
 WORKDIR /repo/ui
-RUN npm install
+RUN npm ci
+
+# Copy source files after dependencies so UI code changes do not invalidate npm install
+COPY ui/ ./
+
 RUN npx turbo build
 
 # Set permissions for __ENV.js files to be writable at runtime

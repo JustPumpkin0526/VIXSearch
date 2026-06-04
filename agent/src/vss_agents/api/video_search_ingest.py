@@ -91,7 +91,6 @@ def create_streaming_video_ingest_router(
     async def stream_video_to_vst(
         filename: str,
         request: Request,
-        chunk_duration: int | None = None,
     ) -> VideoIngestResponse:
         """
         This endpoint:
@@ -119,10 +118,6 @@ def create_streaming_video_ingest_router(
         """
         # Fixed timestamp as per requirements
         start_timestamp = "2025-01-01T00:00:00.000Z"
-        effective_chunk_duration = rtvi_embed_chunk_duration if chunk_duration is None else chunk_duration
-
-        if effective_chunk_duration < 0:
-            raise HTTPException(status_code=400, detail="chunk_duration must be greater than or equal to 0")
 
         # Remove file extension if present to get video ID
         video_id = filename.rsplit(".", 1)[0] if "." in filename else filename
@@ -308,7 +303,7 @@ def create_streaming_video_ingest_router(
                 "id": vst_sensor_id,
                 "model": rtvi_embed_model,
                 "creation_time": start_timestamp,
-                "chunk_duration": effective_chunk_duration,
+                "chunk_duration": rtvi_embed_chunk_duration,
             }
 
             logger.info(f"Calling RTVI Embedding API: POST {embedding_url}")

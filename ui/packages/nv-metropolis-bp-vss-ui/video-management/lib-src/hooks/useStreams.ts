@@ -20,6 +20,45 @@ export function useStreams({ vstApiUrl }: UseStreamsOptions = {}): UseStreamsRes
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const findMatchingUserVideo = useCallback(
+    (
+      stream: StreamInfo,
+      videosBySensorId: Map<string, { show_filename?: string } & Record<string, unknown>>,
+      userVideos: Array<{
+        sensor_id?: string;
+        video_name?: string;
+        filename?: string;
+        file_path?: string;
+        video_url?: string;
+        show_filename?: string;
+      }>
+    ) => {
+      if (stream.sensorId) {
+        const matchedBySensor = videosBySensorId.get(stream.sensorId);
+        if (matchedBySensor) {
+          return matchedBySensor;
+        }
+      }
+
+      const streamUrls = [stream.vodUrl, stream.url].filter(Boolean);
+      if (streamUrls.length === 0) {
+        return null;
+      }
+
+      return (
+        userVideos.find((video) => {
+          const videoUrl = video.video_url ?? video.file_path;
+          if (!videoUrl) {
+            return false;
+          }
+
+          return streamUrls.some((streamUrl) => streamUrl === videoUrl || streamUrl.includes(videoUrl));
+        }) ?? null
+      );
+    },
+    []
+  );
+
   const fetchStreams = useCallback(async () => {
     if (!vstApiUrl) {
       setError('VST API URL not configured');
@@ -45,7 +84,14 @@ export function useStreams({ vstApiUrl }: UseStreamsOptions = {}): UseStreamsRes
       // Fetch user's persisted video records from the UI API (user_videos) and
       // filter out any non-RTSP streams that are not present in the user's list.
       try {
-        let userVideos: Array<{ sensor_id?: string; video_name?: string; file_path?: string; show_filename?: string }> = [];
+        let userVideos: Array<{
+          sensor_id?: string;
+          video_name?: string;
+          filename?: string;
+          file_path?: string;
+          video_url?: string;
+          show_filename?: string;
+        }> = [];
         if (typeof window !== 'undefined') {
           const token = window.localStorage?.getItem('vss.auth.token');
           if (token) {
@@ -63,19 +109,17 @@ export function useStreams({ vstApiUrl }: UseStreamsOptions = {}): UseStreamsRes
         }
 
         if (Array.isArray(userVideos) && userVideos.length > 0) {
+          const videosBySensorId = new Map(
+            userVideos
+              .filter((video): video is typeof video & { sensor_id: string } => typeof video?.sensor_id === 'string' && video.sensor_id.length > 0)
+              .map((video) => [video.sensor_id, video])
+          );
+
           allStreams = allStreams.map((stream) => {
             // Keep RTSP streams as is
             if (isRtspStream(stream)) return stream;
 
-            // For uploaded videos, find matching user_videos entry and update display name
-            const matchingVideo = userVideos.find((v) => {
-              if (!v) return false;
-              if (v.sensor_id && stream.sensorId && v.sensor_id === stream.sensorId) return true;
-              if (v.video_name && stream.name && (stream.name === v.video_name || stream.name === v.video_name.replace(/\.[^.]+$/, ''))) return true;
-              if (v.file_path && (stream.vodUrl === v.file_path || stream.url === v.file_path)) return true;
-              if (v.file_path && stream.vodUrl && stream.vodUrl.includes(v.file_path)) return true;
-              return false;
-            });
+            const matchingVideo = findMatchingUserVideo(stream, videosBySensorId, userVideos);
 
             // Update stream.name with show_filename if match found
             if (matchingVideo && matchingVideo.show_filename) {
@@ -88,14 +132,7 @@ export function useStreams({ vstApiUrl }: UseStreamsOptions = {}): UseStreamsRes
             if (isRtspStream(stream)) return true;
 
             // For uploaded videos, require a matching user_videos entry
-            return userVideos.some((v) => {
-              if (!v) return false;
-              if (v.sensor_id && stream.sensorId && v.sensor_id === stream.sensorId) return true;
-              if (v.video_name && stream.name && (stream.name === v.video_name || stream.name === v.video_name.replace(/\.[^.]+$/, ''))) return true;
-              if (v.file_path && (stream.vodUrl === v.file_path || stream.url === v.file_path)) return true;
-              if (v.file_path && stream.vodUrl && stream.vodUrl.includes(v.file_path)) return true;
-              return false;
-            });
+            return findMatchingUserVideo(stream, videosBySensorId, userVideos) != null;
           });
         } else {
           // No authenticated user or no user_videos -> strip out uploaded (non-RTSP) streams
