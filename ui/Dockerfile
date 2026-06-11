@@ -31,6 +31,8 @@ RUN npm ci
 # Copy source files after dependencies so UI code changes do not invalidate npm install
 COPY ui/ ./
 
+RUN cp node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs apps/nv-metropolis-bp-vss-ui/public/pdf.worker.min.mjs
+
 RUN npx turbo build
 
 # Set permissions for __ENV.js files to be writable at runtime
@@ -41,11 +43,25 @@ RUN chmod -R 755 apps/nv-metropolis-bp-vss-ui/public && \
 
 
 # Conditional runner phase
-FROM nvcr.io/nvidia/distroless/node:22-v3.1.3 as runner-prod
+FROM node:22-bookworm-slim as runner-prod
 ARG BUILD_TYPE
 
-FROM nvcr.io/nvidia/distroless/node:22-v3.1.3-dev as runner-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libreoffice-core \
+        libreoffice-writer \
+        fonts-noto-cjk \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM node:22-bookworm-slim as runner-dev
 ARG BUILD_TYPE
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libreoffice-core \
+        libreoffice-writer \
+        fonts-noto-cjk \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 
 FROM runner-${BUILD_TYPE} as runner

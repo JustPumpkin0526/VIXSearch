@@ -29,14 +29,16 @@ import {
   getTabStorageKeyPrefix,
 } from '../utils/tabChatSidebarConfig';
 
+import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
 import { useTabChatSidebars } from '../hooks/useTabChatSidebars';
 import { TabWithChatSidebarLayout } from './TabWithChatSidebarLayout';
-import packageJson from '../package.json';
 import { APPLICATION_TITLE, APPLICATION_SUBTITLE } from '../constants/constants';
 
 import { ModeControlsSection } from './ModeControlsSection';
 import HeaderLogin from './HeaderLogin';
+
+const OPEN_REPORT_TAB_EVENT = 'vss:open-report-tab';
 
 
 // Type definitions for SSR data
@@ -137,8 +139,8 @@ const dynamicComponents = {
       console.error('[DynamicImport] Failed to load SearchComponent:', error);
       return () => (
         <div className="flex-1 p-6 overflow-auto">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Search</h2>
-          <p className="text-gray-600 dark:text-gray-400">Search component library not available. Please install @nv-metropolis-bp-vss-ui/all package.</p>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">검색</h2>
+          <p className="text-gray-600 dark:text-gray-400">검색 컴포넌트 라이브러리를 사용할 수 없습니다. @nv-metropolis-bp-vss-ui/all 패키지를 설치하세요.</p>
         </div>
       );
     }),
@@ -147,7 +149,7 @@ const dynamicComponents = {
       loading: () => (
         <div className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-center h-full">
-            <p className="text-gray-600 dark:text-gray-400">Loading Search...</p>
+            <p className="text-gray-600 dark:text-gray-400">검색 화면을 불러오는 중...</p>
           </div>
         </div>
       )
@@ -200,8 +202,8 @@ const dynamicComponents = {
       console.error('[DynamicImport] Failed to load VideoManagementComponent:', error);
       return () => (
         <div className="flex-1 p-6 overflow-auto">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Video Management</h2>
-          <p className="text-gray-600 dark:text-gray-400">Video Management component library not available.</p>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">비디오 관리</h2>
+          <p className="text-gray-600 dark:text-gray-400">비디오 관리 컴포넌트 라이브러리를 사용할 수 없습니다.</p>
         </div>
       );
     }),
@@ -210,19 +212,19 @@ const dynamicComponents = {
       loading: () => (
         <div className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-center h-full">
-            <p className="text-gray-600 dark:text-gray-400">Loading Video Management...</p>
+            <p className="text-gray-600 dark:text-gray-400">비디오 관리 화면을 불러오는 중...</p>
           </div>
         </div>
       )
     }
   ),
   ReportComponent: dynamic(() =>
-    import('@nv-metropolis-bp-vss-ui/all').then(mod => mod.ReportComponent).catch((error) => {
+    import('@nv-metropolis-bp-vss-ui/report').then(mod => mod.ReportComponent).catch((error) => {
       console.error('[DynamicImport] Failed to load ReportComponent:', error);
       return () => (
         <div className="flex-1 p-6 overflow-auto">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Report</h2>
-          <p className="text-gray-600 dark:text-gray-400">Report component unavailable.</p>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">리포트</h2>
+          <p className="text-gray-600 dark:text-gray-400">리포트 컴포넌트를 사용할 수 없습니다.</p>
         </div>
       );
     }),
@@ -231,7 +233,7 @@ const dynamicComponents = {
       loading: () => (
         <div className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-center h-full">
-            <p className="text-gray-600 dark:text-gray-400">Loading Report...</p>
+            <p className="text-gray-600 dark:text-gray-400">리포트 화면을 불러오는 중...</p>
           </div>
         </div>
       )
@@ -276,25 +278,25 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
       return [
         {
           id: 'search',
-          label: 'Search',
+          label: '검색',
           icon: <IconSearch size={18} />,
-          alt: 'Search',
+          alt: '검색',
           enabled: true,
           component: 'SearchComponent'
         },
         {
           id: 'dashboard',
-          label: 'Report',
+          label: '리포트',
           icon: <IconLayoutDashboard size={18} />,
-          alt: 'Report',
+          alt: '리포트',
           enabled: true,
           component: 'ReportComponent'
         },
         {
           id: 'video-management',
-          label: 'Video Management',
+          label: '비디오 관리',
           icon: <IconVideo size={18} />,
-          alt: 'Video Management',
+          alt: '비디오 관리',
           enabled: true,
           component: 'VideoManagementComponent'
         },
@@ -312,9 +314,9 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
       },
       {
         id: 'search',
-        label: 'Search',
+        label: '검색',
         icon: <IconSearch size={18} />,
-        alt: 'Search',
+        alt: '검색',
         enabled: deploymentConfig.enableSearchTab,
         component: 'SearchComponent'
       },
@@ -328,11 +330,11 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
       },
       {
         id: 'dashboard',
-        label: 'Dashboard',
+        label: '리포트',
         icon: <IconLayoutDashboard size={18} />,
-        alt: 'Dashboard',
+        alt: '리포트',
         enabled: deploymentConfig.enableDashboardTab,
-        component: 'DashboardComponent'
+        component: 'ReportComponent'
       },
       {
         id: 'map',
@@ -344,9 +346,9 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
       },
       {
         id: 'video-management',
-        label: 'Video Management',
+        label: '비디오 관리',
         icon: <IconVideo size={18} />,
-        alt: 'Video Management',
+        alt: '비디오 관리',
         enabled: deploymentConfig.enableVideoManagementTab,
         component: 'VideoManagementComponent'
       },
@@ -447,7 +449,50 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
     }
   }, [activeTab, hasLoadedFromStorage]);
 
+  React.useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const handleOpenReportTab = (event: Event) => {
+      const customEvent = event as CustomEvent<{ tabId?: string }>;
+      const requestedTabId = customEvent.detail?.tabId ?? 'dashboard';
+      const fallbackTabId = 'dashboard';
+      const nextTabId = visibleTabs.some((tab) => tab.id === requestedTabId)
+        ? requestedTabId
+        : visibleTabs.some((tab) => tab.id === fallbackTabId)
+        ? fallbackTabId
+        : null;
+
+      if (nextTabId) {
+        setActiveTab(nextTabId);
+      }
+    };
+
+    window.addEventListener(OPEN_REPORT_TAB_EVENT, handleOpenReportTab as EventListener);
+    return () => {
+      window.removeEventListener(OPEN_REPORT_TAB_EVENT, handleOpenReportTab as EventListener);
+    };
+  }, [setActiveTab, visibleTabs]);
+
+  const { ready: authReady, user } = useAuth();
   const { theme, toggleTheme, isDark, setTheme } = useTheme();
+
+  const getScopedTabStorageKeyPrefix = useMemo(() => {
+    return (tabId: string) => {
+      const basePrefix = getTabStorageKeyPrefix(tabId);
+      if (tabId !== 'search') {
+        return basePrefix;
+      }
+
+      if (!authReady) {
+        return `${basePrefix}:auth-pending`;
+      }
+
+      const username = typeof user?.username === 'string' ? user.username.trim().toLowerCase() : '';
+      return username ? `${basePrefix}:${username}` : `${basePrefix}:anonymous`;
+    };
+  }, [authReady, user?.username]);
 
   // Set document title - override any embedded component titles
   useEffect(() => {
@@ -650,10 +695,12 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
     if (hasChatSidebar) {
       const sidebarApi = getTabChatSidebar(tabConfig.id);
       const tabEnvKey = getTabEnvKey(tabConfig.id);
+      const storageKeyPrefix = getScopedTabStorageKeyPrefix(tabConfig.id);
       const tabRuntimeConfig = {
         workflow: getTabChatWorkflow(tabEnvKey, `${tabConfig.label} Chat`),
-        storageKeyPrefix: getTabStorageKeyPrefix(tabConfig.id),
+        storageKeyPrefix,
       };
+      const chatInstanceKey = `${tabConfig.id}:${storageKeyPrefix}`;
       const tabChatInitialStateOverride = getTabChatInitialStateOverride(tabEnvKey);
       const ChatApp = dynamicComponents.NemoAgentToolkitApp;
 
@@ -667,6 +714,7 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
             <RuntimeConfigProvider value={tabRuntimeConfig}>
               <div className="h-full w-full [&>main]:!h-full [&>main]:!w-full">
                 <ChatApp
+                  key={chatInstanceKey}
                   theme={theme}
                   onThemeChange={handleThemeChange}
                   isActive={isActive}
@@ -701,6 +749,7 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
           renderSidebarChat={() => (
             <RuntimeConfigProvider value={tabRuntimeConfig}>
               <ChatApp
+                key={chatInstanceKey}
                 theme={theme}
                 onThemeChange={handleThemeChange}
                 isActive={isActive}
@@ -792,20 +841,6 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
         {/* Header content */}
         <div className="h-full px-6 flex items-center justify-between relative z-10">
           <div className="flex items-center space-x-2 flex-1 min-w-0">
-            <div className="flex items-center gap-2 p-2 flex-shrink-0 relative">
-              {/* Render both logos, toggle visibility via CSS for instant switching */}
-              <img 
-                src="/NV-logo-white.svg"
-                alt="NVIDIA Logo" 
-                className={`h-9 w-auto transition-opacity duration-150 ${isDark ? 'opacity-100' : 'opacity-0 absolute'}`}
-              />
-              <img 
-                src="/NV-logo-black.svg"
-                alt="NVIDIA Logo" 
-                className={`h-9 w-auto transition-opacity duration-150 ${isDark ? 'opacity-0 absolute' : 'opacity-100'}`}
-              />
-            </div>
-            <div className="flex-shrink-0 w-[2px] h-[19px] bg-black dark:bg-white" />
             <h4
               className="font-bold text-gray-900 dark:text-gray-100 truncate text-xl font-sans"
               title={APPLICATION_TITLE}
@@ -893,20 +928,6 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
               videoManagementHandlers={videoManagementControlHandlers}
               activeTabLabel={visibleTabs.find(tab => tab.id === activeTab)?.label || ''}
             />
-            
-            {/* Version Display */}
-            <div 
-              className="px-4 border-t border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 flex items-end justify-center"
-              style={{
-                boxShadow: 'inset 0 8px 12px -2px rgba(0, 0, 0, 0.3)',
-                height: '32px',
-                paddingBottom: '4px'
-              }}
-            >
-              <div className="text-xs text-gray-500 dark:text-gray-400 text-center">
-                Version {packageJson.version}
-              </div>
-            </div>
           </aside>
         )}
 

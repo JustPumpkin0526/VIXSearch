@@ -77,7 +77,7 @@ export const ModeControlsSection: React.FC<ModeControlsSectionProps> = ({
       ) : (
         <div className="flex-1 flex items-center justify-center p-8 overflow-y-auto bg-white dark:bg-gray-800">
           <span className="text-gray-500 dark:text-gray-400 text-sm italic">
-            No Controls
+            표시할 컨트롤이 없습니다
           </span>
         </div>
       )}

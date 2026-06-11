@@ -11,7 +11,7 @@
  * 
  */
 
-import React from 'react';
+import React, { useRef } from 'react';
 
 export interface VideoModalProps {
   isOpen: boolean;
@@ -21,12 +21,28 @@ export interface VideoModalProps {
 }
 
 export const VideoModal: React.FC<VideoModalProps> = ({ isOpen, videoUrl, title, onClose }) => {
+  const backdropPressedRef = useRef(false);
+
   if (!isOpen) return null;
+
+  const handleBackdropMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    backdropPressedRef.current = event.target === event.currentTarget;
+  };
+
+  const handleBackdropClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const shouldClose = backdropPressedRef.current && event.target === event.currentTarget;
+    backdropPressedRef.current = false;
+
+    if (shouldClose) {
+      onClose();
+    }
+  };
 
   return (
     <div 
       className="fixed inset-0 bg-black bg-opacity-60 dark:bg-black dark:bg-opacity-80 flex items-center justify-center z-50 backdrop-blur-sm"
-      onClick={onClose}
+      onMouseDown={handleBackdropMouseDown}
+      onClick={handleBackdropClick}
     >
       <div 
         className="relative w-full max-w-5xl mx-4 rounded-2xl overflow-hidden bg-white dark:bg-gray-900 shadow-2xl"

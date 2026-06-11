@@ -37,6 +37,8 @@ export const ChatbarSettings = ({
   const handleClearConversations = onClearConversationsProp ?? chatbarContext?.handleClearConversations;
   const handleImportConversations = onImportConversationsProp ?? chatbarContext?.handleImportConversations;
   const handleExportData = onExportDataProp ?? chatbarContext?.handleExportData;
+  const isSearchChatbar = typeof homeContext?.storageKeyPrefix === 'string'
+    && homeContext.storageKeyPrefix.startsWith('searchTab');
 
   // If neither props nor context available, don't render
   if (!handleClearConversations || !handleImportConversations || !handleExportData) {
@@ -49,13 +51,15 @@ export const ChatbarSettings = ({
         <ClearConversations onClearConversations={handleClearConversations} />
       ) : null}
 
-      <Import onImport={handleImportConversations} />
+      {!isSearchChatbar && <Import onImport={handleImportConversations} />}
 
-      <SidebarButton
-        text={t('Export data')}
-        icon={<IconFileExport size={18} />}
-        onClick={() => handleExportData()}
-      />
+      {!isSearchChatbar && (
+        <SidebarButton
+          text={t('Export data')}
+          icon={<IconFileExport size={18} />}
+          onClick={() => handleExportData()}
+        />
+      )}
 
       {homeContext && (
         <>
