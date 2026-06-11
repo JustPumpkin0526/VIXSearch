@@ -56,6 +56,11 @@ class VideoUploadURLInput(BaseModel):
         default=False,
         description="Whether to generate URL for video embedding/search ingestion",
     )
+    chunk_duration: int | None = Field(
+        default=None,
+        description="Chunk duration in seconds for video embedding/search ingestion",
+        ge=1,
+    )
 
 
 class VideoUploadURLOutput(BaseModel):
@@ -100,11 +105,14 @@ async def video_upload_url(config: VideoUploadURLConfig, _builder: Builder) -> A
             filename_without_ext = filename.rsplit(".", 1)[0] or filename
 
             embedding = video_upload_url_input.embedding
+            chunk_duration = video_upload_url_input.chunk_duration
 
             # If embedding is requested, return the agent URL for video search
             if embedding:
                 agent_base_url = config.agent_base_url.rstrip("/")
                 url = f"{agent_base_url}/api/v1/videos-for-search/{filename_without_ext}"
+                if chunk_duration is not None:
+                    url = f"{url}?chunk_duration={chunk_duration}"
                 logger.info(f"Generated video embedding URL: {url}")
 
             # ELSE return the VST upload URL

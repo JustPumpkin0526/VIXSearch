@@ -17,6 +17,13 @@ export interface StreamInfo {
   sensorId: string;
 }
 
+export interface VideoGroup {
+  id: string;
+  name: string;
+  sensorIds: string[];
+  createdAt: string;
+}
+
 export type StreamsApiResponse = Array<Record<string, Omit<StreamInfo, 'sensorId'>[]>>;
 
 export interface TimelineInfo {
@@ -63,7 +70,14 @@ export interface UploadProgress {
   id: string;
   fileName: string;
   progress: number;
-  status: 'pending' | 'uploading' | 'success' | 'error' | 'cancelled';
+  status: 'pending' | 'uploading' | 'embedding' | 'success' | 'error' | 'cancelled';
+  streamId?: string;
+  sensorId?: string;
+  embeddingEnabled?: boolean;
+  uploadStartedAtMs?: number;
+  uploadDurationMs?: number;
+  embeddingStartedAtMs?: number;
+  embeddingDurationMs?: number;
   error?: string;
 }
 

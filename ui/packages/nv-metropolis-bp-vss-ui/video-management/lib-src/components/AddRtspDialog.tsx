@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { parseApiError } from '../utils';
 import { addRtspStream } from '../rtspStream';
 
@@ -16,6 +16,7 @@ export const AddRtspDialog: React.FC<AddRtspDialogProps> = ({
   onClose,
   onSuccess,
 }) => {
+  const backdropPressedRef = useRef(false);
   const [rtspUrl, setRtspUrl] = useState('');
   const [sensorName, setSensorName] = useState('');
   const [userEditedName, setUserEditedName] = useState(false); // Track if user manually edited the name
@@ -65,15 +66,15 @@ export const AddRtspDialog: React.FC<AddRtspDialogProps> = ({
     const trimmed = rtspUrl.trim();
 
     if (!trimmed) {
-      setError('RTSP URL is required.');
+      setError('RTSP URL은 필수입니다.');
       return;
     }
     if (!trimmed.startsWith('rtsp://')) {
-      setError('RTSP URL must start with "rtsp://".');
+      setError('RTSP URL은 "rtsp://"로 시작해야 합니다.');
       return;
     }
     if (!agentApiUrl) {
-      setError('Agent API URL not configured.');
+      setError('Agent API URL이 설정되지 않았습니다.');
       return;
     }
 
@@ -94,7 +95,7 @@ export const AddRtspDialog: React.FC<AddRtspDialogProps> = ({
       console.error('Error adding RTSP sensor via agent API:', err);
       const friendlyMessage = parseApiError(
         err instanceof Error ? err.message : '',
-        'Failed to add RTSP. Please check the URL and try again.'
+        'RTSP를 추가하지 못했습니다. URL을 확인한 뒤 다시 시도하세요.'
       );
       setError(friendlyMessage);
     } finally {
@@ -104,10 +105,25 @@ export const AddRtspDialog: React.FC<AddRtspDialogProps> = ({
 
   if (!isOpen) return null;
 
+  const handleBackdropMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    backdropPressedRef.current = event.target === event.currentTarget;
+  };
+
+  const handleBackdropClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const shouldClose = backdropPressedRef.current && event.target === event.currentTarget;
+    backdropPressedRef.current = false;
+
+    if (shouldClose) {
+      handleClose();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/85" onClick={handleClose} />
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85"
+      onMouseDown={handleBackdropMouseDown}
+      onClick={handleBackdropClick}
+    >
 
       {/* Dialog panel */}
       <div
@@ -133,14 +149,14 @@ export const AddRtspDialog: React.FC<AddRtspDialogProps> = ({
               <line x1="12" y1="17" x2="12" y2="21" />
             </svg>
             <span className="text-sm font-medium uppercase tracking-wide text-gray-800 dark:text-gray-200">
-              ADD RTSP
+              RTSP 추가
             </span>
           </div>
           <button
             type="button"
             onClick={handleClose}
             className="text-sm px-3 py-1 rounded text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
-            aria-label="Close"
+            aria-label="닫기"
           >
             ✕
           </button>
@@ -184,20 +200,20 @@ export const AddRtspDialog: React.FC<AddRtspDialogProps> = ({
               className="text-xs flex items-center gap-2 mt-3 text-gray-500"
             >
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-gray-500 flex-shrink-0" />
-              e.g. rtsp://192.168.1.10:554/stream1
+              예: rtsp://192.168.1.10:554/stream1
             </p>
           </div>
 
           {/* Sensor Name (optional) */}
           <div>
             <label className="block text-sm mb-3 text-gray-700 dark:text-gray-300">
-              Sensor Name <span className="text-xs text-gray-400 dark:text-gray-500">(optional)</span>
+              센서 이름 <span className="text-xs text-gray-400 dark:text-gray-500">(선택)</span>
             </label>
             <input
               type="text"
               value={sensorName}
               onChange={(e) => handleSensorNameChange(e.target.value)}
-              placeholder="e.g. Warehouse Camera 01"
+              placeholder="예: 창고 카메라 01"
               className="w-full rounded px-4 py-3 text-sm focus:outline-none focus:ring-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:ring-green-500 focus:border-green-500"
             />
           </div>
@@ -216,7 +232,7 @@ export const AddRtspDialog: React.FC<AddRtspDialogProps> = ({
             onClick={handleClose}
             className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200"
           >
-            Cancel
+            취소
           </button>
           <button
             type="button"
@@ -228,7 +244,7 @@ export const AddRtspDialog: React.FC<AddRtspDialogProps> = ({
                 : 'border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500 cursor-not-allowed'
             }`}
           >
-            {isSubmitting ? 'Adding...' : 'Add RTSP'}
+            {isSubmitting ? '추가 중...' : 'RTSP 추가'}
           </button>
         </div>
       </div>

@@ -53,7 +53,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({ onFilesSelected, enableV
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            No videos available
+            표시할 동영상이 없습니다
           </p>
         </div>
       </div>
@@ -107,10 +107,10 @@ export const EmptyState: React.FC<EmptyStateProps> = ({ onFilesSelected, enableV
             ? 'text-green-500' 
             : 'text-gray-700 dark:text-gray-200'
         }`}>
-          {isDragOver ? 'Drop files to upload' : 'Drop files here'}
+          {isDragOver ? '업로드할 파일을 놓으세요' : '파일을 여기에 놓으세요'}
         </p>
         <p className="text-sm mb-2 text-gray-500 dark:text-gray-400">
-          Movie Files (mp4, mkv)
+          동영상 파일 (mp4, mkv)
         </p>
       </div>
     </div>

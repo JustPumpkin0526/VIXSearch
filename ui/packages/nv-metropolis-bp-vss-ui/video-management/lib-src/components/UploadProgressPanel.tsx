@@ -2,9 +2,55 @@
 import React from 'react';
 import type { UploadProgress } from '../types';
 
-// Format bytes to MB string - defined outside component to avoid recreation
-const formatBytes = (bytes: number): string => {
-  return (bytes / 1024 / 1024).toFixed(2);
+const formatDuration = (durationMs?: number): string | null => {
+  if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) {
+    return null;
+  }
+
+  const totalSeconds = durationMs / 1000;
+  if (totalSeconds < 10) {
+    return `${totalSeconds.toFixed(1)}초`;
+  }
+
+  if (totalSeconds < 60) {
+    return `${Math.round(totalSeconds)}초`;
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return `${minutes}분 ${seconds}초`;
+};
+
+const getUploadDurationLabel = (upload: UploadProgress): string | null => {
+  if (upload.uploadDurationMs != null) {
+    const formatted = formatDuration(upload.uploadDurationMs);
+    return formatted ? `업로드 ${formatted}` : null;
+  }
+
+  if (upload.status === 'uploading' && upload.uploadStartedAtMs != null) {
+    const formatted = formatDuration(Date.now() - upload.uploadStartedAtMs);
+    return formatted ? `업로드 ${formatted}` : null;
+  }
+
+  return null;
+};
+
+const getEmbeddingDurationLabel = (upload: UploadProgress): string | null => {
+  if (upload.embeddingEnabled === false) {
+    return '임베딩 사용 안 함';
+  }
+
+  if (upload.embeddingDurationMs != null) {
+    const formatted = formatDuration(upload.embeddingDurationMs);
+    return formatted ? `임베딩 ${formatted}` : null;
+  }
+
+  if (upload.status === 'embedding' && upload.embeddingStartedAtMs != null) {
+    const formatted = formatDuration(Date.now() - upload.embeddingStartedAtMs);
+    return formatted ? `임베딩 ${formatted}` : null;
+  }
+
+  return null;
 };
 
 interface UploadProgressPanelProps {
@@ -24,9 +70,10 @@ export const UploadProgressPanel: React.FC<UploadProgressPanelProps> = ({
   const errorCount = uploads.filter((u) => u.status === 'error').length;
   const cancelledCount = uploads.filter((u) => u.status === 'cancelled').length;
   const inProgressCount = uploads.filter((u) => u.status === 'uploading').length;
+  const embeddingCount = uploads.filter((u) => u.status === 'embedding').length;
   const pendingCount = uploads.filter((u) => u.status === 'pending').length;
 
-  const allDone = inProgressCount === 0 && pendingCount === 0;
+  const allDone = inProgressCount === 0 && embeddingCount === 0 && pendingCount === 0;
   const hasActiveUploads = inProgressCount > 0 || pendingCount > 0;
 
   return (
@@ -63,9 +110,11 @@ export const UploadProgressPanel: React.FC<UploadProgressPanelProps> = ({
           <span className="font-medium text-sm text-gray-800 dark:text-gray-200">
             {allDone
               ? completedCount === uploads.length
-                ? `Upload Complete (${completedCount}/${uploads.length})`
-                : `Upload Finished (${completedCount}/${uploads.length} succeeded)`
-              : `Uploading ${completedCount + inProgressCount}/${uploads.length} files...`}
+                ? `업로드 및 임베딩 완료 (${completedCount}/${uploads.length})`
+                : `업로드 처리 종료 (${completedCount}/${uploads.length}개 성공)`
+              : embeddingCount > 0
+                ? `${completedCount}/${uploads.length}개 완료, ${embeddingCount}개 임베딩 중...`
+                : `${completedCount + inProgressCount}/${uploads.length}개 파일 업로드 중...`}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -75,7 +124,7 @@ export const UploadProgressPanel: React.FC<UploadProgressPanelProps> = ({
               onClick={onCancel}
               className="px-3 py-1.5 text-sm font-medium rounded border border-red-500 text-red-500 hover:bg-red-500 hover:text-white"
             >
-              Cancel All
+              전체 취소
             </button>
           )}
           {allDone && (
@@ -97,11 +146,11 @@ export const UploadProgressPanel: React.FC<UploadProgressPanelProps> = ({
       {allDone && (completedCount > 0 || errorCount > 0 || cancelledCount > 0) && (
         <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">
           {completedCount > 0 && (
-            <span className="text-green-500 mr-3">{completedCount} succeeded</span>
+            <span className="text-green-500 mr-3">성공 {completedCount}개</span>
           )}
-          {errorCount > 0 && <span className="text-red-500 mr-3">{errorCount} failed</span>}
+          {errorCount > 0 && <span className="text-red-500 mr-3">실패 {errorCount}개</span>}
           {cancelledCount > 0 && (
-            <span className="text-gray-400 dark:text-gray-500">{cancelledCount} cancelled</span>
+            <span className="text-gray-400 dark:text-gray-500">취소 {cancelledCount}개</span>
           )}
         </div>
       )}
@@ -123,11 +172,16 @@ export const UploadProgressPanel: React.FC<UploadProgressPanelProps> = ({
                 <span className="flex items-center gap-1">
                   {upload.status === 'pending' && (
                     <span className="text-xs text-gray-400 dark:text-gray-500">
-                      Pending
+                      대기 중
                     </span>
                   )}
                   {upload.status === 'uploading' && (
                     <span className="text-xs text-cyan-500">{upload.progress}%</span>
+                  )}
+                  {upload.status === 'embedding' && (
+                    <span className="text-xs text-amber-500 dark:text-amber-400">
+                      임베딩 중
+                    </span>
                   )}
                   {upload.status === 'success' && (
                     <svg
@@ -155,11 +209,18 @@ export const UploadProgressPanel: React.FC<UploadProgressPanelProps> = ({
                   )}
                   {upload.status === 'cancelled' && (
                     <span className="text-xs text-gray-400 dark:text-gray-500">
-                      Cancelled
+                      취소됨
                     </span>
                   )}
                 </span>
               </div>
+
+              {(getUploadDurationLabel(upload) || getEmbeddingDurationLabel(upload)) && (
+                <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
+                  {getUploadDurationLabel(upload) ? <span>{getUploadDurationLabel(upload)}</span> : null}
+                  {getEmbeddingDurationLabel(upload) ? <span>{getEmbeddingDurationLabel(upload)}</span> : null}
+                </div>
+              )}
 
 
               {/* Progress bar for uploading files */}
@@ -173,6 +234,12 @@ export const UploadProgressPanel: React.FC<UploadProgressPanelProps> = ({
                       minWidth: upload.progress > 0 ? '8px' : '0'
                     }}
                   />
+                </div>
+              )}
+
+              {upload.status === 'embedding' && (
+                <div className="h-1.5 rounded-full overflow-hidden bg-gray-200 dark:bg-gray-700">
+                  <div className="h-full w-1/2 animate-pulse rounded-full bg-amber-500" />
                 </div>
               )}
 

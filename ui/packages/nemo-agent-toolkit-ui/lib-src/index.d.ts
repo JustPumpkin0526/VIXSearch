@@ -140,7 +140,8 @@ export function uploadFile(
   uploadUrl: string,
   formData: Record<string, any>,
   onProgress?: (progress: number) => void,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  onTransferComplete?: () => void,
 ): Promise<FileUploadResult>;
 
 // Re-export next-i18next config

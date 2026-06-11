@@ -12,6 +12,8 @@ interface StreamCardProps {
   vstApiUrl?: string | null;
   onSelectionChange: (streamId: string, selected: boolean) => void;
   getEndTimeForStream: (streamId: string) => string | null;
+  onPlayVideo?: (stream: StreamInfo) => void;
+  onContextMenu?: (event: React.MouseEvent<HTMLDivElement>, stream: StreamInfo) => void;
 }
 
 export const StreamCard: React.FC<StreamCardProps> = ({
@@ -20,6 +22,8 @@ export const StreamCard: React.FC<StreamCardProps> = ({
   vstApiUrl,
   onSelectionChange,
   getEndTimeForStream,
+  onPlayVideo,
+  onContextMenu,
 }) => {
   const extension = getFileExtension(stream.url);
   const isRtsp = isRtspStream(stream);
@@ -100,6 +104,10 @@ export const StreamCard: React.FC<StreamCardProps> = ({
     onSelectionChange(stream.streamId, e.target.checked);
   };
 
+  const handleCardClick = () => {
+    onSelectionChange(stream.streamId, !isSelected);
+  };
+
   const handleCopyContext = useCallback(async () => {
     const text = JSON.stringify(
       { sensorName: stream.name, streamId: stream.streamId },
@@ -121,6 +129,8 @@ export const StreamCard: React.FC<StreamCardProps> = ({
 
   return (
     <div
+      onClick={handleCardClick}
+      onContextMenu={(event) => onContextMenu?.(event, stream)}
       className={`rounded-lg border overflow-hidden bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 ${isSelected ? 'ring-2 ring-green-500' : ''}`}
     >
       <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800">
@@ -128,6 +138,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({
           type="checkbox"
           checked={isSelected}
           onChange={handleCheckboxChange}
+          onClick={(event) => event.stopPropagation()}
           className="w-4 h-4 rounded border-2 cursor-pointer bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-green-600 dark:text-green-500 focus:ring-green-500"
         />
         <p
@@ -138,9 +149,12 @@ export const StreamCard: React.FC<StreamCardProps> = ({
         </p>
         <button
           type="button"
-          onClick={handleCopyContext}
+          onClick={(event) => {
+            event.stopPropagation();
+            handleCopyContext();
+          }}
           className="flex-shrink-0 px-2 py-1 rounded transition-colors text-[11px] font-medium flex items-center gap-1 bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white"
-          title="Copy sensor context"
+          title="센서 정보 복사"
         >
           {copyState === 'success' ? (
             <IconCheck className="w-2.5 h-2.5" />
@@ -148,14 +162,12 @@ export const StreamCard: React.FC<StreamCardProps> = ({
             <IconCopy className="w-2.5 h-2.5" />
           )}
           <span>
-            {copyState === 'success' ? 'Copied' : copyState === 'error' ? 'Failed' : 'Copy'}
+            {copyState === 'success' ? '복사됨' : copyState === 'error' ? '실패' : '복사'}
           </span>
         </button>
       </div>
 
-      <div
-        className="relative flex items-center justify-center bg-gray-100 dark:bg-gray-900 pb-[56.25%]"
-      >
+      <div className="relative flex items-center justify-center bg-gray-100 dark:bg-gray-900 pb-[56.25%]">
         {thumbnailUrl && !thumbnailError ? (
           <img src={thumbnailUrl} alt={stream.name} className="absolute inset-0 w-full h-full object-cover" />
         ) : isLoadingThumbnail ? (
@@ -187,6 +199,24 @@ export const StreamCard: React.FC<StreamCardProps> = ({
         <div className="absolute top-2 left-2 px-2 py-0.5 rounded text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
           {isRtsp ? 'RTSP' : extension || 'VIDEO'}
         </div>
+
+        {!isRtsp && onPlayVideo ? (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onPlayVideo(stream);
+              }}
+              className="pointer-events-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-white/30 bg-[rgb(209_255_117_/_0.6)] shadow-lg transition-transform hover:scale-110 sm:h-14 sm:w-14"
+              aria-label={`${stream.name} 재생`}
+            >
+              <svg className="ml-0.5 h-6 w-6 text-white sm:h-7 sm:w-7" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className="px-3 py-2">

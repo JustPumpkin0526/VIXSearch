@@ -1,45 +1,11 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { Pool } from 'pg';
-import crypto from 'crypto';
-
-const DATABASE_URL = String(process.env.UI_AUTH_DATABASE_URL || '').trim();
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-change-me';
-let pool: Pool | null = null;
-
-function base64url(input: Buffer | string): string {
-  return Buffer.from(input).toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-}
-
-function getPool(): Pool {
-  if (!DATABASE_URL) {
-    throw new Error('UI_AUTH_DATABASE_URL is required to delete uploaded_videos');
-  }
-  if (!pool) {
-    pool = new Pool({ connectionString: DATABASE_URL });
-  }
-  return pool;
-}
-
-function verifyJwt(token: string): { valid: boolean; payload?: any; reason?: string } {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return { valid: false, reason: 'Malformed JWT' };
-    const [headerB64, payloadB64, sigB64] = parts;
-    const signingInput = `${headerB64}.${payloadB64}`;
-    const expectedSig = crypto.createHmac('sha256', JWT_SECRET).update(signingInput).digest();
-    const expectedSigB64 = base64url(expectedSig);
-    if (!crypto.timingSafeEqual(Buffer.from(sigB64), Buffer.from(expectedSigB64))) {
-      return { valid: false, reason: 'Invalid signature' };
-    }
-    const payloadJson = Buffer.from(payloadB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString();
-    const payload = JSON.parse(payloadJson);
-    const now = Math.floor(Date.now() / 1000);
-    if (payload.exp && payload.exp < now) return { valid: false, reason: 'Token expired' };
-    return { valid: true, payload };
-  } catch (err: any) {
-    return { valid: false, reason: String(err?.message || err) };
-  }
-}
+import {
+  cleanupEmptyUploadedVideoGroups,
+  ensureUploadedVideoGroupingSchema,
+  getAccountIdFromVideosPayload,
+  getVideosPool,
+  verifyVideosJwt,
+} from './_lib';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -52,10 +18,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ error: 'Missing Authorization Bearer token' });
   }
   const token = authHeader.slice('Bearer '.length).trim();
-  const verification = verifyJwt(token);
+  const verification = verifyVideosJwt(token);
   if (!verification.valid) {
     return res.status(401).json({ error: `Invalid token: ${verification.reason}` });
   }
+
+  const username = getAccountIdFromVideosPayload(verification.payload);
+  if (!username) return res.status(400).json({ error: 'Token missing subject' });
+
+  await ensureUploadedVideoGroupingSchema();
 
   const body = req.body || {};
   // Accept both snake_case and camelCase keys from callers
@@ -69,7 +40,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const client = await getPool().connect();
+    const client = await getVideosPool().connect();
     try {
       // Check whether 'file_path' column exists in uploaded_videos
       const uploadedHasFilePathRes = await client.query(
@@ -114,9 +85,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       let uploadedRes = { rowCount: 0 } as any;
       if (uploadedConditions.length > 0) {
-        const deleteUploadedSql = `DELETE FROM uploaded_videos WHERE ${uploadedConditions.join(' OR ')}`;
+        const deleteUploadedSql = `DELETE FROM uploaded_videos WHERE username = $1 AND (${uploadedConditions.join(' OR ')})`;
+        uploadedParams.unshift(username);
         uploadedRes = await client.query(deleteUploadedSql, uploadedParams);
       }
+
+      await cleanupEmptyUploadedVideoGroups(client, username);
 
       return res.status(200).json({ ok: true, deleted: { uploaded: uploadedRes.rowCount } });
     } finally {

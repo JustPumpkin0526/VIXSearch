@@ -4,6 +4,12 @@ import toast from 'react-hot-toast';
 import { useTranslation } from 'next-i18next';
 
 import HomeContext from '@/pages/api/home/home.context';
+import {
+  buildInitialParamFields,
+  CustomAgentParamsFields,
+  saveParamValuesToStorage,
+  type ParamField,
+} from '@/components/Chat/CustomAgentParams';
 
 interface Props {
   open: boolean;
@@ -31,8 +37,10 @@ export const SettingDialog: FC<Props> = ({ open, onClose }) => {
       enableIntermediateSteps,
       webSocketSchemas,
       themeChangeButtonEnabled,
+      customAgentParamsJson,
     },
     dispatch: homeDispatch,
+    storageKeyPrefix,
   } = homeContext;
 
   // Initialize with state values (env-based defaults), sync with sessionStorage in useEffect
@@ -43,7 +51,10 @@ export const SettingDialog: FC<Props> = ({ open, onClose }) => {
   const [isIntermediateStepsEnabled, setIsIntermediateStepsEnabled] = useState(enableIntermediateSteps);
   const [detailsToggle, setDetailsToggle] = useState(expandIntermediateSteps);
   const [intermediateStepOverrideToggle, setIntermediateStepOverrideToggle] = useState(intermediateStepOverride);
+  const [searchSettingsFields, setSearchSettingsFields] = useState<ParamField[]>([]);
   const [hasLoadedFromStorage, setHasLoadedFromStorage] = useState(false);
+  const isSearchSettingsDialog = typeof storageKeyPrefix === 'string' && storageKeyPrefix.startsWith('searchTab');
+  const showLegacySettings = !isSearchSettingsDialog;
 
   // Sync with sessionStorage after mount (client-side only)
   // Priority: saved sessionStorage value > current state (which includes env variable fallback)
@@ -96,6 +107,14 @@ export const SettingDialog: FC<Props> = ({ open, onClose }) => {
   }, [hasLoadedFromStorage]);
 
   useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    setSearchSettingsFields(buildInitialParamFields(customAgentParamsJson, storageKeyPrefix));
+  }, [customAgentParamsJson, open, storageKeyPrefix]);
+
+  useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
         onClose();
@@ -110,7 +129,7 @@ export const SettingDialog: FC<Props> = ({ open, onClose }) => {
   }, [open, onClose]);
 
   const handleSave = () => {
-    if (!chatCompletionEndPoint || !webSocketEndPoint) {
+    if (showLegacySettings && (!chatCompletionEndPoint || !webSocketEndPoint)) {
       toast.error('Please fill all the fields to save settings');
       return;
     }
@@ -131,9 +150,9 @@ export const SettingDialog: FC<Props> = ({ open, onClose }) => {
 
     // Save theme directly to sessionStorage like other settings
     sessionStorage.setItem('lightMode', theme);
-    sessionStorage.setItem('chatCompletionURL', chatCompletionEndPoint);
-    sessionStorage.setItem('webSocketURL', webSocketEndPoint);
-    sessionStorage.setItem('webSocketSchema', webSocketSchema);
+    sessionStorage.setItem('chatCompletionURL', String(chatCompletionEndPoint ?? ''));
+    sessionStorage.setItem('webSocketURL', String(webSocketEndPoint ?? ''));
+    sessionStorage.setItem('webSocketSchema', String(webSocketSchema ?? ''));
     sessionStorage.setItem('expandIntermediateSteps', String(detailsToggle));
     sessionStorage.setItem(
       'intermediateStepOverride',
@@ -143,6 +162,10 @@ export const SettingDialog: FC<Props> = ({ open, onClose }) => {
       'enableIntermediateSteps',
       String(isIntermediateStepsEnabled),
     );
+
+    if (isSearchSettingsDialog) {
+      saveParamValuesToStorage(searchSettingsFields, storageKeyPrefix);
+    }
 
     toast.success('Settings saved successfully');
     onClose();
@@ -157,10 +180,27 @@ export const SettingDialog: FC<Props> = ({ open, onClose }) => {
         className="w-full max-w-md bg-white dark:bg-[#202123] rounded-2xl shadow-lg p-6 transform transition-all relative"
       >
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-          {t('Settings')}
+          {isSearchSettingsDialog ? '설정' : t('Settings')}
         </h2>
 
-        {themeChangeButtonEnabled && (
+        {isSearchSettingsDialog && (
+          <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/60">
+            <p className="text-sm font-medium text-gray-900 dark:text-white">
+              검색 설정
+            </p>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Search 메뉴에서 검색할 때 사용할 옵션을 설정합니다.
+            </p>
+            <div className="mt-4">
+              <CustomAgentParamsFields
+                fields={searchSettingsFields}
+                onFieldsChange={setSearchSettingsFields}
+              />
+            </div>
+          </div>
+        )}
+
+        {showLegacySettings && themeChangeButtonEnabled && (
           <>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               {t('Theme')}
@@ -176,6 +216,8 @@ export const SettingDialog: FC<Props> = ({ open, onClose }) => {
           </>
         )}
 
+        {showLegacySettings && (
+          <>
         <label className={`block text-sm font-medium text-gray-700 dark:text-gray-300 ${themeChangeButtonEnabled ? 'mt-4' : ''}`}>
           {t('HTTP URL for Chat Completion')}
         </label>
@@ -271,18 +313,21 @@ export const SettingDialog: FC<Props> = ({ open, onClose }) => {
           </label>
         </div>
 
+          </>
+        )}
+
         <div className="mt-6 flex justify-end gap-2">
           <button
             className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-900 dark:text-white rounded-md hover:bg-gray-400 dark:hover:bg-gray-500 focus:outline-none"
             onClick={onClose}
           >
-            {t('Cancel')}
+            {isSearchSettingsDialog ? '취소' : t('Cancel')}
           </button>
           <button
             className="px-4 py-2 bg-[#76b900] text-white rounded-md hover:bg-[#5a9100] focus:outline-none"
             onClick={handleSave}
           >
-            {t('Save')}
+            {isSearchSettingsDialog ? '저장' : t('Save')}
           </button>
         </div>
       </div>

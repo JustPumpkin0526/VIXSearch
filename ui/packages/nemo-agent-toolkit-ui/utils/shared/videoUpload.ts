@@ -68,7 +68,8 @@ export async function uploadFile(
   uploadUrl: string,
   formData: Record<string, any>,
   onProgress?: (progress: number) => void,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  onTransferComplete?: () => void,
 ): Promise<FileUploadResult> {
   // Create AbortController for the getUploadUrl request
   const getUrlController = new AbortController();
@@ -96,6 +97,16 @@ export async function uploadFile(
     // Step 2: Upload file using XHR (for progress tracking)
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
+      let transferCompleteNotified = false;
+
+      const notifyTransferComplete = () => {
+        if (transferCompleteNotified) {
+          return;
+        }
+
+        transferCompleteNotified = true;
+        onTransferComplete?.();
+      };
 
       // Listen to parent abort signal
       if (abortSignal) {
@@ -107,6 +118,12 @@ export async function uploadFile(
           const progress = Math.round((event.loaded / event.total) * 100);
           onProgress(progress);
         }
+      });
+
+      // Upload transfer to the agent has finished at this point; the server may
+      // still be processing follow-up work such as embedding before it responds.
+      xhr.upload.addEventListener('load', () => {
+        notifyTransferComplete();
       });
 
       xhr.addEventListener('load', () => {
