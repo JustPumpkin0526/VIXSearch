@@ -84,13 +84,20 @@ class SearchAgentInput(BaseModel):
     use_attribute_search: bool | None = Field(
         default=None, description="Enable fusion reranking with attribute search (overrides config if provided)"
     )
-    max_results: int = Field(default=5, description="Maximum number of results to return")
+    max_results: int | None = Field(default=None, description="Maximum number of results to return")
+    embed_confidence_threshold: float | None = Field(
+        default=None, description="Override the embed confidence threshold used during fusion fallback"
+    )
     top_k: int | None = Field(default=None, description="Override top_k for embed search")
     start_time: str | None = Field(default=None, description="Start time filter (ISO format)")
     end_time: str | None = Field(default=None, description="End time filter (ISO format)")
     source_type: Literal["video_file", "rtsp"] = Field(
         default="video_file",
         description="Type of video source: 'video_file' for uploaded videos, 'rtsp' for live/camera streams",
+    )
+    owned_video_ids: list[str] | None = Field(
+        default=None,
+        description="List of uploaded video sensor IDs owned by the currently logged-in user",
     )
     use_critic: bool = Field(default=True, description="Whether to verify search results with VLM critic agent")
 
@@ -297,15 +304,35 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
 
         # top_k = input.top_k if input.top_k else default_max_result
         # User's top_k overrides default_max_result (no capping)
-        top_k = search_agent_input.top_k if search_agent_input.top_k is not None else config.default_max_results
+        max_results = (
+            search_agent_input.max_results
+            if search_agent_input.max_results is not None
+            else config.default_max_results
+        )
+        top_k = (
+            search_agent_input.top_k
+            if search_agent_input.top_k is not None
+            else search_agent_input.max_results
+        )
+        effective_config = config.model_copy(
+            update={
+                "embed_confidence_threshold": (
+                    search_agent_input.embed_confidence_threshold
+                    if search_agent_input.embed_confidence_threshold is not None
+                    else config.embed_confidence_threshold
+                )
+            }
+        )
 
         search_input = SearchInput(
             query=search_agent_input.query,
             source_type=search_agent_input.source_type,
             top_k=top_k,
+            min_cosine_similarity=effective_config.embed_confidence_threshold,
             agent_mode=search_agent_input.agent_mode,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
+            owned_video_ids=search_agent_input.owned_video_ids,
             use_critic=search_agent_input.use_critic,
         )
 
@@ -318,7 +345,7 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             search_input=search_input,
             embed_search=embed_search_fn,
             agent_llm=agent_llm,
-            config=config,
+            config=effective_config,
             builder=builder,
             attribute_search_fn=attribute_search_fn,
             critic_agent=critic_agent,
@@ -355,7 +382,11 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             if search_agent_input.use_attribute_search is not None
             else config.use_attribute_search
         )
-        max_results = search_agent_input.max_results
+        max_results = (
+            search_agent_input.max_results
+            if search_agent_input.max_results is not None
+            else config.default_max_results
+        )
         top_k = search_agent_input.top_k
         start_time = search_agent_input.start_time
         end_time = search_agent_input.end_time
@@ -381,15 +412,26 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
 
         # top_k = input.top_k if input.top_k else default_max_result
         # User's top_k overrides default_max_result (no capping)
-        top_k = top_k if top_k is not None else config.default_max_results
+        top_k = top_k if top_k is not None else search_agent_input.max_results
+        effective_config = config.model_copy(
+            update={
+                "embed_confidence_threshold": (
+                    search_agent_input.embed_confidence_threshold
+                    if search_agent_input.embed_confidence_threshold is not None
+                    else config.embed_confidence_threshold
+                )
+            }
+        )
 
         search_input = SearchInput(
             query=query,
             source_type=source_type,
             top_k=top_k,
+            min_cosine_similarity=effective_config.embed_confidence_threshold,
             agent_mode=agent_mode,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
+            owned_video_ids=search_agent_input.owned_video_ids,
             use_critic=search_agent_input.use_critic,
         )
 
@@ -403,7 +445,7 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
                 search_input=search_input,
                 embed_search=embed_search_fn,
                 agent_llm=agent_llm,
-                config=config,
+                config=effective_config,
                 builder=builder,
                 attribute_search_fn=attribute_search_fn,
                 critic_agent=critic_agent,
@@ -425,11 +467,11 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             results_dicts = [r.model_dump() for r in final_results]
             search_dict = {"data": results_dicts}
 
-            # Format results for display
+            # Return only raw JSON for successful search results so the UI can
+            # render clips without showing a textual summary or JSON label.
             if result_count > 0:
-                summary = f"Found {result_count} matching video{'s' if result_count != 1 else ''}"
                 search_result_json = json.dumps(search_dict, indent=2)
-                messages = [summary, "\n\n**Search API result (JSON):**\n```json\n" + search_result_json + "\n```"]
+                messages = [search_result_json]
 
                 output = AgentOutput(
                     messages=messages,

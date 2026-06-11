@@ -601,10 +601,11 @@ async def embed_search(config: EmbedSearchConfig, _builder: Builder) -> AsyncGen
         source_type = query_input.source_type
         if source_type == "video_file":
             if not es_index_exists:
-                raise ValueError(
-                    f"Search index '{config.es_index}' does not exist. "
-                    "Please ensure videos have been ingested before searching."
+                logger.warning(
+                    "Search index '%s' does not exist for source_type=video_file; returning empty results.",
+                    config.es_index,
                 )
+                return EmbedSearchOutput(query_embedding=[], results=[])
             search_index: str | list[str] = config.es_index
         else:
             # rtsp: if index does not exist, exclude es_index from search_index list
@@ -624,6 +625,13 @@ async def embed_search(config: EmbedSearchConfig, _builder: Builder) -> AsyncGen
         try:
             response = await es_client.search(index=search_index, body=search_query)
         except ESNotFoundError as e:
+            if source_type == "video_file":
+                logger.warning(
+                    "Elasticsearch index '%s' not found during video_file search; returning empty results: %s",
+                    search_index,
+                    e,
+                )
+                return EmbedSearchOutput(query_embedding=query_embedding, results=[])
             logger.error(f"Elasticsearch index '{search_index}' not found: {e}")
             raise ValueError(
                 f"Search index '{search_index}' does not exist. "

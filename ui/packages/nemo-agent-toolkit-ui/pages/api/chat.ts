@@ -17,6 +17,75 @@ const generateStreamEndpoint = 'generate/stream';
 // Dynamic custom agent params - can contain any key-value pairs
 type CustomAgentParams = Record<string, string | number | boolean>;
 
+function buildPreview(value: unknown, maxLength = 240): string {
+  const asString = typeof value === 'string' ? value : JSON.stringify(value);
+  if (!asString) {
+    return '';
+  }
+
+  return asString.length > maxLength
+    ? `${asString.slice(0, maxLength)}...`
+    : asString;
+}
+
+function toResponseString(value: unknown): string | null {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (value && typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+
+  return null;
+}
+
+function unwrapAgentOutputContent(parsed: any): string | null {
+  const directContent =
+    parsed?.value ||
+    parsed?.output ||
+    parsed?.answer ||
+    (Array.isArray(parsed?.choices)
+      ? parsed.choices[0]?.message?.content || parsed.choices[0]?.delta?.content
+      : null);
+
+  const directContentString = toResponseString(directContent);
+  if (directContentString) {
+    console.log('[search-chat][api] using direct content', {
+      source: parsed?.value ? 'value' : parsed?.output ? 'output' : parsed?.answer ? 'answer' : 'choices',
+      preview: buildPreview(directContentString),
+    });
+    return directContentString;
+  }
+
+  const firstMessage = Array.isArray(parsed?.messages) ? parsed.messages[0] : null;
+  const firstMessageString = toResponseString(firstMessage);
+  if (firstMessageString) {
+    console.log('[search-chat][api] using first agent message', {
+      messageCount: Array.isArray(parsed?.messages) ? parsed.messages.length : 0,
+      preview: buildPreview(firstMessageString),
+    });
+    return firstMessageString;
+  }
+
+  const searchResults = parsed?.side_effects?.search_results;
+  const searchResultsString = toResponseString(searchResults);
+  if (searchResultsString) {
+    console.log('[search-chat][api] using side_effects.search_results', {
+      resultCount: Array.isArray(searchResults?.data) ? searchResults.data.length : 0,
+      preview: buildPreview(searchResultsString),
+    });
+    return searchResultsString;
+  }
+
+  console.warn('[search-chat][api] failed to unwrap response payload', {
+    keys: parsed && typeof parsed === 'object' ? Object.keys(parsed) : [],
+    preview: buildPreview(parsed),
+  });
+
+  return null;
+}
+
 function buildGeneratePayload(messages: any[], customAgentParams?: CustomAgentParams) {
   const userMessage = messages?.at(-1)?.content;
   if (!userMessage) {
@@ -48,15 +117,16 @@ async function processGenerate(response: Response): Promise<Response> {
   const data = await response.text();
   try {
     const parsed = JSON.parse(data);
-    const value =
-      parsed?.value ||
-      parsed?.output ||
-      parsed?.answer ||
-      (Array.isArray(parsed?.choices)
-        ? parsed.choices[0]?.message?.content
-        : null);
-    return new Response(typeof value === 'string' ? value : JSON.stringify(value));
+    const value = unwrapAgentOutputContent(parsed);
+    console.log('[search-chat][api] processGenerate normalized response', {
+      unwrapped: Boolean(value),
+      preview: buildPreview(value ?? data),
+    });
+    return new Response(value ?? data);
   } catch {
+    console.warn('[search-chat][api] processGenerate returned non-json response', {
+      preview: buildPreview(data),
+    });
     return new Response(data);
   }
 }
@@ -65,17 +135,16 @@ async function processChat(response: Response): Promise<Response> {
   const data = await response.text();
   try {
     const parsed = JSON.parse(data);
-    const content =
-      parsed?.output ||
-      parsed?.answer ||
-      parsed?.value ||
-      (Array.isArray(parsed?.choices)
-        ? parsed.choices[0]?.message?.content
-        : null) ||
-      parsed ||
-      data;
-    return new Response(typeof content === 'string' ? content : JSON.stringify(content));
+    const content = unwrapAgentOutputContent(parsed);
+    console.log('[search-chat][api] processChat normalized response', {
+      unwrapped: Boolean(content),
+      preview: buildPreview(content ?? parsed),
+    });
+    return new Response(content ?? JSON.stringify(parsed));
   } catch {
+    console.warn('[search-chat][api] processChat returned non-json response', {
+      preview: buildPreview(data),
+    });
     return new Response(data);
   }
 }
@@ -110,13 +179,11 @@ async function processGenerateStream(response: Response, encoder: TextEncoder, d
               }
               try {
                 const parsed = JSON.parse(data);
-                const content =
-                  parsed?.value ||
-                  parsed?.output ||
-                  parsed?.answer ||
-                  parsed?.choices?.[0]?.message?.content ||
-                  parsed?.choices?.[0]?.delta?.content;
-                if (content && typeof content === 'string') {
+                const content = unwrapAgentOutputContent(parsed);
+                if (content) {
+                  console.log('[search-chat][api] forwarding generate stream chunk', {
+                    preview: buildPreview(content),
+                  });
                   controller.enqueue(encoder.encode(content));
                 }
               } catch {}
@@ -154,12 +221,11 @@ async function processGenerateStream(response: Response, encoder: TextEncoder, d
         if (!finalAnswerSent) {
           try {
             const parsed = JSON.parse(streamContent);
-            const value =
-              parsed?.value ||
-              parsed?.output ||
-              parsed?.answer ||
-              parsed?.choices?.[0]?.message?.content;
-            if (value && typeof value === 'string') {
+            const value = unwrapAgentOutputContent(parsed);
+            if (value) {
+              console.log('[search-chat][api] forwarding generate stream final payload', {
+                preview: buildPreview(value),
+              });
               controller.enqueue(encoder.encode(value.trim()));
               finalAnswerSent = true;
             }
@@ -175,6 +241,8 @@ async function processGenerateStream(response: Response, encoder: TextEncoder, d
 async function processChatStream(response: Response, encoder: TextEncoder, decoder: TextDecoder, additionalProps: any): Promise<ReadableStream<Uint8Array>> {
   const reader = response?.body?.getReader();
   let buffer = '';
+  let streamContent = '';
+  let finalAnswerSent = false;
   let counter = 0;
 
   return new ReadableStream({
@@ -186,6 +254,7 @@ async function processChatStream(response: Response, encoder: TextEncoder, decod
 
           const chunk = decoder.decode(value, { stream: true });
           buffer += chunk;
+          streamContent += chunk;
 
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
@@ -199,10 +268,11 @@ async function processChatStream(response: Response, encoder: TextEncoder, decod
               }
               try {
                 const parsed = JSON.parse(data);
-                const content =
-                  parsed.choices?.[0]?.message?.content ||
-                  parsed.choices?.[0]?.delta?.content;
+                const content = unwrapAgentOutputContent(parsed);
                 if (content) {
+                  console.log('[search-chat][api] forwarding chat stream chunk', {
+                    preview: buildPreview(content),
+                  });
                   controller.enqueue(encoder.encode(content));
                 }
               } catch {}
@@ -234,6 +304,19 @@ async function processChatStream(response: Response, encoder: TextEncoder, decod
           }
         }
       } finally {
+        if (!finalAnswerSent) {
+          try {
+            const parsed = JSON.parse(streamContent);
+            const value = unwrapAgentOutputContent(parsed);
+            if (value) {
+              console.log('[search-chat][api] forwarding chat stream final payload', {
+                preview: buildPreview(value),
+              });
+              controller.enqueue(encoder.encode(value.trim()));
+              finalAnswerSent = true;
+            }
+          } catch {}
+        }
         controller.close();
         reader?.releaseLock();
       }

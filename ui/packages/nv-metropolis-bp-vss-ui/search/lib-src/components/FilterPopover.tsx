@@ -91,7 +91,7 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
   }, [streams, sourceType]);
   
   const labelStyle: React.CSSProperties = useMemo(() => ({ 
-    width: 70, textAlign: 'right', flexShrink: 0 
+    width: 130, textAlign: 'right', flexShrink: 0 
   }), []);
   const inputStyle = useMemo(() => ({ width: 230 }), []);
 
@@ -147,7 +147,7 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
     >
       <Stack direction="column" spacing={12}>
         <Stack spacing={10} alignItems="center">
-          <span style={labelStyle}>From:</span>
+          <span style={labelStyle}>시작 시각:</span>
           <DatePicker
             disabled={disabled}
             format="MMM dd yyyy hh:mm:ss aa"
@@ -159,11 +159,11 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
             style={inputStyle}
             hideSeconds={(second) => second % 10 !== 0}
             hideMinutes={(minute) => minute % 5 !== 0}
-            placeholder="From"
+            placeholder="시작 시각"
           />
         </Stack>
         <Stack spacing={10} alignItems="center">
-          <span style={labelStyle}>To:</span>
+          <span style={labelStyle}>종료 시각:</span>
           <DatePicker
             disabled={disabled}
             format="MMM dd yyyy hh:mm:ss aa"
@@ -175,25 +175,25 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
             style={inputStyle}
             hideSeconds={(second) => second % 10 !== 0}
             hideMinutes={(minute) => minute % 5 !== 0}
-            placeholder="To"
+            placeholder="종료 시각"
           />
         </Stack>
         <Stack spacing={10} alignItems="center">
-          <span style={labelStyle}>Video sources:</span>
+          <span style={labelStyle}>비디오 소스:</span>
           <div style={inputStyle}>
             <CheckPicker
               value={videoSources}
               onChange={handleVideoSourcesChange}
               data={filteredStreams.map((stream) => ({ label: stream.name, value: stream.name }))}
               searchable={false}
-              placeholder="Video sources"
+              placeholder="비디오 소스"
               block
               disabled={disabled}
             />
           </div>
         </Stack>
         <Stack spacing={10} alignItems="center">
-          <span style={labelStyle}>Min Cosine Similarity:</span>
+          <span style={labelStyle}>최소 코사인 유사도:</span>
           <NumberInput
             disabled={disabled}
             formatter={(value: string | number) => {
@@ -205,13 +205,13 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
             step={0.01}
             value={similarity}
             onChange={handleSimilarityChange}
-            placeholder="Min Cosine Similarity"
+            placeholder="최소 코사인 유사도"
             style={inputStyle}
           />
         </Stack>
         <Stack spacing={10} alignItems="center">
           <span style={labelStyle}>
-            <span style={{ color: 'red' }}>*</span> Show top K Results:
+            <span style={{ color: 'red' }}>*</span> 상위 결과 수:
           </span>
           <NumberInput
             min={1}
@@ -225,7 +225,7 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
               }
             }}
             onChange={handleTopKChange}
-            placeholder="Number of results"
+            placeholder="결과 개수"
             style={inputStyle}
           />
         </Stack>
@@ -250,7 +250,7 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
           onMouseEnter={(e) => e.currentTarget.style.backgroundColor = isDark ? '#374151' : '#f3f4f6'}
           onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
         >
-          Cancel
+          취소
         </button>
         <button
           onClick={handleApply}
@@ -263,7 +263,7 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
           onMouseEnter={(e) => e.currentTarget.style.backgroundColor = isDark ? '#0e7490' : '#1d4ed8'}
           onMouseLeave={(e) => e.currentTarget.style.backgroundColor = isDark ? '#0891b2' : '#2563eb'}
         >
-          Apply
+          적용
         </button>
       </div>
     </div>

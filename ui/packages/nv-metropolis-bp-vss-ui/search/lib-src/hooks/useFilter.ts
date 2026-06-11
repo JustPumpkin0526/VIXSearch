@@ -17,7 +17,7 @@ export const useFilter = ({vstApiUrl}: FilterProps) => {
     query: '',
     topK: DEFAULT_TOP_K
   })
-  const [filterTags, setFilterTags] = useState([{key: 'topK', title: 'Show top K Results', value: DEFAULT_TOP_K.toString()}]);
+  const [filterTags, setFilterTags] = useState([{key: 'topK', title: '상위 결과 수', value: DEFAULT_TOP_K.toString()}]);
 
   const fetchSensorList = useCallback(async () => {
     if (!vstApiUrl) return;
@@ -51,27 +51,27 @@ export const useFilter = ({vstApiUrl}: FilterProps) => {
       
     let tags = [];
     if (startDate) {
-      tags.push({key: 'startDate', title: 'From', value: formatDatetime(startDate)});
+      tags.push({key: 'startDate', title: '시작', value: formatDatetime(startDate)});
     } 
     if (endDate) {
-      tags.push({key: 'endDate', title: 'To', value: formatDatetime(endDate)});
+      tags.push({key: 'endDate', title: '종료', value: formatDatetime(endDate)});
     }
     if (videoSources && videoSources.length > 0) {
-      tags.push({key: 'videoSources', title: 'Video sources', value: videoSources.join(', ')});
+      tags.push({key: 'videoSources', title: '비디오 소스', value: videoSources.join(', ')});
     }
     if (similarity) {
-      tags.push({key: 'similarity', title: 'Similarity', value: Number(similarity)?.toFixed(2)});
+      tags.push({key: 'similarity', title: '유사도', value: Number(similarity)?.toFixed(2)});
     }
     // Always include topK tag (robust to numeric 0 or other non-truthy but valid numbers)
     if (topK !== undefined && topK !== null) {
-      tags.push({key: 'topK', title: 'Show top K Results', value: topK.toString()});
+      tags.push({key: 'topK', title: '상위 결과 수', value: topK.toString()});
     }
     setFilterTags(tags as any);
   };
 
   const removeFilterTag = (tag: any) => {
     if (!tag) {
-      setFilterTags([{key: 'topK', title: 'Show top K Results', value: (filterParams.topK ?? DEFAULT_TOP_K).toString()}]);
+      setFilterTags([{key: 'topK', title: '상위 결과 수', value: (filterParams.topK ?? DEFAULT_TOP_K).toString()}]);
     } else {
       setFilterTags(filterTags.filter((t: any) => t !== tag));
     }

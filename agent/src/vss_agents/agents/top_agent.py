@@ -92,8 +92,18 @@ class TopAgentRequest(ChatRequestOrMessage):
 
     llm_reasoning: bool | None = Field(default=None, description="Enable LLM reasoning mode")
     vlm_reasoning: bool | None = Field(default=None, description="Enable VLM reasoning mode")
+    max_results: int | None = Field(default=None, description="Override the default maximum number of search results")
+    embed_confidence_threshold: float | None = Field(
+        default=None, description="Override the embed search confidence threshold"
+    )
+    agent_mode: bool | None = Field(default=None, description="Override query decomposition mode for search")
+    use_critic: bool | None = Field(default=None, description="Override critic verification for search results")
     search_source_type: str = Field(
         default="video_file", description="Video source type for search: 'video_file' or 'rtsp'"
+    )
+    owned_video_ids: list[str] | None = Field(
+        default=None,
+        description="List of uploaded video sensor IDs owned by the currently logged-in user",
     )
 
 
@@ -180,7 +190,17 @@ class TopAgentState(BaseModel):
     vlm_reasoning: bool | None = Field(
         default=None, description="Enable VLM reasoning mode (If None, use tool default)"
     )
+    max_results: int | None = Field(default=None, description="Override the maximum number of search results")
+    embed_confidence_threshold: float | None = Field(
+        default=None, description="Override the embed search confidence threshold"
+    )
+    agent_mode: bool | None = Field(default=None, description="Override query decomposition mode for search")
+    use_critic: bool | None = Field(default=None, description="Override critic verification for search results")
     search_source_type: str = Field(default="video_file", description="Video source type for search agent")
+    owned_video_ids: list[str] | None = Field(
+        default=None,
+        description="List of uploaded video sensor IDs owned by the currently logged-in user",
+    )
 
 
 class TopAgentConfig(FunctionBaseConfig, name="top_agent"):
@@ -417,7 +437,12 @@ class TopAgent(AsyncMixin):
         input_messages: list[BaseMessage],
         llm_reasoning: bool = False,
         vlm_reasoning: bool = False,
+        max_results: int | None = None,
+        embed_confidence_threshold: float | None = None,
+        agent_mode: bool | None = None,
+        use_critic: bool | None = None,
         search_source_type: str = "video_file",
+        owned_video_ids: list[str] | None = None,
     ) -> AsyncGenerator[AgentMessageChunk]:
         """Stream the agent's response."""
         if not input_messages:
@@ -501,7 +526,12 @@ class TopAgent(AsyncMixin):
                 final_answer="",
                 llm_reasoning=llm_reasoning,
                 vlm_reasoning=vlm_reasoning,
+                max_results=max_results,
+                embed_confidence_threshold=embed_confidence_threshold,
+                agent_mode=agent_mode,
+                use_critic=use_critic,
                 search_source_type=search_source_type,
+                owned_video_ids=owned_video_ids,
             )
         else:
             input_state = TopAgentState(
@@ -511,7 +541,12 @@ class TopAgent(AsyncMixin):
                 agent_scratchpad=[],
                 llm_reasoning=llm_reasoning,
                 vlm_reasoning=vlm_reasoning,
+                max_results=max_results,
+                embed_confidence_threshold=embed_confidence_threshold,
+                agent_mode=agent_mode,
+                use_critic=use_critic,
                 search_source_type=search_source_type,
+                owned_video_ids=owned_video_ids,
             )
 
         try:
@@ -818,6 +853,31 @@ class TopAgent(AsyncMixin):
                     if self._tool_accepts_param(tool_name, "vlm_reasoning"):
                         tool_args["vlm_reasoning"] = state.vlm_reasoning
                         logger.info(f"Passing vlm_reasoning={state.vlm_reasoning} to {tool_name}")
+                    if tool_name == "search_agent" and state.max_results is not None and self._tool_accepts_param(tool_name, "max_results"):
+                        tool_args["max_results"] = state.max_results
+                        logger.info(f"Passing max_results={state.max_results} to {tool_name}")
+                    if (
+                        tool_name == "search_agent"
+                        and state.embed_confidence_threshold is not None
+                        and self._tool_accepts_param(tool_name, "embed_confidence_threshold")
+                    ):
+                        tool_args["embed_confidence_threshold"] = state.embed_confidence_threshold
+                        logger.info(
+                            f"Passing embed_confidence_threshold={state.embed_confidence_threshold} to {tool_name}"
+                        )
+                    if tool_name == "search_agent" and state.agent_mode is not None and self._tool_accepts_param(tool_name, "agent_mode"):
+                        tool_args["agent_mode"] = state.agent_mode
+                        logger.info(f"Passing agent_mode={state.agent_mode} to {tool_name}")
+                    if tool_name == "search_agent" and state.use_critic is not None and self._tool_accepts_param(tool_name, "use_critic"):
+                        tool_args["use_critic"] = state.use_critic
+                        logger.info(f"Passing use_critic={state.use_critic} to {tool_name}")
+                    if (
+                        tool_name == "search_agent"
+                        and state.owned_video_ids is not None
+                        and self._tool_accepts_param(tool_name, "owned_video_ids")
+                    ):
+                        tool_args["owned_video_ids"] = state.owned_video_ids
+                        logger.info("Passing %d owned_video_ids to %s", len(state.owned_video_ids), tool_name)
                     # Only inject search_source_type for search_agent (video_file/rtsp). report_agent and
                     # others use source_type with different semantics (e.g. sensor/place)
                     if tool_name == "search_agent" and self._tool_accepts_param(tool_name, "source_type"):
@@ -1421,7 +1481,12 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
         typed_request = TopAgentRequest.model_validate(request.model_dump())
         llm_reasoning = typed_request.llm_reasoning if typed_request.llm_reasoning is not None else config.llm_reasoning
         vlm_reasoning = typed_request.vlm_reasoning if typed_request.vlm_reasoning is not None else False
+        max_results = typed_request.max_results
+        embed_confidence_threshold = typed_request.embed_confidence_threshold
+        agent_mode = typed_request.agent_mode
+        use_critic = typed_request.use_critic
         search_source_type = typed_request.search_source_type if typed_request.search_source_type else "video_file"
+        owned_video_ids = typed_request.owned_video_ids
 
         # Override with WebSocket payload values if present (WebSocket requests don't pass params through request object)
         context = Context.get()
@@ -1429,18 +1494,44 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
             payload = context.metadata.payload
             llm_reasoning = bool(payload["llm_reasoning"]) if "llm_reasoning" in payload else llm_reasoning
             vlm_reasoning = bool(payload["vlm_reasoning"]) if "vlm_reasoning" in payload else vlm_reasoning
+            max_results = int(payload["max_results"]) if "max_results" in payload else max_results
+            embed_confidence_threshold = (
+                float(payload["embed_confidence_threshold"])
+                if "embed_confidence_threshold" in payload
+                else embed_confidence_threshold
+            )
+            agent_mode = bool(payload["agent_mode"]) if "agent_mode" in payload else agent_mode
+            use_critic = bool(payload["use_critic"]) if "use_critic" in payload else use_critic
             search_source_type = (
                 str(payload["search_source_type"]) if "search_source_type" in payload else search_source_type
             )
+            owned_video_ids = (
+                [str(video_id).strip() for video_id in payload["owned_video_ids"] if str(video_id).strip()]
+                if isinstance(payload.get("owned_video_ids"), list)
+                else owned_video_ids
+            )
             logger.info(
-                f"Extracted from WebSocket payload - llm_reasoning={llm_reasoning}, vlm_reasoning={vlm_reasoning}, search_source_type={search_source_type}"
+                "Extracted from WebSocket payload - llm_reasoning=%s, vlm_reasoning=%s, max_results=%s, embed_confidence_threshold=%s, agent_mode=%s, use_critic=%s, search_source_type=%s, owned_video_ids=%s",
+                llm_reasoning,
+                vlm_reasoning,
+                max_results,
+                embed_confidence_threshold,
+                agent_mode,
+                use_critic,
+                search_source_type,
+                len(owned_video_ids or []),
             )
 
         logger.info(
-            "Creating Top Agent with llm_reasoning=%s, vlm_reasoning=%s, search_source_type=%s",
+            "Creating Top Agent with llm_reasoning=%s, vlm_reasoning=%s, max_results=%s, embed_confidence_threshold=%s, agent_mode=%s, use_critic=%s, search_source_type=%s, owned_video_ids=%s",
             llm_reasoning,
             vlm_reasoning,
+            max_results,
+            embed_confidence_threshold,
+            agent_mode,
+            use_critic,
             search_source_type,
+            len(owned_video_ids or []),
         )
 
         try:
@@ -1459,7 +1550,12 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                 input_messages=[current_message],
                 llm_reasoning=llm_reasoning,
                 vlm_reasoning=vlm_reasoning,
+                max_results=max_results,
+                embed_confidence_threshold=embed_confidence_threshold,
+                agent_mode=agent_mode,
+                use_critic=use_critic,
                 search_source_type=search_source_type,
+                owned_video_ids=owned_video_ids,
             ):
                 if chunk.type == AgentMessageChunkType.THOUGHT:
                     step_num += 1

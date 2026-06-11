@@ -25,7 +25,7 @@ interface SearchHeaderProps {
   }
 
 const SOURCE_TYPE_OPTIONS = [
-    { label: 'Video', value: 'video_file' },
+  { label: '동영상', value: 'video_file' },
     { label: 'RTSP', value: 'rtsp' }
 ];
 
@@ -286,7 +286,7 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
                     <Input 
                         onChange={handleUpdateQuery} 
                         value={query} 
-                        placeholder="Search Files" 
+                      placeholder="파일 검색" 
                         autoComplete="off"
                         onPressEnter={handleSearch}
                         disabled={contentDisabled}
@@ -306,7 +306,7 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
                             onClick={isSearching ? undefined : () => handleUpdateQuery('')}
                           />
                         ) : contentDisabled ? null : (
-                          <Whisper placement="bottom" speaker={<Tooltip>Ask a natural language query like "a person in green jacket carrying boxes"</Tooltip>}>
+                          <Whisper placement="bottom" speaker={<Tooltip>예: 초록 재킷을 입고 상자를 들고 있는 사람</Tooltip>}>
                         <InfoRoundIcon style={{ 
                           cursor: 'help',
                           transition: 'opacity 0.2s',
@@ -320,7 +320,7 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
                       disabled={isSearching && onCancelSearch ? false : contentDisabled}
                       color={isSearching && onCancelSearch ? 'red' : undefined}
                     >
-                      {isSearching && onCancelSearch ? 'Cancel' : 'Search'}
+                      {isSearching && onCancelSearch ? '취소' : '검색'}
                     </InputGroup.Button>
                 </InputGroup>
                 {isSearching && (
@@ -337,19 +337,19 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
                   </span>
                 )}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span>Source Type:</span>
+                  <span>소스 유형:</span>
                     <SelectPicker
                         data={SOURCE_TYPE_OPTIONS}
                         value={sourceType}
                         onChange={handleSourceTypeChange}
                         cleanable={false}
                         searchable={false}
-                        placeholder="Source Type"
+                    placeholder="소스 유형"
                         disabled={contentDisabled}
                     />
                 </div>
                 <div style={{ position: 'relative' }} ref={filterButtonRef}>
-                    <Button onClick={togglePopover} endIcon={<FunnelIcon />} disabled={contentDisabled}>Filter</Button>
+                  <Button onClick={togglePopover} endIcon={<FunnelIcon />} disabled={contentDisabled}>필터</Button>
                     <FilterDialog
                       isOpen={isPopoverOpen}
                       isDark={theme === 'dark'}
@@ -379,7 +379,7 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
                     ))}
                     {visibleTags.length > 1 && (
                       <Button size="sm" appearance="primary" color="red" onClick={onClearAll} disabled={contentDisabled}>
-                        Clear All
+                        전체 해제
                       </Button>
                     )}
                   </div>

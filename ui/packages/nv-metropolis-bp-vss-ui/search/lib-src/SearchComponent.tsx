@@ -67,13 +67,6 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
     }
   }, [isActive]);
 
-  // When agent mode is off, show normal search results (clear agent-driven results).
-  React.useEffect(() => {
-    if (!filterParams.agentMode) {
-      setAgentSearchResults(null);
-    }
-  }, [filterParams.agentMode]);
-
   // Clear video results when Search button is pressed (loading started).
   React.useEffect(() => {
     if (loading) {
@@ -160,6 +153,7 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
           onRefresh={refetch}
           onPlayVideo={openVideoModal}
           showObjectsBbox={mediaWithObjectsBbox}
+          userQuery={getPendingQueryRef.current().trim() || filterParams.query || ''}
         />
       </div>
       {/* Video Modal */}

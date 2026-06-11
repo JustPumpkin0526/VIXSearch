@@ -66,6 +66,7 @@ export const ChatInput = ({
 
   const {
     state: { selectedConversation, messageIsStreaming, loading, webSocketMode, customAgentParamsJson, chatUploadFileEnabled, chatInputMicEnabled },
+    storageKeyPrefix,
     dispatch: homeDispatch,
   } = useContext(HomeContext);
 
@@ -100,8 +101,10 @@ export const ChatInput = ({
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef(null);
   const [showCustomParams, setShowCustomParams] = useState(false);
-  const [paramFields, setParamFields] = useInitialParamFields(customAgentParamsJson);
+  const [paramFields, setParamFields] = useInitialParamFields(customAgentParamsJson, storageKeyPrefix);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const isSearchTabChat = typeof storageKeyPrefix === 'string' && storageKeyPrefix.startsWith('searchTab');
+  const showInlineAgentParamsButton = paramFields.length > 0 && !isSearchTabChat;
 
   const triggerFileUpload = () => {
     fileInputRef?.current.click();
@@ -556,7 +559,7 @@ export const ChatInput = ({
             )}
           </div>
           {/* Settings Button - only show when there are enabled params */}
-          {paramFields.length > 0 && (
+          {showInlineAgentParamsButton && (
             <div className="absolute right-10 top-2">
               <button
                 ref={settingsButtonRef}

@@ -242,6 +242,97 @@ def attribute_result_to_search_result(
     )
 
 
+def merge_touching_search_results(search_results: list["SearchResult"]) -> list["SearchResult"]:
+    """Merge clips from the same sensor when they overlap, touch, or are within one inferred chunk."""
+    if len(search_results) < 2:
+        return search_results
+
+    merged_groups: list[tuple[int, SearchResult]] = []
+    results_by_sensor: dict[str, list[tuple[int, SearchResult]]] = {}
+
+    for original_index, result in enumerate(search_results):
+        results_by_sensor.setdefault(result.sensor_id, []).append((original_index, result))
+
+    for sensor_results in results_by_sensor.values():
+        positive_durations = []
+        for _, result in sensor_results:
+            duration_seconds = (
+                iso8601_to_datetime(result.end_time) - iso8601_to_datetime(result.start_time)
+            ).total_seconds()
+            if duration_seconds > 0:
+                positive_durations.append(duration_seconds)
+
+        inferred_chunk_margin = timedelta(seconds=min(positive_durations)) if positive_durations else timedelta(0)
+
+        sensor_results.sort(
+            key=lambda item: (
+                iso8601_to_datetime(item[1].start_time),
+                iso8601_to_datetime(item[1].end_time),
+                item[0],
+            )
+        )
+
+        first_index, first_result = sensor_results[0]
+        current_group_start_index = first_index
+        current_group_start_time = iso8601_to_datetime(first_result.start_time)
+        current_group_end_time = iso8601_to_datetime(first_result.end_time)
+        current_group_best_result = first_result
+        current_group_object_ids = list(first_result.object_ids)
+
+        for original_index, result in sensor_results[1:]:
+            result_start_time = iso8601_to_datetime(result.start_time)
+            result_end_time = iso8601_to_datetime(result.end_time)
+
+            if result_start_time <= current_group_end_time + inferred_chunk_margin:
+                current_group_end_time = max(current_group_end_time, result_end_time)
+                if result.similarity > current_group_best_result.similarity:
+                    current_group_best_result = result
+                current_group_object_ids.extend(result.object_ids)
+                current_group_start_index = min(current_group_start_index, original_index)
+                continue
+
+            merged_groups.append(
+                (
+                    current_group_start_index,
+                    SearchResult(
+                        video_name=current_group_best_result.video_name,
+                        description=current_group_best_result.description,
+                        start_time=datetime_to_iso8601(current_group_start_time),
+                        end_time=datetime_to_iso8601(current_group_end_time),
+                        sensor_id=current_group_best_result.sensor_id,
+                        screenshot_url=current_group_best_result.screenshot_url,
+                        similarity=current_group_best_result.similarity,
+                        object_ids=list(dict.fromkeys(current_group_object_ids)),
+                    ),
+                )
+            )
+
+            current_group_start_index = original_index
+            current_group_start_time = result_start_time
+            current_group_end_time = result_end_time
+            current_group_best_result = result
+            current_group_object_ids = list(result.object_ids)
+
+        merged_groups.append(
+            (
+                current_group_start_index,
+                SearchResult(
+                    video_name=current_group_best_result.video_name,
+                    description=current_group_best_result.description,
+                    start_time=datetime_to_iso8601(current_group_start_time),
+                    end_time=datetime_to_iso8601(current_group_end_time),
+                    sensor_id=current_group_best_result.sensor_id,
+                    screenshot_url=current_group_best_result.screenshot_url,
+                    similarity=current_group_best_result.similarity,
+                    object_ids=list(dict.fromkeys(current_group_object_ids)),
+                ),
+            )
+        )
+
+    merged_groups.sort(key=lambda item: item[0])
+    return [result for _, result in merged_groups]
+
+
 async def decompose_query(
     user_query: str,
     llm: Any,
@@ -695,6 +786,12 @@ async def execute_core_search(
     """
     decomposed: DecomposedQuery | None = None
     original_query = search_input.query
+    explicit_top_k = search_input.top_k is not None
+    owned_video_ids = {
+        video_id.strip()
+        for video_id in (search_input.owned_video_ids or [])
+        if isinstance(video_id, str) and video_id.strip()
+    }
     if search_input.agent_mode and agent_llm:
         try:
             yield AgentMessageChunk(
@@ -710,6 +807,8 @@ async def execute_core_search(
                     streams_info = await get_streams_info(vst_url)
                     source_type = getattr(search_input, "source_type", None)
                     for _stream_id, stream_info in streams_info.items():
+                        if source_type == "video_file" and owned_video_ids and _stream_id not in owned_video_ids:
+                            continue
                         name = stream_info.get("name", "")
                         url = stream_info.get("url", "")
                         if not name:
@@ -757,7 +856,14 @@ async def execute_core_search(
                 except Exception as e:
                     logger.warning(f"Failed to parse decomposed timestamp_end: {e}")
             if decomposed.top_k is not None:
-                search_input.top_k = decomposed.top_k
+                if explicit_top_k:
+                    logger.info(
+                        "Ignoring decomposed top_k=%s because request top_k=%s was explicitly provided",
+                        decomposed.top_k,
+                        search_input.top_k,
+                    )
+                else:
+                    search_input.top_k = decomposed.top_k
             if decomposed.min_cosine_similarity is not None:
                 search_input.min_cosine_similarity = decomposed.min_cosine_similarity
 
@@ -770,7 +876,7 @@ async def execute_core_search(
                 decomp_summary["timestamp_start"] = decomposed.timestamp_start
             if decomposed.timestamp_end:
                 decomp_summary["timestamp_end"] = decomposed.timestamp_end
-            if decomposed.top_k is not None:
+            if decomposed.top_k is not None and not explicit_top_k:
                 decomp_summary["top_k"] = decomposed.top_k
 
             yield AgentMessageChunk(
@@ -787,9 +893,9 @@ async def execute_core_search(
             )
 
     # ===== SETUP COMMON QUERY PARAMETERS (used by all execution paths) =====
-    top_k = search_input.top_k if search_input.top_k is not None else config.default_max_results
-    original_top_k = top_k
-    top_k = top_k * 2
+    target_result_count = search_input.top_k if search_input.top_k is not None else config.default_max_results
+    original_top_k = target_result_count
+    fetch_top_k = target_result_count * 2
     min_similarity = search_input.min_cosine_similarity
 
     # Build query_params for embed_search (used by embed-only and fusion paths)
@@ -836,19 +942,24 @@ async def execute_core_search(
 
     # ===== EXECUTION FLOW: Three distinct paths =====
     search_results = []
-    do_search = True
     # Keep track of confirmed and rejected results to avoid re-running the critic agent on the known results
     rejected_results = set()
     confirmed_results = set()
-    iteration_num = 0
+    merge_refill_attempt = 0
+    max_merge_refill_attempts = 5
 
-    while do_search and iteration_num < config.search_max_iterations:
-        iteration_num += 1
-        do_search = False
-        logger.info(f"[Search] Running embed search iteration {iteration_num}")
+    while True:
+        do_search = True
+        iteration_num = 0
+        candidate_count_before_owner_filter = 0
 
-        # Use computed top_k (already defaults to config.default_max_results if None)
-        query_params["top_k"] = str(top_k)
+        while do_search and iteration_num < config.search_max_iterations:
+            iteration_num += 1
+            do_search = False
+            logger.info(f"[Search] Running embed search iteration {iteration_num}")
+
+            # Use computed fetch_top_k (already defaults to config.default_max_results if None)
+            query_params["top_k"] = str(fetch_top_k)
 
         query_input_json = json.dumps({"params": query_params, "source_type": search_input.source_type})
         # PATH 1: Attribute-only search (attribute_list not empty AND is_attribute_only=True)
@@ -872,7 +983,7 @@ async def execute_core_search(
                 attribute_list=attribute_list,
                 search_input=search_input,
                 attribute_search_fn=attribute_search_fn,
-                top_k=original_top_k,
+                top_k=fetch_top_k,
                 min_similarity=min_similarity,
             )
 
@@ -962,7 +1073,7 @@ async def execute_core_search(
                         attribute_list=attribute_list,
                         search_input=search_input,
                         attribute_search_fn=attribute_search_fn,
-                        top_k=top_k,
+                        top_k=fetch_top_k,
                         min_similarity=min_similarity,
                     )
 
@@ -1023,6 +1134,21 @@ async def execute_core_search(
                         )
                         # Fall through to return original embed_search results
 
+        if min_similarity is not None:
+            before_similarity_filter = len(search_results)
+            search_results = [result for result in search_results if result.similarity >= min_similarity]
+            removed_count = before_similarity_filter - len(search_results)
+            if removed_count > 0:
+                logger.info(
+                    "Filtered %d search result clip(s) below min_cosine_similarity=%s",
+                    removed_count,
+                    min_similarity,
+                )
+                yield AgentMessageChunk(
+                    type=AgentMessageChunkType.THOUGHT,
+                    content=f"Filtered {removed_count} clip(s) below similarity threshold {min_similarity}",
+                )
+
         # Step 3: If critic enabled and configured, verify results with VLM
         if (
             config.enable_critic
@@ -1067,7 +1193,7 @@ async def execute_core_search(
                                 confirmed_results.add(info)
                             case CriticAgentResult.REJECTED:
                                 rejected_results.add(info)
-                                top_k += 1
+                                fetch_top_k += 1
                                 do_search = True
                             case CriticAgentResult.UNVERIFIED:
                                 logger.warning(f"[Search] Unverified result for video {info.sensor_id}")
@@ -1100,6 +1226,61 @@ async def execute_core_search(
             except Exception as e:
                 logger.error(f"[Search] Error calling critic agent: {e}", exc_info=True)
                 yield AgentMessageChunk(type=AgentMessageChunkType.THOUGHT, content=f"Critic verification failed: {e}")
+
+        candidate_count_before_owner_filter = len(search_results)
+
+        if search_input.source_type == "video_file" and search_input.owned_video_ids is not None:
+            before_owner_filter = len(search_results)
+            search_results = [result for result in search_results if result.sensor_id in owned_video_ids]
+            removed_count = before_owner_filter - len(search_results)
+            if removed_count > 0:
+                logger.info("Filtered %d non-owned uploaded video search result(s)", removed_count)
+                yield AgentMessageChunk(
+                    type=AgentMessageChunkType.THOUGHT,
+                    content=f"Filtered {removed_count} non-owned uploaded video result(s)",
+                )
+
+        before_merge_count = len(search_results)
+        search_results = merge_touching_search_results(search_results)
+        merged_count = before_merge_count - len(search_results)
+        if merged_count > 0:
+            logger.info("Merged %d touching/overlapping search result clip(s)", merged_count)
+            yield AgentMessageChunk(
+                type=AgentMessageChunkType.THOUGHT,
+                content=f"Merged {merged_count} touching/overlapping clip(s) from the same video",
+            )
+
+        needs_merge_refill = (
+            original_top_k is not None
+            and len(search_results) < original_top_k
+            and candidate_count_before_owner_filter >= fetch_top_k
+            and merge_refill_attempt < max_merge_refill_attempts
+        )
+        if needs_merge_refill:
+            merged_result_count = max(len(search_results), 1)
+            next_fetch_top_k = max(
+                fetch_top_k + original_top_k,
+                (fetch_top_k * original_top_k + merged_result_count - 1) // merged_result_count,
+            )
+            logger.info(
+                "Merged result count %d is below requested top_k=%d; increasing candidate fetch size from %d to %d",
+                len(search_results),
+                original_top_k,
+                fetch_top_k,
+                next_fetch_top_k,
+            )
+            yield AgentMessageChunk(
+                type=AgentMessageChunkType.THOUGHT,
+                content=(
+                    f"Merged clips reduced the result count below {original_top_k}; "
+                    f"fetching more candidates ({fetch_top_k} -> {next_fetch_top_k})"
+                ),
+            )
+            fetch_top_k = next_fetch_top_k
+            merge_refill_attempt += 1
+            continue
+
+        break
 
     # Yield final results summary
     result_count = len(search_results)
@@ -1269,6 +1450,11 @@ class SearchInput(BaseModel):
     top_k: int | None = Field(
         default=None,
         description="Number of returned videos. If not provided, returns all matching results.",
+    )
+
+    owned_video_ids: list[str] | None = Field(
+        default=None,
+        description="List of uploaded video sensor IDs owned by the currently logged-in user",
     )
 
     min_cosine_similarity: float = Field(

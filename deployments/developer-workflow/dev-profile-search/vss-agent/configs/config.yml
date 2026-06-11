@@ -92,7 +92,7 @@ functions:
     search_max_iterations: 1
     default_max_results: 10
     vst_internal_url: ${VST_INTERNAL_URL}  # For stream_id to sensor_id conversion in fusion reranking
-    embed_confidence_threshold: 0.1  # Minimum embed score threshold. fallback to attribute-only search if low
+    embed_confidence_threshold: 0.2  # Minimum embed score threshold. fallback to attribute-only search if low
 
   search_agent:
     _type: search_agent
@@ -101,7 +101,7 @@ functions:
     agent_mode_llm: ${LLM_MODEL_TYPE:-nim}_llm
     use_attribute_search: true
     vst_internal_url: ${VST_INTERNAL_URL}  # For stream_id to sensor_id conversion in fusion reranking
-    embed_confidence_threshold: 0.1  # Minimum embed score threshold. fallback to attribute-only search if low
+    embed_confidence_threshold: 0.2  # Minimum embed score threshold. fallback to attribute-only search if low
     critic_agent: critic_agent  # Optional: enables VLM verification
     enable_critic: false
     search_max_iterations: 1

@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
 const formatDatetime = (date: Date): string => {
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  
-    const m = months[date.getMonth()];
+    const m = String(date.getMonth() + 1).padStart(2, "0");
     const d = date.getDate();
     const y = date.getFullYear();
   
@@ -11,7 +8,7 @@ const formatDatetime = (date: Date): string => {
     const mm = String(date.getMinutes()).padStart(2, "0");
     const ss = String(date.getSeconds()).padStart(2, "0");
   
-    return `${m} ${d}, ${y} @ ${hh}:${mm}:${ss}`;
+    return `${y}-${m}-${String(d).padStart(2, "0")} ${hh}:${mm}:${ss}`;
   }
 
 /**

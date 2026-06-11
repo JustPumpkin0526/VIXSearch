@@ -45,7 +45,7 @@ export const useSearch = ({ agentApiUrl, params = {} }: UseSearchOptions) => {
 
   const fetchSearch = useCallback(async () => {
     if (!agentApiUrl) {
-      setError('Agent API URL is not configured. Please set NEXT_PUBLIC_AGENT_API_URL_BASE in your environment.');
+      setError('Agent API URL이 설정되지 않았습니다. 환경 변수 NEXT_PUBLIC_AGENT_API_URL_BASE를 확인하세요.');
       setLoading(false);
       return;
     }
@@ -134,7 +134,7 @@ export const useSearch = ({ agentApiUrl, params = {} }: UseSearchOptions) => {
         console.log('Search request was cancelled');
         return;
       }
-      setError(err instanceof Error ? err.message : 'Failed to fetch search');
+      setError(err instanceof Error ? err.message : '검색 결과를 불러오지 못했습니다');
       console.error('Error fetching search:', err);
     } finally {
       setLoading(false);

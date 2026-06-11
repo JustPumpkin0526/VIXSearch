@@ -10,6 +10,69 @@
 
 const constants = require('../constants');
 
+function tryParseJson(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAgentOutput(parsed) {
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
+
+  if (parsed?.side_effects?.search_results && typeof parsed.side_effects.search_results === 'object') {
+    return JSON.stringify(parsed.side_effects.search_results);
+  }
+
+  const firstMessage = Array.isArray(parsed?.messages) ? parsed.messages[0] : null;
+  if (typeof firstMessage === 'string' && firstMessage.trim()) {
+    return firstMessage;
+  }
+
+  if (firstMessage && typeof firstMessage === 'object') {
+    if (typeof firstMessage.content === 'string' && firstMessage.content.trim()) {
+      return firstMessage.content;
+    }
+    if (typeof firstMessage.text === 'string' && firstMessage.text.trim()) {
+      return firstMessage.text;
+    }
+  }
+
+  return null;
+}
+
+function extractResponseContent(parsed) {
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
+
+  const directContent =
+    parsed?.choices?.[0]?.message?.content ||
+    parsed?.choices?.[0]?.delta?.content ||
+    parsed?.message ||
+    parsed?.answer ||
+    parsed?.value ||
+    parsed?.content;
+
+  if (typeof directContent === 'string' && directContent.trim()) {
+    const nestedParsed = tryParseJson(directContent);
+    if (nestedParsed) {
+      return normalizeAgentOutput(nestedParsed) || directContent;
+    }
+
+    return directContent;
+  }
+
+  return normalizeAgentOutput(parsed);
+}
+
 /**
  * Helper function to process intermediate_data lines
  * Parses the intermediate data payload and writes it to the response stream
@@ -139,9 +202,7 @@ async function processChatStream(backendRes, res) {
           }
           try {
             const parsed = JSON.parse(data);
-            const content =
-              parsed.choices?.[0]?.message?.content ||
-              parsed.choices?.[0]?.delta?.content;
+            const content = extractResponseContent(parsed);
             if (content) {
               res.write(content);
             }
@@ -185,11 +246,7 @@ async function processChat(backendRes, res) {
   
   try {
     const parsed = JSON.parse(data);
-    const content =
-      parsed?.choices?.[0]?.message?.content ||
-      parsed?.message ||
-      parsed?.answer ||
-      parsed?.value;
+    const content = extractResponseContent(parsed);
 
     res.writeHead(200, responseHeaders);
     res.end(typeof content === 'string' ? content : JSON.stringify(content));

@@ -245,8 +245,9 @@ class TestEmbedSearchInner:
         inner_fn = await self._get_inner_fn(config, mock_builder, mock_es_client, mock_embed_client)
         query_input = QueryInput(params={"query": "test"}, source_type="video_file")
 
-        with pytest.raises(ValueError, match="does not exist"):
-            await inner_fn(query_input)
+        result = await inner_fn(query_input)
+        assert isinstance(result, EmbedSearchOutput)
+        assert result.results == []
 
     @pytest.mark.asyncio
     async def test_hit_without_llm_skipped(self, config, mock_builder, mock_es_client, mock_embed_client):
@@ -445,11 +446,13 @@ class TestEmbedSearchInner:
 
     @pytest.mark.asyncio
     async def test_video_file_index_not_exists(self, config, mock_builder, mock_es_client, mock_embed_client):
-        """Test video_file source_type raises when index doesn't exist."""
+        """Test video_file source_type returns empty results when index doesn't exist."""
         mock_es_client.indices.exists.return_value = False
 
         inner_fn = await self._get_inner_fn(config, mock_builder, mock_es_client, mock_embed_client)
         query_input = QueryInput(params={"query": "test"}, source_type="video_file")
 
-        with pytest.raises(ValueError, match="does not exist"):
-            await inner_fn(query_input)
+        result = await inner_fn(query_input)
+        assert isinstance(result, EmbedSearchOutput)
+        assert result.query_embedding == []
+        assert result.results == []

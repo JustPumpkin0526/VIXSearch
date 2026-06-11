@@ -25,6 +25,7 @@ import pytest
 
 from vss_agents.api.video_search_ingest import ALLOWED_VIDEO_TYPES
 from vss_agents.api.video_search_ingest import VideoIngestResponse
+from vss_agents.api.video_search_ingest import _active_video_ingests
 from vss_agents.api.video_search_ingest import create_streaming_video_ingest_router
 from vss_agents.api.video_search_ingest import register_streaming_routes
 
@@ -97,6 +98,9 @@ class TestCreateStreamingVideoIngestRouter:
 
 class TestStreamVideoToVstEndpoint:
     """Test stream_video_to_vst endpoint logic."""
+
+    def setup_method(self):
+        _active_video_ingests.clear()
 
     @pytest.mark.asyncio
     async def test_successful_upload(self):
@@ -313,6 +317,25 @@ class TestStreamVideoToVstEndpoint:
             response = await endpoint(filename="test_video", request=mock_request)
 
             assert response.video_id == "sensor-123"
+
+    @pytest.mark.asyncio
+    async def test_duplicate_video_ingest_request_is_rejected_early(self):
+        """Test a second in-flight request for the same video_id is rejected before side effects."""
+        router = create_streaming_video_ingest_router(
+            vst_internal_url="http://vst:8080", rtvi_embed_base_url="http://rtvi:8080"
+        )
+
+        mock_request = MagicMock()
+        mock_request.headers = {"content-type": "video/mp4", "content-length": "1024"}
+
+        endpoint = router.routes[0].endpoint
+        _active_video_ingests.add("test")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await endpoint(filename="test.mp4", request=mock_request)
+
+        assert exc_info.value.status_code == 409
+        assert "already in progress" in exc_info.value.detail
 
 
 class TestRegisterStreamingRoutes:

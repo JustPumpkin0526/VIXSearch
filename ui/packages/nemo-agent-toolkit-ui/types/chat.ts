@@ -2,6 +2,9 @@ export interface Message {
   id?: string;
   role: Role;
   content: string;
+  rawContent?: string;
+  searchResults?: any[];
+  searchResultsSummary?: string;
   intermediateSteps?: any;
   humanInteractionMessages?: any;
   errorMessages?: any;
@@ -13,14 +16,15 @@ export interface Message {
 export type Role = 'assistant' | 'user' | 'agent' | 'system';
 
 // Dynamic custom agent params - can contain any key-value pairs
-export type CustomAgentParams = Record<string, string | number | boolean>;
+export type CustomAgentParamValue = string | number | boolean | string[];
+export type CustomAgentParams = Record<string, CustomAgentParamValue>;
 
 export interface ChatBody {
   chatCompletionURL?: string;
   messages?: Message[];
   additionalProps?: any;
   // Allow dynamic custom params at top level
-  [key: string]: string | number | boolean | Message[] | any | undefined;
+  [key: string]: CustomAgentParamValue | Message[] | any | undefined;
 }
 
 export interface Conversation {

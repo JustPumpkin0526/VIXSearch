@@ -129,6 +129,7 @@ export function createAssistantMessage(
     id,
     parentId,
     content,
+    rawContent: content,
     intermediateSteps,
     humanInteractionMessages,
     errorMessages,
@@ -147,6 +148,7 @@ export function updateAssistantMessage(
   return {
     ...message,
     content: newContent !== undefined ? newContent : message.content || '',
+    rawContent: newContent !== undefined ? newContent : message.rawContent || message.content || '',
     intermediateSteps: newIntermediateSteps || message.intermediateSteps || [],
     timestamp: Date.now()
   };
@@ -164,8 +166,9 @@ export function shouldRenderAssistantMessage(message: Message): boolean {
   const content = message.content;
   const hasContent = Boolean(content && content.trim());
   const hasIntermediateSteps = Boolean(message.intermediateSteps?.length);
+  const hasSearchResults = Boolean(Array.isArray(message.searchResults) && message.searchResults.length > 0);
   
-  return hasContent || hasIntermediateSteps;
+  return hasContent || hasIntermediateSteps || hasSearchResults;
 }
 
 /**

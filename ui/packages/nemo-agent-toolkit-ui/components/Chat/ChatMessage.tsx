@@ -34,6 +34,7 @@ import remarkMath from 'remark-math';
 export interface Props {
   message: Message;
   messageIndex: number;
+  sourceQuery?: string;
   onEdit?: (editedMessage: Message, deleteCount?: number) => void;
   onDelete?: (messageIndex: number) => void; // Callback to delete message at index
   totalMessageCount?: number; // Total messages for calculating deleteCount
@@ -44,7 +45,7 @@ export interface Props {
 }
 
 export const ChatMessage: FC<Props> = memo(
-  ({ message, messageIndex, onEdit, onDelete, totalMessageCount = 0, isStreaming = false, showMessageEdit = true, showMessageSpeaker = true, showMessageCopy = true }) => {
+  ({ message, messageIndex, sourceQuery = '', onEdit, onDelete, totalMessageCount = 0, isStreaming = false, showMessageEdit = true, showMessageSpeaker = true, showMessageCopy = true }) => {
     const { t } = useTranslation('chat');
 
     const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -93,7 +94,10 @@ export const ChatMessage: FC<Props> = memo(
       }
 
       return prepareContent({
-        message,
+        message: {
+          ...message,
+          content: message.rawContent ?? message.content,
+        },
         role: 'assistant',
         intermediateStepsContent: false,
         responseContent: true,
@@ -101,16 +105,31 @@ export const ChatMessage: FC<Props> = memo(
     }, [message]);
 
     const parsedSearchResultsMessage = useMemo(() => {
-      if (message.role !== 'assistant' || !assistantResponseContent) {
+      if (message.role !== 'assistant') {
+        return null;
+      }
+
+      if (Array.isArray(message.searchResults) && message.searchResults.length > 0) {
+        return {
+          results: message.searchResults,
+          summary: message.searchResultsSummary || '',
+        };
+      }
+
+      if (!assistantResponseContent) {
         return null;
       }
 
       return extractSearchResultsMessage(assistantResponseContent);
-    }, [assistantResponseContent, message.role]);
+    }, [assistantResponseContent, message.role, message.searchResults, message.searchResultsSummary]);
 
     // return if the there is nothing to show
     // no message and no intermediate steps
-    if (message?.content === '' && message?.intermediateSteps?.length === 0) {
+    if (
+      message?.content === '' &&
+      message?.intermediateSteps?.length === 0 &&
+      (!Array.isArray(message?.searchResults) || message.searchResults.length === 0)
+    ) {
       return null;
     }
 
@@ -327,24 +346,7 @@ export const ChatMessage: FC<Props> = memo(
                   <div className="overflow-x-auto prose dark:prose-invert flex-1 w-full flex-grow max-w-full whitespace-normal">
                     {parsedSearchResultsMessage ? (
                       <div className="w-full">
-                        {parsedSearchResultsMessage.summary ? (
-                          <MemoizedReactMarkdown
-                            rehypePlugins={[rehypeRaw] as any}
-                            remarkPlugins={[
-                              remarkGfm,
-                              [
-                                remarkMath,
-                                {
-                                  singleDollarTextMath: false,
-                                },
-                              ],
-                            ]}
-                            components={markdownComponents}
-                          >
-                            {parsedSearchResultsMessage.summary}
-                          </MemoizedReactMarkdown>
-                        ) : null}
-                        <SearchResultsMessage results={parsedSearchResultsMessage.results} />
+                        <SearchResultsMessage results={parsedSearchResultsMessage.results} sourceQuery={sourceQuery} />
                       </div>
                     ) : (
                       <MemoizedReactMarkdown

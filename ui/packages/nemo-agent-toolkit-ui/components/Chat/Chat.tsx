@@ -5,6 +5,7 @@ import { ChatHeader } from './ChatHeader';
 import { ChatInput } from './ChatInput';
 import { ChatLoader } from './ChatLoader';
 import { MemoizedChatMessage } from './MemoizedChatMessage';
+import { extractSearchResultsMessage } from './SearchResultsMessage';
 import { CustomAgentParamsValues } from './CustomAgentParams';
 import { InteractionModal } from '@/components/Chat/ChatInteractionMessage';
 import HomeContext from '@/pages/api/home/home.context';
@@ -140,6 +141,29 @@ function parsePossiblyConcatenatedJson(payload: string): any[] {
   return objs;
 }
 
+function buildAssistantDisplayMessage(rawContent: string, baseMessage: Partial<Message> = {}): Message {
+  const parsedSearchResults = extractSearchResultsMessage(rawContent);
+
+  console.log('[search-chat][ui] buildAssistantDisplayMessage', {
+    messageId: baseMessage.id,
+    rawLength: rawContent.length,
+    parsedResultCount: Array.isArray(parsedSearchResults?.results)
+      ? parsedSearchResults.results.length
+      : 0,
+    preview: rawContent.length > 240 ? `${rawContent.slice(0, 240)}...` : rawContent,
+  });
+
+  return {
+    ...baseMessage,
+    role: 'assistant',
+    content: parsedSearchResults ? '' : rawContent,
+    rawContent,
+    searchResults: parsedSearchResults?.results,
+    searchResultsSummary: undefined,
+    timestamp: Date.now(),
+  } as Message;
+}
+
 // Debug helper for streaming parse issues (commented out for production)
 // const debugParse = (label: string, payload: string) => {
 //   const preview = payload.length > 200 ? payload.slice(0, 200) + '…' : payload;
@@ -182,6 +206,47 @@ export const Chat = () => {
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [showScrollDownButton, setShowScrollDownButton] =
     useState<boolean>(false);
+  const isSearchTabChat = typeof storageKeyPrefix === 'string' && storageKeyPrefix.startsWith('searchTab');
+  const fetchOwnedVideoIdsForSearch = useCallback(async (): Promise<string[]> => {
+    if (!isSearchTabChat || typeof window === 'undefined') {
+      return [];
+    }
+
+    const token = window.localStorage.getItem('vss.auth.token');
+    if (!token) {
+      return [];
+    }
+
+    try {
+      const response = await fetch('/api/videos/list', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        console.warn('Failed to fetch owned uploaded videos for search:', response.status);
+        return [];
+      }
+
+      const payload = await response.json();
+      const videos: Array<{ sensor_id?: string }> = Array.isArray(payload?.videos) ? payload.videos : [];
+      const ownedVideoIds: string[] = [];
+
+      for (const video of videos) {
+        const sensorId = typeof video?.sensor_id === 'string' ? video.sensor_id.trim() : '';
+        if (sensorId) {
+          ownedVideoIds.push(sensorId);
+        }
+      }
+
+      return ownedVideoIds;
+    } catch (error) {
+      console.warn('Failed to resolve owned uploaded videos for search:', error);
+      return [];
+    }
+  }, [isSearchTabChat]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -538,19 +603,30 @@ export const Chat = () => {
     if (isLastAssistant) {
       // Append to existing assistant message using pure helper
       const combinedContent = appendAssistantText(
-        lastMessage.content || '',
+        lastMessage.rawContent || lastMessage.content || '',
         incomingText
       );
       return messages.map((m, idx) =>
         idx === messages.length - 1
-          ? updateAssistantMessage(m, combinedContent)
+          ? {
+              ...updateAssistantMessage(m, buildAssistantDisplayMessage(combinedContent, m).content),
+              rawContent: combinedContent,
+              searchResults: buildAssistantDisplayMessage(combinedContent, m).searchResults,
+              searchResultsSummary: buildAssistantDisplayMessage(combinedContent, m).searchResultsSummary,
+            }
           : m
       );
     } else {
       // Create new assistant message using pure helper
       return [
         ...messages,
-        createAssistantMessage(message.id, message.parent_id, incomingText),
+        {
+          ...createAssistantMessage(message.id, message.parent_id, ''),
+          ...buildAssistantDisplayMessage(incomingText, {
+            id: message.id,
+            parentId: message.parent_id,
+          }),
+        },
       ];
     }
   };
@@ -1225,13 +1301,12 @@ export const Chat = () => {
                   pendingIntermediateSteps = []; // Clear after processing
 
                   // update the message
+                  const assistantMessage = buildAssistantDisplayMessage(text, {
+                    intermediateSteps: [...processedIntermediateSteps],
+                  });
                   const updatedMessages: Message[] = [
                     ...updatedConversation.messages,
-                    {
-                      role: 'assistant',
-                      content: text, // main response content without intermediate steps
-                      intermediateSteps: [...processedIntermediateSteps], // intermediate steps
-                    },
+                    assistantMessage,
                   ];
 
                   updatedConversation = {
@@ -1266,11 +1341,10 @@ export const Chat = () => {
                         });
 
                         // update the message
-                        const msg = {
+                        const msg = buildAssistantDisplayMessage(text, {
                           ...message,
-                          content: text, // main response content
-                          intermediateSteps: updatedIntermediateSteps, // intermediate steps
-                        };
+                          intermediateSteps: updatedIntermediateSteps,
+                        });
                         return msg;
                       }
                       return message;
@@ -1309,11 +1383,10 @@ export const Chat = () => {
                           : intermediateStepOverride
                       );
                     });
-                    return {
+                    return buildAssistantDisplayMessage(text, {
                       ...message,
-                      content: text,
                       intermediateSteps: updatedIntermediateSteps,
-                    };
+                    });
                   }
                   return message;
                 });
@@ -1662,12 +1735,16 @@ export const Chat = () => {
             // Only pass isStreaming to the last assistant message when actively streaming
             const isLastMessage = index === arr.length - 1;
             const isStreamingMessage = messageIsStreaming && isLastMessage && message.role === 'assistant';
+            const sourceQuery = message.role === 'assistant'
+              ? [...arr.slice(0, index)].reverse().find((candidate) => candidate.role === 'user' && !candidate.hidden)?.content ?? ''
+              : '';
 
             return (
               <MemoizedChatMessage
                 key={message.id ?? index}
                 message={message}
                 messageIndex={index}
+                sourceQuery={sourceQuery}
                 onEdit={handleEditMessage}
                 onDelete={handleDeleteMessage}
                 totalMessageCount={arr.length}
@@ -1686,11 +1763,15 @@ export const Chat = () => {
         </div>
         <ChatInput
           textareaRef={textareaRef}
-          onSend={(message, customParams) => {
+          onSend={async (message, customParams) => {
             setCurrentMessage(message);
-            if (customParams) {
-              customAgentParamsRef.current = customParams;
+            const nextCustomParams: CustomAgentParamsValues = { ...(customParams || {}) };
+
+            if (isSearchTabChat) {
+              nextCustomParams.owned_video_ids = await fetchOwnedVideoIdsForSearch();
             }
+
+            customAgentParamsRef.current = nextCustomParams;
             handleSend(message, 0);
           }}
           onScrollDownClick={handleScrollDown}

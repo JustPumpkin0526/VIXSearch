@@ -33,6 +33,8 @@ from vss_agents.tools.search import SearchInput
 from vss_agents.tools.search import SearchOutput
 from vss_agents.tools.search import SearchResult
 from vss_agents.tools.search import decompose_query
+from vss_agents.tools.search import execute_core_search
+from vss_agents.tools.search import merge_touching_search_results
 
 
 class TestSearchConfig:
@@ -189,6 +191,118 @@ class TestSearchResult:
                 video_name="video1.mp4",
                 # Missing other required fields
             )
+
+
+class TestMergeTouchingSearchResults:
+    """Test merging touching search clips from the same sensor."""
+
+    def test_merges_touching_clips_from_same_sensor(self):
+        merged = merge_touching_search_results(
+            [
+                SearchResult(
+                    video_name="video1.mp4",
+                    description="First clip",
+                    start_time="2025-01-15T10:00:00Z",
+                    end_time="2025-01-15T10:00:10Z",
+                    sensor_id="sensor-1",
+                    screenshot_url="http://example.com/screenshot1.jpg",
+                    similarity=0.61,
+                    object_ids=["1"],
+                ),
+                SearchResult(
+                    video_name="video1.mp4",
+                    description="Touching clip",
+                    start_time="2025-01-15T10:00:10Z",
+                    end_time="2025-01-15T10:00:20Z",
+                    sensor_id="sensor-1",
+                    screenshot_url="http://example.com/screenshot2.jpg",
+                    similarity=0.72,
+                    object_ids=["2"],
+                ),
+                SearchResult(
+                    video_name="video2.mp4",
+                    description="Different sensor clip",
+                    start_time="2025-01-15T10:00:10Z",
+                    end_time="2025-01-15T10:00:20Z",
+                    sensor_id="sensor-2",
+                    screenshot_url="http://example.com/screenshot3.jpg",
+                    similarity=0.93,
+                    object_ids=["3"],
+                ),
+                SearchResult(
+                    video_name="video1.mp4",
+                    description="Gap clip",
+                    start_time="2025-01-15T10:00:31Z",
+                    end_time="2025-01-15T10:00:41Z",
+                    sensor_id="sensor-1",
+                    screenshot_url="http://example.com/screenshot4.jpg",
+                    similarity=0.58,
+                    object_ids=["4"],
+                ),
+            ]
+        )
+
+        assert len(merged) == 3
+        assert merged[0].sensor_id == "sensor-1"
+        assert merged[0].start_time == "2025-01-15T10:00:00Z"
+        assert merged[0].end_time == "2025-01-15T10:00:20Z"
+        assert merged[0].similarity == 0.72
+        assert merged[0].object_ids == ["1", "2"]
+
+        assert merged[1].sensor_id == "sensor-2"
+        assert merged[1].start_time == "2025-01-15T10:00:10Z"
+        assert merged[1].end_time == "2025-01-15T10:00:20Z"
+
+        assert merged[2].sensor_id == "sensor-1"
+        assert merged[2].start_time == "2025-01-15T10:00:31Z"
+        assert merged[2].end_time == "2025-01-15T10:00:41Z"
+
+    def test_merges_one_chunk_gap_for_same_sensor(self):
+        merged = merge_touching_search_results(
+            [
+                SearchResult(
+                    video_name="video1.mp4",
+                    description="Chunk 1",
+                    start_time="2025-01-15T10:01:10Z",
+                    end_time="2025-01-15T10:01:20Z",
+                    sensor_id="sensor-1",
+                    screenshot_url="http://example.com/screenshot1.jpg",
+                    similarity=0.61,
+                    object_ids=["1"],
+                ),
+                SearchResult(
+                    video_name="video1.mp4",
+                    description="Chunk 3",
+                    start_time="2025-01-15T10:01:30Z",
+                    end_time="2025-01-15T10:01:40Z",
+                    sensor_id="sensor-1",
+                    screenshot_url="http://example.com/screenshot2.jpg",
+                    similarity=0.72,
+                    object_ids=["2"],
+                ),
+                SearchResult(
+                    video_name="video2.mp4",
+                    description="Other sensor",
+                    start_time="2025-01-15T10:01:30Z",
+                    end_time="2025-01-15T10:01:40Z",
+                    sensor_id="sensor-2",
+                    screenshot_url="http://example.com/screenshot3.jpg",
+                    similarity=0.93,
+                    object_ids=["3"],
+                ),
+            ]
+        )
+
+        assert len(merged) == 2
+        assert merged[0].sensor_id == "sensor-1"
+        assert merged[0].start_time == "2025-01-15T10:01:10Z"
+        assert merged[0].end_time == "2025-01-15T10:01:40Z"
+        assert merged[0].similarity == 0.72
+        assert merged[0].object_ids == ["1", "2"]
+
+        assert merged[1].sensor_id == "sensor-2"
+        assert merged[1].start_time == "2025-01-15T10:01:30Z"
+        assert merged[1].end_time == "2025-01-15T10:01:40Z"
 
 
 class TestSearchOutput:
@@ -647,6 +761,195 @@ Output: {"query": "forklift", "source_type": "stream"}"""
 
         assert result.query == "any object"
         assert result.min_cosine_similarity == -0.5
+
+
+class TestExecuteCoreSearch:
+    """Test execute_core_search result-limit precedence."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_top_k_is_not_overridden_by_query_decomposition(self, monkeypatch):
+        captured_payloads: list[dict[str, object]] = []
+
+        async def mock_decompose_query(*args, **kwargs):
+            return DecomposedQuery(query="red car", top_k=20)
+
+        async def mock_embed_search_ainvoke(query_input_json: str):
+            captured_payloads.append(json.loads(query_input_json))
+            return {
+                "results": [
+                    {
+                        "video_name": "video1.mp4",
+                        "description": "Test video",
+                        "start_time": "2025-01-15T10:00:00Z",
+                        "end_time": "2025-01-15T10:01:00Z",
+                        "sensor_id": "sensor-1",
+                        "screenshot_url": "http://example.com/screenshot1.jpg",
+                        "similarity_score": 0.95,
+                    }
+                ]
+            }
+
+        monkeypatch.setattr("vss_agents.tools.search.decompose_query", mock_decompose_query)
+
+        embed_search = MagicMock()
+        embed_search.ainvoke = AsyncMock(side_effect=mock_embed_search_ainvoke)
+
+        config = SearchConfig(
+            embed_search_tool="embed_search",
+            agent_mode_llm="gpt-4o",
+            vst_internal_url="",
+        )
+
+        updates = []
+        async for update in execute_core_search(
+            search_input=SearchInput(
+                query="find top 20 red cars",
+                source_type="video_file",
+                top_k=3,
+                agent_mode=True,
+            ),
+            embed_search=embed_search,
+            agent_llm=object(),
+            config=config,
+            builder=MagicMock(),
+        ):
+            updates.append(update)
+
+        assert captured_payloads[0]["params"]["top_k"] == "6"
+        assert any(isinstance(update, SearchOutput) for update in updates)
+
+    @pytest.mark.asyncio
+    async def test_min_cosine_similarity_filters_individual_clips(self):
+        embed_search = MagicMock()
+        embed_search.ainvoke = AsyncMock(
+            return_value={
+                "results": [
+                    {
+                        "video_name": "video1.mp4",
+                        "description": "High similarity clip",
+                        "start_time": "2025-01-15T10:00:00Z",
+                        "end_time": "2025-01-15T10:00:10Z",
+                        "sensor_id": "sensor-1",
+                        "screenshot_url": "http://example.com/screenshot1.jpg",
+                        "similarity_score": 0.24,
+                    },
+                    {
+                        "video_name": "video1.mp4",
+                        "description": "Low similarity clip",
+                        "start_time": "2025-01-15T10:00:10Z",
+                        "end_time": "2025-01-15T10:00:20Z",
+                        "sensor_id": "sensor-1",
+                        "screenshot_url": "http://example.com/screenshot2.jpg",
+                        "similarity_score": 0.14,
+                    },
+                ]
+            }
+        )
+
+        config = SearchConfig(
+            embed_search_tool="embed_search",
+            agent_mode_llm="gpt-4o",
+            vst_internal_url="",
+        )
+
+        final_output = None
+        async for update in execute_core_search(
+            search_input=SearchInput(
+                query="find falldown clips",
+                source_type="video_file",
+                top_k=10,
+                min_cosine_similarity=0.2,
+                agent_mode=False,
+            ),
+            embed_search=embed_search,
+            agent_llm=None,
+            config=config,
+            builder=MagicMock(),
+        ):
+            if isinstance(update, SearchOutput):
+                final_output = update
+
+        assert final_output is not None
+        assert len(final_output.data) == 1
+        assert final_output.data[0].similarity == 0.24
+        assert final_output.data[0].start_time == "2025-01-15T10:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_merge_refill_fetches_more_candidates_to_fill_top_k(self):
+        captured_top_ks: list[int] = []
+        all_results: list[dict[str, object]] = []
+
+        merged_group_sizes = [3, 3, 3, 3, 3, 3, 2]
+        current_index = 0
+        for group_index, group_size in enumerate(merged_group_sizes):
+            sensor_id = f"sensor-merge-{group_index}"
+            for offset in range(group_size):
+                start_second = current_index * 10
+                all_results.append(
+                    {
+                        "video_name": f"merge-video-{group_index}.mp4",
+                        "description": f"Merged clip {group_index}",
+                        "start_time": f"2025-01-15T10:{start_second // 60:02d}:{start_second % 60:02d}Z",
+                        "end_time": f"2025-01-15T10:{(start_second + 10) // 60:02d}:{(start_second + 10) % 60:02d}Z",
+                        "sensor_id": sensor_id,
+                        "screenshot_url": f"http://example.com/merge-{group_index}-{offset}.jpg",
+                        "similarity_score": 0.4 - (current_index * 0.001),
+                    }
+                )
+                current_index += 1
+
+        for fill_index in range(10):
+            start_second = current_index * 10
+            all_results.append(
+                {
+                    "video_name": f"fill-video-{fill_index}.mp4",
+                    "description": f"Fill clip {fill_index}",
+                    "start_time": f"2025-01-15T10:{start_second // 60:02d}:{start_second % 60:02d}Z",
+                    "end_time": f"2025-01-15T10:{(start_second + 10) // 60:02d}:{(start_second + 10) % 60:02d}Z",
+                    "sensor_id": f"sensor-fill-{fill_index}",
+                    "screenshot_url": f"http://example.com/fill-{fill_index}.jpg",
+                    "similarity_score": 0.3 - (fill_index * 0.001),
+                }
+            )
+            current_index += 1
+
+        async def mock_embed_search_ainvoke(query_input_json: str):
+            payload = json.loads(query_input_json)
+            requested_top_k = int(payload["params"]["top_k"])
+            captured_top_ks.append(requested_top_k)
+            return {"results": all_results[:requested_top_k]}
+
+        embed_search = MagicMock()
+        embed_search.ainvoke = AsyncMock(side_effect=mock_embed_search_ainvoke)
+
+        config = SearchConfig(
+            embed_search_tool="embed_search",
+            agent_mode_llm="gpt-4o",
+            vst_internal_url="",
+        )
+
+        final_output = None
+        async for update in execute_core_search(
+            search_input=SearchInput(
+                query="find merged clips but keep ten results",
+                source_type="video_file",
+                top_k=10,
+                min_cosine_similarity=0.2,
+                agent_mode=False,
+            ),
+            embed_search=embed_search,
+            agent_llm=None,
+            config=config,
+            builder=MagicMock(),
+        ):
+            if isinstance(update, SearchOutput):
+                final_output = update
+
+        assert final_output is not None
+        assert len(final_output.data) == 10
+        assert captured_top_ks[0] == 20
+        assert captured_top_ks[-1] > 20
+        assert final_output.data[7].video_name == "fill-video-0.mp4"
 
 
 class TestQueryInputSourceType:

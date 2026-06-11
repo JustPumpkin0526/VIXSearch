@@ -21,6 +21,7 @@ This bypasses NAT's standard endpoint pattern to support file streaming.
 import json
 import logging
 import os
+from threading import Lock
 from typing import Any
 import urllib.parse
 
@@ -32,13 +33,17 @@ import httpx
 from pydantic import BaseModel
 from pydantic import Field
 
-from vss_agents.tools.vst.timeline import get_timeline
-from vss_agents.tools.vst.utils import VSTError
-from vss_agents.utils.url_translation import rewrite_url_host
 import os
 from datetime import datetime, timezone
 
+from vss_agents.tools.vst.timeline import get_timeline
+from vss_agents.tools.vst.utils import VSTError
+from vss_agents.utils.url_translation import rewrite_url_host
+
 logger = logging.getLogger(__name__)
+
+_active_video_ingests: set[str] = set()
+_active_video_ingests_lock = Lock()
 
 # Allowed video MIME types - Only MP4 and MKV as supported
 ALLOWED_VIDEO_TYPES = {
@@ -116,11 +121,28 @@ def create_streaming_video_ingest_router(
         Raises:
             HTTPException: If upload fails
         """
+        chunk_duration_param = request.query_params.get("chunk_duration")
+        effective_chunk_duration = rtvi_embed_chunk_duration
+        if chunk_duration_param is not None:
+            try:
+                effective_chunk_duration = max(1, int(chunk_duration_param))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail="chunk_duration must be a positive integer") from e
+
         # Fixed timestamp as per requirements
         start_timestamp = "2025-01-01T00:00:00.000Z"
 
         # Remove file extension if present to get video ID
         video_id = filename.rsplit(".", 1)[0] if "." in filename else filename
+
+        with _active_video_ingests_lock:
+            if video_id in _active_video_ingests:
+                logger.warning("Duplicate video ingest request ignored for video_id=%s", video_id)
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Video ingest is already in progress for '{video_id}'",
+                )
+            _active_video_ingests.add(video_id)
 
         # Construct VST upload URL
         vst_url = vst_internal_url.rstrip("/")
@@ -303,7 +325,7 @@ def create_streaming_video_ingest_router(
                 "id": vst_sensor_id,
                 "model": rtvi_embed_model,
                 "creation_time": start_timestamp,
-                "chunk_duration": rtvi_embed_chunk_duration,
+                "chunk_duration": effective_chunk_duration,
             }
 
             logger.info(f"Calling RTVI Embedding API: POST {embedding_url}")
@@ -380,6 +402,9 @@ def create_streaming_video_ingest_router(
         except Exception as e:
             logger.error(f"Error in streaming video ingest: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        finally:
+            with _active_video_ingests_lock:
+                _active_video_ingests.discard(video_id)
 
     return router
 

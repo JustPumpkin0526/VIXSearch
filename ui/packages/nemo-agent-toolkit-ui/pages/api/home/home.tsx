@@ -34,6 +34,89 @@ import { HomeInitialState, initialState } from './home.state';
 
 import { v4 as uuidv4 } from 'uuid';
 
+type PersistedChatState = {
+  folders?: FolderInterface[];
+  conversations?: Conversation[];
+  selectedConversation?: Conversation | null;
+  showChatbar?: boolean;
+};
+
+function getAuthToken(): string {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  return window.localStorage.getItem('vss.auth.token') || '';
+}
+
+function buildChatStateSnapshot(params: PersistedChatState): PersistedChatState {
+  return {
+    folders: Array.isArray(params.folders) ? params.folders : [],
+    conversations: Array.isArray(params.conversations) ? params.conversations : [],
+    selectedConversation: params.selectedConversation ?? null,
+    showChatbar: typeof params.showChatbar === 'boolean' ? params.showChatbar : true,
+  };
+}
+
+function persistStateToSessionStorage(snapshot: PersistedChatState, storageKeyPrefix: string | null) {
+  sessionStorage.setItem(getStorageKey('folders', storageKeyPrefix), JSON.stringify(snapshot.folders || []));
+  sessionStorage.setItem(getStorageKey('conversationHistory', storageKeyPrefix), JSON.stringify(snapshot.conversations || []));
+  sessionStorage.setItem(getStorageKey('showChatbar', storageKeyPrefix), JSON.stringify(snapshot.showChatbar ?? true));
+
+  if (snapshot.selectedConversation) {
+    sessionStorage.setItem(getStorageKey('selectedConversation', storageKeyPrefix), JSON.stringify(snapshot.selectedConversation));
+  } else {
+    sessionStorage.removeItem(getStorageKey('selectedConversation', storageKeyPrefix));
+  }
+}
+
+async function loadPersistedChatState(storageKeyPrefix: string | null): Promise<PersistedChatState | null> {
+  const token = getAuthToken();
+  if (!token) {
+    return null;
+  }
+
+  const query = new URLSearchParams({
+    storageKeyPrefix: storageKeyPrefix || 'default',
+  });
+  const response = await fetch(`/api/chat/state?${query.toString()}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to load chat state: ${response.status}`);
+  }
+
+  const payload = await response.json();
+  return payload?.state ?? null;
+}
+
+async function savePersistedChatState(storageKeyPrefix: string | null, snapshot: PersistedChatState): Promise<void> {
+  const token = getAuthToken();
+  if (!token) {
+    return;
+  }
+
+  const response = await fetch('/api/chat/state', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      storageKeyPrefix: storageKeyPrefix || 'default',
+      ...buildChatStateSnapshot(snapshot),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to save chat state: ${response.status}`);
+  }
+}
+
 export interface ChatSidebarControlHandlers {
   conversations: any[];
   filteredConversations: any[];
@@ -138,6 +221,8 @@ const Home = (props: NemoAgentToolkitAppProps = {}) => {
   const storageKeyPrefix = storageKeyPrefixProp ?? runtimeConfig?.storageKeyPrefix ?? null;
 
   const stopConversationRef = useRef<boolean>(false);
+  const chatStateHydratedRef = useRef(false);
+  const lastPersistedChatSnapshotRef = useRef('');
   
   // Track if we're in the middle of an external theme update to prevent loops
   const isExternalThemeUpdateRef = useRef(false);
@@ -316,74 +401,142 @@ const Home = (props: NemoAgentToolkitAppProps = {}) => {
   // EFFECTS  --------------------------------------------
 
   useEffect(() => {
-    // Give priority to saved sessionStorage value over environment variable (only when not externally controlled)
-    if (!externalTheme) {
-      const savedLightMode = sessionStorage.getItem('lightMode');
-      if (savedLightMode && (savedLightMode === 'light' || savedLightMode === 'dark')) {
-        dispatch({
-          field: 'lightMode',
-          value: savedLightMode,
-        });
+    let cancelled = false;
+
+    const hydrateState = async () => {
+      chatStateHydratedRef.current = false;
+      let loadedFromDb = false;
+
+      if (!externalTheme) {
+        const savedLightMode = sessionStorage.getItem('lightMode');
+        if (savedLightMode && (savedLightMode === 'light' || savedLightMode === 'dark')) {
+          dispatch({
+            field: 'lightMode',
+            value: savedLightMode,
+          });
+        }
       }
-    }
 
-    // Restore sessionStorage override for showChatbar - give priority to user's session preference (use prefixed key when multiple instances)
-    const showChatbarKey = getStorageKey('showChatbar', storageKeyPrefix);
-    const showChatbar = sessionStorage.getItem(showChatbarKey);
-    if (showChatbar) {
-      dispatch({ field: 'showChatbar', value: showChatbar === 'true' });
-    }
+      const showChatbarKey = getStorageKey('showChatbar', storageKeyPrefix);
+      const foldersKey = getStorageKey('folders', storageKeyPrefix);
+      const conversationHistoryKey = getStorageKey('conversationHistory', storageKeyPrefix);
+      const selectedConversationKey = getStorageKey('selectedConversation', storageKeyPrefix);
 
-    const foldersKey = getStorageKey('folders', storageKeyPrefix);
-    const folders = sessionStorage.getItem(foldersKey);
-    if (folders) {
-      dispatch({ field: 'folders', value: JSON.parse(folders) });
-    }
+      let nextShowChatbar = initialState.showChatbar;
+      const showChatbarValue = sessionStorage.getItem(showChatbarKey);
+      if (showChatbarValue) {
+        nextShowChatbar = showChatbarValue === 'true';
+      }
 
-    const conversationHistoryKey = getStorageKey('conversationHistory', storageKeyPrefix);
-    const conversationHistory = sessionStorage.getItem(conversationHistoryKey);
-    if (conversationHistory) {
-      const parsedConversationHistory: Conversation[] =
-        JSON.parse(conversationHistory);
-      const cleanedConversationHistory = cleanConversationHistory(
-        parsedConversationHistory,
-      );
+      let nextFolders: FolderInterface[] = [];
+      const foldersValue = sessionStorage.getItem(foldersKey);
+      if (foldersValue) {
+        nextFolders = JSON.parse(foldersValue);
+      }
 
-      dispatch({ field: 'conversations', value: cleanedConversationHistory });
-    }
+      let nextConversations: Conversation[] = [];
+      const conversationHistoryValue = sessionStorage.getItem(conversationHistoryKey);
+      if (conversationHistoryValue) {
+        nextConversations = cleanConversationHistory(JSON.parse(conversationHistoryValue));
+      }
 
-    const selectedConversationKey = getStorageKey('selectedConversation', storageKeyPrefix);
-    const selectedConversationFromStorage = sessionStorage.getItem(selectedConversationKey);
-    if (selectedConversationFromStorage) {
-      const parsedSelectedConversation: Conversation =
-        JSON.parse(selectedConversationFromStorage);
-      const cleanedSelectedConversation = cleanSelectedConversation(
-        parsedSelectedConversation,
-      );
+      let nextSelectedConversation: Conversation | undefined;
+      const selectedConversationValue = sessionStorage.getItem(selectedConversationKey);
+      if (selectedConversationValue) {
+        nextSelectedConversation = cleanSelectedConversation(JSON.parse(selectedConversationValue));
+      }
 
-      dispatch({
-        field: 'selectedConversation',
-        value: cleanedSelectedConversation,
+      try {
+        const persistedState = await loadPersistedChatState(storageKeyPrefix);
+        if (persistedState) {
+          loadedFromDb = true;
+          nextFolders = Array.isArray(persistedState.folders) ? persistedState.folders : [];
+          nextConversations = cleanConversationHistory(
+            Array.isArray(persistedState.conversations) ? persistedState.conversations : [],
+          );
+          nextSelectedConversation = persistedState.selectedConversation
+            ? cleanSelectedConversation(persistedState.selectedConversation)
+            : undefined;
+          if (typeof persistedState.showChatbar === 'boolean') {
+            nextShowChatbar = persistedState.showChatbar;
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to hydrate chat state from DB:', error);
+      }
+
+      if (!nextSelectedConversation) {
+        const homepageConversation: Conversation = {
+          id: uuidv4(),
+          name: t('New Conversation'),
+          messages: [],
+          folderId: null,
+          isHomepageConversation: true,
+        };
+
+        nextSelectedConversation = homepageConversation;
+        nextConversations = [...nextConversations, homepageConversation];
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      dispatch({ field: 'showChatbar', value: nextShowChatbar });
+      dispatch({ field: 'folders', value: nextFolders });
+      dispatch({ field: 'conversations', value: nextConversations });
+      dispatch({ field: 'selectedConversation', value: nextSelectedConversation });
+
+      const snapshot = buildChatStateSnapshot({
+        folders: nextFolders,
+        conversations: nextConversations,
+        selectedConversation: nextSelectedConversation,
+        showChatbar: nextShowChatbar,
       });
-    } else {
-      // Create homepage conversation like sidebar does, but mark it as homepage conversation
-      const homepageConversation: Conversation = {
-        id: uuidv4(),
-        name: t('New Conversation'),
-        messages: [],
-        folderId: null,
-        isHomepageConversation: true, // Flag to track it's a homepage conversation
-      };
+      persistStateToSessionStorage(snapshot, storageKeyPrefix);
+      lastPersistedChatSnapshotRef.current = loadedFromDb ? JSON.stringify(snapshot) : '';
+      chatStateHydratedRef.current = true;
+    };
 
-      const updatedConversations = [...conversations, homepageConversation];
+    hydrateState();
 
-      dispatch({ field: 'selectedConversation', value: homepageConversation });
-      dispatch({ field: 'conversations', value: updatedConversations });
-
-      saveConversation(homepageConversation, storageKeyPrefix);
-      saveConversations(updatedConversations, storageKeyPrefix);
-    }
+    return () => {
+      cancelled = true;
+    };
   }, [storageKeyPrefix]); // Run when instance prefix is set (e.g. main vs search tab)
+
+  useEffect(() => {
+    if (!chatStateHydratedRef.current) {
+      return undefined;
+    }
+
+    const snapshot = buildChatStateSnapshot({
+      folders,
+      conversations,
+      selectedConversation,
+      showChatbar: contextValue.state.showChatbar,
+    });
+
+    persistStateToSessionStorage(snapshot, storageKeyPrefix);
+    const serializedSnapshot = JSON.stringify(snapshot);
+    if (serializedSnapshot === lastPersistedChatSnapshotRef.current) {
+      return undefined;
+    }
+
+    const persistTimer = window.setTimeout(() => {
+      savePersistedChatState(storageKeyPrefix, snapshot)
+        .then(() => {
+          lastPersistedChatSnapshotRef.current = serializedSnapshot;
+        })
+        .catch((error) => {
+          console.warn('Failed to persist chat state to DB:', error);
+        });
+    }, 500);
+
+    return () => {
+      window.clearTimeout(persistTimer);
+    };
+  }, [folders, conversations, selectedConversation, contextValue.state.showChatbar, storageKeyPrefix]);
 
   // Handle external theme prop changes separately
   useEffect(() => {
