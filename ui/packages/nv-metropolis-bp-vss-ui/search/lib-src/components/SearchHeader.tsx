@@ -5,7 +5,6 @@ import { Search as SearchIcon, Funnel as FunnelIcon, Close as CloseIcon, InfoRou
 import { IconRefresh } from '@tabler/icons-react';
 import { FilterDialog } from './FilterPopover';
 import { SearchParams, StreamInfo, FilterTag } from '../types';
-import { DEFAULT_TOP_K } from '../hooks/useFilter';
 
 interface SearchHeaderProps {
     onUpdateSearchParams: (params: SearchParams) => void;
@@ -192,7 +191,6 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
       endDate: { endDate: null },
       videoSources: { videoSources: [] },
       similarity: { similarity: '' },
-      topK: { topK: DEFAULT_TOP_K }
     }), []);
     
     const handleUpdateQuery = useCallback((value: string) => {
@@ -271,10 +269,7 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
       ...(hasQueryError ? { borderColor: '#f44336', boxShadow: '0 0 0 1px #f44336' } : {}),
     }), [hasQueryError]);
 
-    const visibleTags = useMemo(
-      () => (contentDisabled ? filterTags.filter((tag: FilterTag) => tag.key !== 'topK') : filterTags),
-      [contentDisabled, filterTags]
-    );
+    const visibleTags = useMemo(() => filterTags, [filterTags]);
 
     return (
         <CustomProvider theme={theme}>
@@ -373,7 +368,7 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
                     pointerEvents: contentDisabled ? 'none' : 'auto'
                   }}>
                     {visibleTags.map((tag: FilterTag, index: number) => (
-                      <Tag style={{ opacity: contentDisabled ? 0.5 : 1 }} key={tag.key ?? index} closable={!contentDisabled && tag.key !== 'topK'} onClose={() => removeTag(tag)}>
+                      <Tag style={{ opacity: contentDisabled ? 0.5 : 1 }} key={tag.key ?? index} closable={!contentDisabled} onClose={() => removeTag(tag)}>
                         {tag.title}: <span style={{ color: theme === 'dark' ? '#84E1BC' : 'green' }}>{tag.value}</span>
                       </Tag>
                     ))}

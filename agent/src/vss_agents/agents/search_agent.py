@@ -101,6 +101,16 @@ class SearchAgentInput(BaseModel):
     )
     use_critic: bool = Field(default=True, description="Whether to verify search results with VLM critic agent")
 
+    class_only_search: bool | None = Field(
+        default=None,
+        description="If True, bypass embed/fusion and run attribute-search-only.",
+    )
+
+    class_names: list[str] | None = Field(
+        default=None,
+        description="Optional exact object.type filters to use in class-only mode.",
+    )
+
 
 class SearchAgentConfig(FunctionBaseConfig, name="search_agent"):
     """Config for search agent."""
@@ -174,6 +184,11 @@ class SearchAgentConfig(FunctionBaseConfig, name="search_agent"):
         ge=1,
         description="""Maximum number of search iterations when refining search results with critic agent.
         Note, high max iterations can run for a long time. Default is 1.""",
+    )
+
+    class_only_search_default: bool = Field(
+        default=False,
+        description="If True, bypass embed/fusion and run attribute-search-only by default.",
     )
 
 
@@ -334,6 +349,12 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             timestamp_end=timestamp_end,
             owned_video_ids=search_agent_input.owned_video_ids,
             use_critic=search_agent_input.use_critic,
+            class_only_search=(
+                search_agent_input.class_only_search
+                if search_agent_input.class_only_search is not None
+                else config.class_only_search_default
+            ),
+            class_names=search_agent_input.class_names,
         )
 
         # Get embed_search function reference
@@ -433,6 +454,12 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             timestamp_end=timestamp_end,
             owned_video_ids=search_agent_input.owned_video_ids,
             use_critic=search_agent_input.use_critic,
+            class_only_search=(
+                search_agent_input.class_only_search
+                if search_agent_input.class_only_search is not None
+                else config.class_only_search_default
+            ),
+            class_names=search_agent_input.class_names,
         )
 
         # Get embed_search function reference

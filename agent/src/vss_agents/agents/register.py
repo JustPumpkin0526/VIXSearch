@@ -14,6 +14,7 @@
 # limitations under the License.
 
 # Import agents to trigger registration
+from . import clip_describer
 from . import critic_agent
 from . import multi_report_agent
 from . import report_agent
@@ -21,6 +22,7 @@ from . import search_agent
 from . import top_agent
 
 __all__ = [
+    "clip_describer",
     "critic_agent",
     "multi_report_agent",
     "report_agent",

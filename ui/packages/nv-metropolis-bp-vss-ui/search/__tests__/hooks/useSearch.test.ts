@@ -30,7 +30,7 @@ describe('useSearch', () => {
       expect(result.current.loading).toBe(false);
     });
 
-    expect(result.current.error).toContain('Agent API URL is not configured');
+    expect(result.current.error).toContain('Agent API URL이 설정되지 않았습니다');
     expect(result.current.searchResults).toEqual([]);
   });
 
@@ -70,7 +70,7 @@ describe('useSearch', () => {
     const { result } = renderHook(() =>
       useSearch({
         agentApiUrl: 'http://api.test',
-        params: { query: 'person walking', agentMode: false, topK: 5 },
+        params: { query: 'person walking', agentMode: false },
       })
     );
 
@@ -89,7 +89,7 @@ describe('useSearch', () => {
     const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
     expect(body.query).toBe('person walking');
     expect(body.agent_mode).toBe(false);
-    expect(body.top_k).toBe(5);
+    expect(body.top_k).toBeUndefined();
 
     expect(result.current.searchResults[0].video_name).toBe('test.mp4');
     expect(result.current.loading).toBe(false);
@@ -102,7 +102,7 @@ describe('useSearch', () => {
     renderHook(() =>
       useSearch({
         agentApiUrl: 'http://api.test',
-        params: { query: 'find cars', agentMode: true, topK: 10, sourceType: 'rtsp' },
+        params: { query: 'find cars', agentMode: true, sourceType: 'rtsp' },
       })
     );
 

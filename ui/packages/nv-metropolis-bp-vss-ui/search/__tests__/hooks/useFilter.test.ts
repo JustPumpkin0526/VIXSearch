@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useFilter, DEFAULT_TOP_K } from '../../lib-src/hooks/useFilter';
+import { useFilter } from '../../lib-src/hooks/useFilter';
 
 interface FilterTag {
   key: string;
@@ -32,10 +32,6 @@ describe('useFilter', () => {
     global.fetch = originalFetch;
   });
 
-  it('exports DEFAULT_TOP_K constant', () => {
-    expect(DEFAULT_TOP_K).toBe(10);
-  });
-
   it('initializes with default state', () => {
     global.fetch = mockFetchResponse([]);
 
@@ -48,12 +44,10 @@ describe('useFilter', () => {
       similarity: 0,
       agentMode: false,
       query: '',
-      topK: DEFAULT_TOP_K,
+      sourceType: 'video_file',
     });
 
-    expect(result.current.filterTags).toEqual([
-      { key: 'topK', title: 'Show top K Results', value: DEFAULT_TOP_K.toString() },
-    ]);
+    expect(result.current.filterTags).toEqual([]);
   });
 
   it('does not fetch when vstApiUrl is not provided', async () => {
@@ -123,7 +117,6 @@ describe('useFilter', () => {
           endDate: new Date(2024, 0, 31),
           videoSources: ['cam-1', 'cam-2'],
           similarity: 0.75,
-          topK: 5,
         });
       });
 
@@ -132,10 +125,9 @@ describe('useFilter', () => {
       expect(tagKeys).toContain('endDate');
       expect(tagKeys).toContain('videoSources');
       expect(tagKeys).toContain('similarity');
-      expect(tagKeys).toContain('topK');
     });
 
-    it('creates only topK tag when no other filters set', () => {
+    it('creates no tags when no filters are set', () => {
       global.fetch = mockFetchResponse([]);
 
       const { result } = renderHook(() => useFilter({ vstApiUrl: 'http://vst.test' }));
@@ -146,13 +138,10 @@ describe('useFilter', () => {
           endDate: null,
           videoSources: [],
           similarity: 0,
-          topK: 10,
         });
       });
 
-      expect(result.current.filterTags).toEqual([
-        { key: 'topK', title: 'Show top K Results', value: '10' },
-      ]);
+      expect(result.current.filterTags).toEqual([]);
     });
 
     it('uses filterParams when no params argument passed', () => {
@@ -164,9 +153,7 @@ describe('useFilter', () => {
         result.current.addFilter();
       });
 
-      expect(result.current.filterTags).toEqual([
-        { key: 'topK', title: 'Show top K Results', value: DEFAULT_TOP_K.toString() },
-      ]);
+      expect(result.current.filterTags).toEqual([]);
     });
 
     it('formats similarity value to 2 decimal places', () => {
@@ -175,7 +162,7 @@ describe('useFilter', () => {
       const { result } = renderHook(() => useFilter({ vstApiUrl: 'http://vst.test' }));
 
       act(() => {
-        result.current.addFilter({ similarity: 0.7, topK: 10 });
+        result.current.addFilter({ similarity: 0.7 });
       });
 
       const simTag = result.current.filterTags.find((t: FilterTag) => t.key === 'similarity');
@@ -193,7 +180,6 @@ describe('useFilter', () => {
         result.current.addFilter({
           startDate: new Date(2024, 0, 1),
           similarity: 0.5,
-          topK: 10,
         });
       });
 
@@ -208,21 +194,15 @@ describe('useFilter', () => {
       expect(tagKeys).toContain('similarity');
     });
 
-    it('resets to default topK tag when null is passed (clear all)', () => {
+    it('clears all tags when null is passed', () => {
       global.fetch = mockFetchResponse([]);
 
       const { result } = renderHook(() => useFilter({ vstApiUrl: 'http://vst.test' }));
-
-      // Update filterParams topK to 20
-      act(() => {
-        result.current.setFilterParams({ ...result.current.filterParams, topK: 20 });
-      });
 
       act(() => {
         result.current.addFilter({
           startDate: new Date(2024, 0, 1),
           endDate: new Date(2024, 0, 31),
-          topK: 20,
         });
       });
 
@@ -230,10 +210,7 @@ describe('useFilter', () => {
         result.current.removeFilterTag(null);
       });
 
-      // removeFilterTag(null) reads filterParams.topK which is now 20
-      expect(result.current.filterTags).toEqual([
-        { key: 'topK', title: 'Show top K Results', value: '20' },
-      ]);
+      expect(result.current.filterTags).toEqual([]);
     });
   });
 

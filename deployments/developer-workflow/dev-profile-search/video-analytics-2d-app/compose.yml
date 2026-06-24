@@ -145,14 +145,18 @@ services:
     volumes:
       - $MDX_SAMPLE_APPS_DIR/developer-workflow/dev-profile-search/video-analytics-2d-app/deepstream/configs/cnn-models/ds-main-config.txt:/opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/ds-main-config.txt
       - $MDX_SAMPLE_APPS_DIR/developer-workflow/dev-profile-search/video-analytics-2d-app/deepstream/configs/cnn-models/ds-main-redis-config.txt:/opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/ds-main-redis-config.txt
+      - $MDX_SAMPLE_APPS_DIR/developer-workflow/dev-profile-search/video-analytics-2d-app/deepstream/configs/cnn-models/config_triton_nvinferserver_gdino.txt:/opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/config_triton_nvinferserver_gdino.txt
       - $MDX_DATA_DIR/models/rtdetr_warehouse_v1.0.1.fp16.onnx:/opt/storage/rtdetr_warehouse_v1.0.1.fp16.onnx
+      - $MDX_DATA_DIR/models/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx:/opt/storage/mgdino_mask_head_pruned_dynamic_batch.onnx
       - $MDX_DATA_DIR/models/radio-clip_v1.0.onnx:/opt/storage/radio-clip_v1.0.onnx
       - $MDX_DATA_DIR/models/radio-clip_v1.0_weights.bin:/opt/storage/radio-clip_v1.0_weights.bin
       - $MDX_DATA_DIR/models/radio-clip_v1.0_tokenizer:/opt/storage/radio-clip_v1.0_tokenizer
 
     environment:
       MODEL_TYPE: ${MODEL_TYPE}
+      MODEL_NAME_2D: ${MODEL_NAME_2D:-GDINO}
       STREAM_TYPE: ${STREAM_TYPE}
+      NUM_SENSORS: ${NUM_SENSORS:-8}
       DEEPSTREAM_ENABLE_SENSOR_ID_EXTRACTION: "1"
       GST_ENABLE_CUSTOM_PARSER_MODIFICATIONS: 1
       OTEL_SERVICE_NAME: "rtvi-cv"

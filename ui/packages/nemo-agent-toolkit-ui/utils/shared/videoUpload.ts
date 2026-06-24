@@ -32,6 +32,7 @@ export async function getUploadUrl(
   formData?: Record<string, any>,
   signal?: AbortSignal
 ): Promise<string> {
+  // console.log("uploadUrl: ", uploadUrl,"/videos");
   const response = await fetch(`${uploadUrl}/videos`, {
     method: 'POST',
     headers: {
@@ -147,6 +148,7 @@ export async function uploadFile(
         reject(new Error('Upload was cancelled'));
       });
 
+      console.log("uploadURL: ",presignedUrl);
       xhr.open('PUT', presignedUrl);
       xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
       // Attach Authorization header from localStorage if available so the agent can forward it to the UI

@@ -54,6 +54,10 @@ general:
       method: POST
       description: "Score video clips with critic agent"
       function_name: critic_agent
+    - path: /api/v1/describe_clip
+      method: POST
+      description: "Describe a search result clip with VLM"
+      function_name: clip_describer
     cors:
       allow_origins: ['*']
       allow_methods: ['*']
@@ -87,6 +91,7 @@ functions:
     attribute_search_tool: attribute_search  # Optional: enable object-level search
     agent_mode_llm: ${LLM_MODEL_TYPE:-nim}_llm
     use_attribute_search: true  # Internal config: enable fusion reranking with attribute search
+    class_only_search_default: true  # Set true for detector-class-only search (testing)
     critic_agent: critic_agent  # Optional: enables VLM verification
     enable_critic: false
     search_max_iterations: 1
@@ -100,6 +105,7 @@ functions:
     attribute_search_tool: attribute_search
     agent_mode_llm: ${LLM_MODEL_TYPE:-nim}_llm
     use_attribute_search: true
+    class_only_search_default: false  # Set true for detector-class-only search (testing)
     vst_internal_url: ${VST_INTERNAL_URL}  # For stream_id to sensor_id conversion in fusion reranking
     embed_confidence_threshold: 0.2  # Minimum embed score threshold. fallback to attribute-only search if low
     critic_agent: critic_agent  # Optional: enables VLM verification
@@ -141,13 +147,20 @@ functions:
     video_analysis_tool: video_understanding
     time_format: offset
 
+  clip_describer:
+    _type: clip_describer
+    video_analysis_tool: video_understanding
+    time_format: offset
+    default_prompt: "Describe the visible scene and important actions in this video clip."
+    vlm_reasoning: false
+
   video_understanding:
     _type: video_understanding
     vlm_name: ${VLM_MODEL_TYPE:-nim}_vlm
-    max_frames: 60
-    max_fps: 2  # for CR1, max fps is 2
+    max_frames: 8
+    max_fps: 1  # for CR1, max fps is 2
     min_pixels: 3136
-    max_pixels: 12845056
+    max_pixels: 1048576
     reasoning: false
     video_url_tool: vst_video_clip
     time_format: offset

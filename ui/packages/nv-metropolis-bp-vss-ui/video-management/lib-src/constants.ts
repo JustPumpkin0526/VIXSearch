@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Number of parallel file uploads
-export const NUM_PARALLEL_FILE_UPLOADS = 3;
+export const NUM_PARALLEL_FILE_UPLOADS = 1;
 
 // Maximum parallel picture requests (live + replay combined)
 export const NUM_PARALLEL_GET_PICTURES = 3;

@@ -137,6 +137,7 @@ enable=1
 model-name=siglip2-onnx
 onnx-model-path=/opt/storage/radio-clip_v1.0.onnx
 tokenizer-dir=/opt/storage/radio-clip_v1.0_tokenizer/
+device=cpu
 
 [osd]
 enable=0

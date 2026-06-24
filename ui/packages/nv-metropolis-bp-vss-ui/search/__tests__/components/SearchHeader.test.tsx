@@ -16,7 +16,6 @@ const defaultProps = {
     similarity: 0,
     agentMode: false,
     query: '',
-    topK: 10,
     sourceType: 'video_file',
   },
   setFilterParams: jest.fn(),
@@ -35,22 +34,22 @@ describe('SearchHeader', () => {
 
   it('renders without crashing', () => {
     render(<SearchHeader {...defaultProps} />);
-    expect(screen.getByPlaceholderText('Search Files')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('파일 검색')).toBeInTheDocument();
   });
 
   it('renders Search button by default', () => {
     render(<SearchHeader {...defaultProps} />);
-    expect(screen.getByText('Search')).toBeInTheDocument();
+    expect(screen.getByText('검색')).toBeInTheDocument();
   });
 
   it('renders Cancel button when searching with onCancelSearch', () => {
     render(<SearchHeader {...defaultProps} isSearching={true} onCancelSearch={jest.fn()} />);
-    expect(screen.getByText('Cancel')).toBeInTheDocument();
+    expect(screen.getByText('취소')).toBeInTheDocument();
   });
 
   it('updates query input value on change', () => {
     render(<SearchHeader {...defaultProps} />);
-    const input = screen.getByPlaceholderText('Search Files');
+    const input = screen.getByPlaceholderText('파일 검색');
 
     fireEvent.change(input, { target: { value: 'person walking' } });
     expect(input).toHaveValue('person walking');
@@ -59,7 +58,7 @@ describe('SearchHeader', () => {
   it('shows error border when searching with empty query', () => {
     render(<SearchHeader {...defaultProps} />);
 
-    fireEvent.click(screen.getByText('Search'));
+    fireEvent.click(screen.getByText('검색'));
 
     expect(defaultProps.onUpdateSearchParams).not.toHaveBeenCalled();
   });
@@ -67,9 +66,9 @@ describe('SearchHeader', () => {
   it('calls onUpdateSearchParams with correct params on search', () => {
     render(<SearchHeader {...defaultProps} />);
 
-    const input = screen.getByPlaceholderText('Search Files');
+    const input = screen.getByPlaceholderText('파일 검색');
     fireEvent.change(input, { target: { value: 'find cars' } });
-    fireEvent.click(screen.getByText('Search'));
+    fireEvent.click(screen.getByText('검색'));
 
     expect(defaultProps.onUpdateSearchParams).toHaveBeenCalledWith(
       expect.objectContaining({ query: 'find cars', sourceType: 'video_file' })
@@ -79,7 +78,7 @@ describe('SearchHeader', () => {
   it('triggers search on Enter key', () => {
     render(<SearchHeader {...defaultProps} />);
 
-    const input = screen.getByPlaceholderText('Search Files');
+    const input = screen.getByPlaceholderText('파일 검색');
     fireEvent.change(input, { target: { value: 'test search' } });
     // rsuite Input fires onPressEnter on keyDown
     fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
@@ -91,57 +90,56 @@ describe('SearchHeader', () => {
     const onCancelSearch = jest.fn();
     render(<SearchHeader {...defaultProps} isSearching={true} onCancelSearch={onCancelSearch} />);
 
-    fireEvent.click(screen.getByText('Cancel'));
+    fireEvent.click(screen.getByText('취소'));
     expect(onCancelSearch).toHaveBeenCalledTimes(1);
   });
 
   it('renders Source Type selector', () => {
     render(<SearchHeader {...defaultProps} />);
-    expect(screen.getByText('Source Type:')).toBeInTheDocument();
+    expect(screen.getByText('소스 유형:')).toBeInTheDocument();
   });
 
   it('renders Filter button', () => {
     render(<SearchHeader {...defaultProps} />);
-    expect(screen.getByText('Filter')).toBeInTheDocument();
+    expect(screen.getByText('필터')).toBeInTheDocument();
   });
 
   it('renders filter tags when provided', () => {
     const filterTags = [
-      { key: 'topK', title: 'Show top K Results', value: '10' },
-      { key: 'similarity', title: 'Similarity', value: '0.75' },
+      { key: 'similarity', title: '유사도', value: '0.75' },
     ];
 
     render(<SearchHeader {...defaultProps} filterTags={filterTags} />);
 
-    expect(screen.getByText(/Show top K Results/)).toBeInTheDocument();
+    expect(screen.getByText(/유사도/)).toBeInTheDocument();
     expect(screen.getByText('0.75')).toBeInTheDocument();
   });
 
   it('renders Clear All button when multiple filter tags exist', () => {
     const filterTags = [
-      { key: 'topK', title: 'Show top K Results', value: '10' },
-      { key: 'similarity', title: 'Similarity', value: '0.75' },
+      { key: 'similarity', title: '유사도', value: '0.75' },
+      { key: 'videoSources', title: '비디오 소스', value: 'cam-1' },
     ];
 
     render(<SearchHeader {...defaultProps} filterTags={filterTags} />);
-    expect(screen.getByText('Clear All')).toBeInTheDocument();
+    expect(screen.getByText('전체 해제')).toBeInTheDocument();
   });
 
   it('does not render Clear All when only one tag exists', () => {
     const filterTags = [
-      { key: 'topK', title: 'Show top K Results', value: '10' },
+      { key: 'similarity', title: '유사도', value: '0.75' },
     ];
 
     render(<SearchHeader {...defaultProps} filterTags={filterTags} />);
-    expect(screen.queryByText('Clear All')).not.toBeInTheDocument();
+    expect(screen.queryByText('전체 해제')).not.toBeInTheDocument();
   });
 
   it('calls removeFilterTag and setFilterParams when a tag is closed', () => {
     const removeFilterTag = jest.fn();
     const setFilterParams = jest.fn();
     const filterTags = [
-      { key: 'topK', title: 'Show top K Results', value: '10' },
-      { key: 'similarity', title: 'Similarity', value: '0.75' },
+      { key: 'similarity', title: '유사도', value: '0.75' },
+      { key: 'videoSources', title: '비디오 소스', value: 'cam-1' },
     ];
 
     render(
@@ -153,7 +151,7 @@ describe('SearchHeader', () => {
       />
     );
 
-    // Click the close button on the Similarity tag (topK is not closable)
+    // Click the close button on one of the tags
     const closeButtons = document.querySelectorAll('.rs-tag .rs-tag-btn-close, .rs-btn-close');
     if (closeButtons.length > 0) {
       fireEvent.click(closeButtons[0]);
@@ -163,7 +161,7 @@ describe('SearchHeader', () => {
 
   it('disables input when contentDisabled is true', () => {
     render(<SearchHeader {...defaultProps} contentDisabled={true} />);
-    const input = screen.getByPlaceholderText('Search Files');
+    const input = screen.getByPlaceholderText('파일 검색');
     expect(input).toBeDisabled();
   });
 
@@ -177,12 +175,12 @@ describe('SearchHeader', () => {
       />
     );
 
-    expect(screen.getByPlaceholderText('Search Files')).toHaveValue('external query');
+    expect(screen.getByPlaceholderText('파일 검색')).toHaveValue('external query');
   });
 
   it('renders dark theme correctly', () => {
     render(<SearchHeader {...defaultProps} theme="dark" />);
-    expect(screen.getByPlaceholderText('Search Files')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('파일 검색')).toBeInTheDocument();
   });
 
   it('registers pending query getter via onGetPendingQuery', () => {

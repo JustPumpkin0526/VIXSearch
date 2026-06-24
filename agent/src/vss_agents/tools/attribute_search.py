@@ -95,6 +95,11 @@ class AttributeSearchInput(BaseModel):
         default_factory=list, description="List of videos to exclude from results"
     )
 
+    object_types: list[str] | None = Field(
+        default=None,
+        description="Optional exact object.type filter list (e.g., ['Forklift']).",
+    )
+
 
 class AttributeSearchMetadata(BaseModel):
     """Metadata for attribute search result"""
@@ -427,6 +432,7 @@ async def _search_behavior(
     timestamp_start: datetime | None = None,
     timestamp_end: datetime | None = None,
     video_sources: list[str] | None = None,
+    object_types: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Search behavior embeddings and return candidates."""
 
@@ -477,6 +483,25 @@ async def _search_behavior(
                 }
             }
         )
+
+    # Optional exact detector-class filter for class-only search experiments.
+    if object_types:
+        normalized_types = sorted({t.strip() for t in object_types if isinstance(t, str) and t.strip()})
+        if normalized_types:
+            class_should_clauses = []
+            for class_name in normalized_types:
+                class_variants = {class_name, class_name.lower(), class_name.upper(), class_name.title()}
+                for variant in class_variants:
+                    class_should_clauses.append({"term": {"object.type.keyword": variant}})
+
+            filter_clauses.append(
+                {
+                    "bool": {
+                        "should": class_should_clauses,
+                        "minimum_should_match": 1,
+                    }
+                }
+            )
 
     # Build KNN query with filters INSIDE (so filters are applied during KNN search, not after)
     # Fetch more candidates to account for duplicates - we'll deduplicate and return top_k later
@@ -886,6 +911,7 @@ async def search_by_attributes(
     frames_index: str | list[str] | None = None,
     enable_frame_lookup: bool = True,
     exclude_videos: list[dict[str, str]] | None = None,
+    object_types: list[str] | None = None,
 ) -> list[AttributeSearchResult]:
     """Search for objects by attribute embeddings and return scores per object-video pair."""
     exclude_videos = exclude_videos or []
@@ -900,6 +926,7 @@ async def search_by_attributes(
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
             video_sources=video_sources,
+            object_types=object_types,
         )
 
         # Phase 2: Perform frame lookups (if enabled) to get more accurate bbox, timestamp, and frame_score
@@ -1004,6 +1031,7 @@ async def search_single_attribute(
         frames_index=frames_index,
         enable_frame_lookup=enable_frame_lookup,
         exclude_videos=search_input.exclude_videos,
+        object_types=search_input.object_types,
     )
 
 
@@ -1098,6 +1126,7 @@ async def _fuse_multi_attribute(
         min_similarity=search_input.min_similarity,
         fuse_multi_attribute=True,  # Preserve flag
         exclude_videos=search_input.exclude_videos,
+        object_types=search_input.object_types,
     )
 
     tasks = [
@@ -1199,6 +1228,7 @@ async def _append_multi_attribute(
         min_similarity=search_input.min_similarity,
         fuse_multi_attribute=False,  # Preserve flag
         exclude_videos=search_input.exclude_videos,
+        object_types=search_input.object_types,
     )
 
     # Search each attribute independently

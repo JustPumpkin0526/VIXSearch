@@ -1277,37 +1277,55 @@ function state_up() {
     echo "[INFO] Downloading models from NGC..."
 
     if [[ "${dry_run}" == "true" ]]; then
+      local _search_gdino_download_dir _search_gdino_source
+      _search_gdino_download_dir="${repo_root}/mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm"
+      _search_gdino_source="${_search_gdino_download_dir}/mgdino_mask_head_pruned_dynamic_batch.onnx"
       echo "[DRY-RUN] keep existing ${data_directory}/models (no delete)"
-      echo "[DRY-RUN] mkdir -p ${data_directory}/models"
+      echo "[DRY-RUN] mkdir -p ${data_directory}/models ${data_directory}/models/gdino"
       echo "[DRY-RUN] NGC_CLI_API_KEY=<ngc-cli-api-key> ngc registry model download-version nvidia/tao/rtdetr_2d_warehouse:deployable_efficientvit_l2_v1.0.1"
+      if [[ -f "${_search_gdino_source}" ]]; then
+        echo "[DRY-RUN] reuse local GDINO source ${_search_gdino_source}"
+      else
+        echo "[DRY-RUN] NGC_CLI_API_KEY=<ngc-cli-api-key> ngc registry model download-version nvidia/tao/mask_grounding_dino:mask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm"
+      fi
       echo "[DRY-RUN] NGC_CLI_API_KEY=<ngc-cli-api-key> ngc registry model download-version nvidia/tao/radio-clip:deployable_v1.0"
       echo "[DRY-RUN] cp rtdetr_2d_warehouse_vdeployable_efficientvit_l2_v1.0.1/rtdetr_warehouse_v1.0.1.fp16.onnx ${data_directory}/models/rtdetr_warehouse_v1.0.1.fp16.onnx"
+      echo "[DRY-RUN] cp ${_search_gdino_source} ${data_directory}/models/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx"
       echo "[DRY-RUN] cp radio-clip_vdeployable_v1.0/radio-clip_v1.0.onnx ${data_directory}/models/radio-clip_v1.0.onnx"
       echo "[DRY-RUN] cp radio-clip_vdeployable_v1.0/radio-clip_v1.0_weights.bin ${data_directory}/models/radio-clip_v1.0_weights.bin"
       echo "[DRY-RUN] cp -r radio-clip_vdeployable_v1.0/radio-clip_v1.0_tokenizer ${data_directory}/models/radio-clip_v1.0_tokenizer"
       echo "[DRY-RUN] chmod -R 777 ${data_directory}/models"
     else
-      mkdir -p "${data_directory}/models"
+      mkdir -p "${data_directory}/models" "${data_directory}/models/gdino"
 
       _search_models_dir="${data_directory}/models"
       _skip_search_model_download="${VSS_SKIP_SEARCH_MODEL_DOWNLOAD:-false}"
+      _search_gdino_download_dir="${repo_root}/mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm"
+      _search_gdino_source="${_search_gdino_download_dir}/mgdino_mask_head_pruned_dynamic_batch.onnx"
       _has_rtdetr="false"
+      _has_gdino="false"
+      _has_local_gdino_source="false"
       _has_radio_onnx="false"
       _has_radio_weights="false"
       _has_radio_tokenizer="false"
 
       [[ -f "${_search_models_dir}/rtdetr_warehouse_v1.0.1.fp16.onnx" ]] && _has_rtdetr="true"
+      [[ -f "${_search_models_dir}/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx" ]] && _has_gdino="true"
+      [[ -f "${_search_gdino_source}" ]] && _has_local_gdino_source="true"
       [[ -f "${_search_models_dir}/radio-clip_v1.0.onnx" ]] && _has_radio_onnx="true"
       [[ -f "${_search_models_dir}/radio-clip_v1.0_weights.bin" ]] && _has_radio_weights="true"
       [[ -d "${_search_models_dir}/radio-clip_v1.0_tokenizer" ]] && _has_radio_tokenizer="true"
 
-      # If all four required artifacts are already present, never hit NGC.
-      if [[ "${_has_rtdetr}" == "true" ]] && [[ "${_has_radio_onnx}" == "true" ]] && [[ "${_has_radio_weights}" == "true" ]] && [[ "${_has_radio_tokenizer}" == "true" ]]; then
+      # If all required artifacts are already present, never hit NGC.
+      if [[ "${_has_rtdetr}" == "true" ]] && [[ "${_has_gdino}" == "true" ]] && [[ "${_has_radio_onnx}" == "true" ]] && [[ "${_has_radio_weights}" == "true" ]] && [[ "${_has_radio_tokenizer}" == "true" ]]; then
         echo "[INFO] Reusing pre-staged search models in ${_search_models_dir}; skipping NGC download"
       else
         if [[ "${_skip_search_model_download,,}" == "true" ]]; then
           echo "[ERROR] VSS_SKIP_SEARCH_MODEL_DOWNLOAD=true but one or more required search model artifacts are missing in ${_search_models_dir}"
-          echo "[ERROR] Required: rtdetr_warehouse_v1.0.1.fp16.onnx, radio-clip_v1.0.onnx, radio-clip_v1.0_weights.bin, radio-clip_v1.0_tokenizer/"
+          echo "[ERROR] Required: rtdetr_warehouse_v1.0.1.fp16.onnx, gdino/mgdino_mask_head_pruned_dynamic_batch.onnx, radio-clip_v1.0.onnx, radio-clip_v1.0_weights.bin, radio-clip_v1.0_tokenizer/"
+          if [[ "${_has_gdino}" != "true" ]] && [[ "${_has_local_gdino_source}" == "true" ]]; then
+            echo "[INFO] GDINO source is already available locally at ${_search_gdino_source}; rerun without VSS_SKIP_SEARCH_MODEL_DOWNLOAD to stage it automatically"
+          fi
           exit 1
         fi
 
@@ -1327,6 +1345,29 @@ function state_up() {
           fi
         else
           echo "[INFO] Reusing existing search RT-DETR model: ${_search_models_dir}/rtdetr_warehouse_v1.0.1.fp16.onnx"
+        fi
+
+        # Download and install grounding DINO model only when missing.
+        if [[ "${_has_gdino}" != "true" ]]; then
+          if [[ "${_has_local_gdino_source}" == "true" ]]; then
+            echo "[INFO] Found pre-downloaded search GDINO model, copying..."
+            cp "${_search_gdino_source}" "${_search_models_dir}/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx"
+          else
+            NGC_CLI_API_KEY="${ngc_cli_api_key}" ngc \
+              registry \
+              model \
+              download-version \
+              nvidia/tao/mask_grounding_dino:mask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm
+
+            if [[ ! -f "${_search_gdino_source}" ]]; then
+              echo "[ERROR] GDINO download completed without producing ${_search_gdino_source}"
+              exit 1
+            fi
+
+            cp "${_search_gdino_source}" "${_search_models_dir}/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx"
+          fi
+        else
+          echo "[INFO] Reusing existing search GDINO model: ${_search_models_dir}/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx"
         fi
 
         # Download and install radio-clip model files only when missing.

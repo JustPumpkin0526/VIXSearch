@@ -64,7 +64,6 @@ export interface SearchParams {
   videoSources?: string[];
   similarity?: number;
   agentMode?: boolean;
-  topK?: number;
   sourceType?: string;
 }
 

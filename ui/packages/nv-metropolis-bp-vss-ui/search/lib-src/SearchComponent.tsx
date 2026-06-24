@@ -152,6 +152,7 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
           isDark={isDark}
           onRefresh={refetch}
           onPlayVideo={openVideoModal}
+          agentApiUrl={agentApiUrl}
           showObjectsBbox={mediaWithObjectsBbox}
           userQuery={getPendingQueryRef.current().trim() || filterParams.query || ''}
         />

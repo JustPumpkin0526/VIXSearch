@@ -31,6 +31,16 @@ type ContextMenuState = {
   showReportOptions: boolean;
 } | null;
 
+type ClipAnalysisState = {
+  loading?: boolean;
+  description?: string;
+  error?: string;
+};
+
+type ClipDescribeResponse = {
+  description?: string;
+};
+
 type VideoModalState = {
   isOpen: boolean;
   videoUrl: string;
@@ -258,6 +268,11 @@ export function extractSearchResultsMessage(rawContent: string): ParsedSearchRes
 
 function getResultKey(item: SearchResultItem): string {
   return [item.sensor_id, item.video_name, item.start_time, item.end_time].join('::');
+}
+
+function buildDescribeClipUrl(agentApiUrl: string): string {
+  const trimmed = agentApiUrl.replace(/\/$/, '');
+  return trimmed.endsWith('/api/v1') ? `${trimmed}/describe_clip` : `${trimmed}/api/v1/describe_clip`;
 }
 
 function parseDateAsLocal(value: string): Date | null {
@@ -543,6 +558,8 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
   const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);
   const [contextMenu, setContextMenu] = React.useState<ContextMenuState>(null);
   const [videoModal, setVideoModal] = React.useState<VideoModalState>({ isOpen: false, videoUrl: '', title: '' });
+  const [clipAnalysisByKey, setClipAnalysisByKey] = React.useState<Record<string, ClipAnalysisState>>({});
+  const [analyzingClips, setAnalyzingClips] = React.useState(false);
   const [timelineStartTimes, setTimelineStartTimes] = React.useState<Record<string, string>>({});
   const [createModalOpen, setCreateModalOpen] = React.useState(false);
   const [createForm, setCreateForm] = React.useState<CreateReportFormState>({ title: '', author: '', description: '' });
@@ -556,6 +573,11 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
   const menuRef = React.useRef<HTMLDivElement | null>(null);
   const abortControllerRef = React.useRef<AbortController | null>(null);
   const vstApiUrl = env('NEXT_PUBLIC_VST_API_URL') || process?.env?.NEXT_PUBLIC_VST_API_URL || '';
+  const agentApiUrl = env('NEXT_PUBLIC_AGENT_API_URL')
+    || env('NEXT_PUBLIC_AGENT_API_URL_BASE')
+    || process?.env?.NEXT_PUBLIC_AGENT_API_URL
+    || process?.env?.NEXT_PUBLIC_AGENT_API_URL_BASE
+    || '';
 
   const allKeys = React.useMemo(() => results.map((item) => getResultKey(item)), [results]);
   const selectedItems = React.useMemo(
@@ -795,6 +817,68 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
     }
   }, [reportSourceItems]);
 
+  const analyzeSingleClip = React.useCallback(async (item: SearchResultItem) => {
+    const key = getResultKey(item);
+    if (!agentApiUrl) {
+      setClipAnalysisByKey((current) => ({
+        ...current,
+        [key]: { error: 'Agent API URL이 설정되지 않았습니다.' },
+      }));
+      return;
+    }
+
+    setClipAnalysisByKey((current) => ({
+      ...current,
+      [key]: { loading: true },
+    }));
+
+    try {
+      const response = await fetch(buildDescribeClipUrl(agentApiUrl), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sensor_id: item.sensor_id,
+          start_timestamp: item.start_time,
+          end_timestamp: item.end_time,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `HTTP error ${response.status}`);
+      }
+
+      const payload = await response.json() as ClipDescribeResponse;
+      setClipAnalysisByKey((current) => ({
+        ...current,
+        [key]: { description: payload.description || '' },
+      }));
+    } catch (error) {
+      setClipAnalysisByKey((current) => ({
+        ...current,
+        [key]: { error: error instanceof Error ? error.message : 'VLM 분석 요청에 실패했습니다.' },
+      }));
+    }
+  }, [agentApiUrl]);
+
+  const handleAnalyzeClips = React.useCallback(async () => {
+    if (reportSourceItems.length === 0 || analyzingClips) {
+      return;
+    }
+
+    setContextMenu(null);
+    setAnalyzingClips(true);
+    try {
+      for (const item of reportSourceItems) {
+        await analyzeSingleClip(item);
+      }
+    } finally {
+      setAnalyzingClips(false);
+    }
+  }, [analyzeSingleClip, analyzingClips, reportSourceItems]);
+
   const handleCreateReport = React.useCallback(async () => {
     if (reportSourceItems.length === 0 || savingReport) {
       return;
@@ -894,6 +978,15 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
           <p className="px-3 pt-2 text-xs text-gray-500 dark:text-gray-400">
             현재 선택된 클립 {selectedCount}건을 대상으로 보고서 작업을 진행합니다.
           </p>
+          <button
+            type="button"
+            onClick={handleAnalyzeClips}
+            disabled={analyzingClips || selectedCount === 0}
+            className="mt-2 flex w-full items-center justify-between rounded-lg border-t border-gray-100 px-3 py-2 text-left text-sm font-medium text-gray-900 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-400 dark:border-gray-800 dark:text-gray-100 dark:hover:bg-gray-800 dark:disabled:text-gray-500"
+          >
+            <span>{analyzingClips ? '분석 중...' : 'VLM 분석'}</span>
+            <span className="text-xs text-gray-400">선택 결과 사용</span>
+          </button>
         </div>
         {contextMenu.showReportOptions ? (
           <div className="absolute left-[calc(100%+12px)] top-0 min-w-[220px] rounded-xl border border-gray-200 bg-white p-2 shadow-xl dark:border-gray-700 dark:bg-gray-900">
@@ -961,6 +1054,7 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
             const isSelected = selectedKeys.includes(key);
             const playableUrl = getPlayableUrl(item);
             const canPlay = Boolean(playableUrl || (vstApiUrl && item.sensor_id));
+            const clipAnalysis = clipAnalysisByKey[key];
 
             return (
               <div
@@ -1038,7 +1132,9 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
 
                 <div className="flex items-baseline justify-between p-4 pt-3">
                   <div className="min-w-0 pr-3">
-                    {item.description ? (
+                    {clipAnalysis?.loading ? (
+                      <p className="text-xs font-medium text-amber-600 dark:text-amber-300">VLM 분석 중...</p>
+                    ) : item.description ? (
                       <p className="line-clamp-1 text-xs text-gray-500 dark:text-gray-300">{item.description}</p>
                     ) : (
                       <p className="text-xs text-gray-500 dark:text-gray-400">설명 없음</p>
@@ -1051,6 +1147,17 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
                     </span>
                   </div>
                 </div>
+                {(clipAnalysis?.description || clipAnalysis?.error) ? (
+                  <div
+                    className={`mx-4 mb-4 max-h-32 overflow-y-auto rounded-xl border px-3 py-2 text-xs leading-relaxed ${
+                      clipAnalysis.error
+                        ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300'
+                        : 'border-amber-200 bg-amber-50 text-gray-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-gray-200'
+                    }`}
+                  >
+                    {clipAnalysis.error || clipAnalysis.description}
+                  </div>
+                ) : null}
               </div>
             );
           })}

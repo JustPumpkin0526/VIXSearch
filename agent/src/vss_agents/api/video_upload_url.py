@@ -95,10 +95,17 @@ async def video_upload_url(config: VideoUploadURLConfig, _builder: Builder) -> A
             if not filename:
                 raise HTTPException(status_code=400, detail="Filename is required")
 
-            # Check for any whitespace character in filename
-            if re.search(r"\s", filename):
+            # Validate filename: only alphanumeric, hyphen, underscore, dot, and
+            # Korean/CJK characters are allowed.  URL-structural characters
+            # (whitespace, /, #, ?, %, &, +) must be rejected because the filename
+            # is embedded verbatim into a URL path by this function.
+            if re.search(r"[\s/\#\?%&+]", filename):
                 raise HTTPException(
-                    status_code=400, detail="Filename cannot contain whitespace. Please rename the file and try again."
+                    status_code=400,
+                    detail=(
+                        "Filename contains characters that are not allowed in a URL path "
+                        "(spaces, /, #, ?, %, &, +). Please rename the file and try again."
+                    ),
                 )
 
             # Remove file extension if present

@@ -232,61 +232,63 @@ def _build_es_query(query_input: QueryInput, query_embedding: list[float], confi
     Returns:
         The search query body.
     """
-    # Extract parameters from QueryInput
-    video_sources_str = query_input.params.get("video_sources", "")
     top_k_str = query_input.params.get("top_k", "")
     top_k: int | None = int(top_k_str) if top_k_str else None
     min_cosine_similarity = float(query_input.params.get("min_cosine_similarity", "0.0"))
+    filters = _build_filter_clauses(query_input)
+
+    # Adjust k based on filters and similarity threshold
+    if top_k is None:
+        k_value = config.default_max_results
+    elif min_cosine_similarity >= -1.0 or filters:
+        k_value = top_k * 5
+    else:
+        k_value = top_k
+    num_candidates = k_value * 2
+
+    return _build_es_query_from_filters(query_embedding, filters, k_value, num_candidates)
+
+
+def _build_filter_clauses(query_input: QueryInput) -> list[dict[str, Any]]:
+    video_sources_str = query_input.params.get("video_sources", "")
     description = query_input.params.get("description", "")
     timestamp_start_str = query_input.params.get("timestamp_start", "")
     timestamp_end_str = query_input.params.get("timestamp_end", "")
 
-    # Parse video_sources if provided (can be JSON string or comma-separated)
     video_sources: list[str] = []
     if video_sources_str:
         try:
-            # Try parsing as JSON array
             parsed = json.loads(video_sources_str)
             if isinstance(parsed, list):
                 video_sources = [str(v) for v in parsed]
             else:
-                # If JSON parsing succeeded but result is not a list, treat as comma-separated
                 video_sources = [v.strip() for v in video_sources_str.split(",") if v.strip()]
         except Exception:
-            # Try comma-separated string
             video_sources = [v.strip() for v in video_sources_str.split(",") if v.strip()]
 
-    # Parse timestamps if provided
     timestamp_start: datetime | None = None
     timestamp_end: datetime | None = None
     if timestamp_start_str:
         try:
-            user_ts = iso8601_to_datetime(timestamp_start_str)
-            timestamp_start = user_ts
+            timestamp_start = iso8601_to_datetime(timestamp_start_str)
         except Exception as e:
             logger.warning(f"Failed to parse timestamp_start: {e}")
     if timestamp_end_str:
         try:
-            user_ts = iso8601_to_datetime(timestamp_end_str)
-            timestamp_end = user_ts
+            timestamp_end = iso8601_to_datetime(timestamp_end_str)
         except Exception as e:
             logger.warning(f"Failed to parse timestamp_end: {e}")
 
-    # Build filter conditions
     filters: list[dict[str, Any]] = []
 
-    # Add video_sources filter if provided
     if video_sources:
         should_clauses = []
         for vname in video_sources:
             escaped_vname = vname.replace("\\", "\\\\").replace("*", "\\*").replace("?", "\\?")
-            # Check sensor.id (for RTSP streams and video files)
             should_clauses.append({"term": {"sensor.id.keyword": vname}})
             should_clauses.append({"wildcard": {"sensor.id.keyword": f"*{escaped_vname}*"}})
-            # Check sensor.info.url (for uploaded video files)
             should_clauses.append({"wildcard": {"sensor.info.url.keyword": f"*{escaped_vname}"}})
             should_clauses.append({"wildcard": {"sensor.info.url.keyword": f"*{escaped_vname}*"}})
-            # Check sensor.info.path (for RTSP streams - contains UUID)
             should_clauses.append({"wildcard": {"sensor.info.path.keyword": f"*{escaped_vname}*"}})
             regex_escaped = re.escape(vname)
             should_clauses.append({"regexp": {"sensor.info.url": f".*{regex_escaped}"}})
@@ -301,7 +303,6 @@ def _build_es_query(query_input: QueryInput, query_embedding: list[float], confi
             }
         )
 
-    # Add description filter
     if description:
         escaped_desc = description.replace("\\", "\\\\").replace("*", "\\*").replace("?", "\\?")
         regex_escaped_desc = re.escape(description)
@@ -323,7 +324,6 @@ def _build_es_query(query_input: QueryInput, query_embedding: list[float], confi
             }
         )
 
-    # Add timestamp range filter
     if timestamp_start or timestamp_end:
         must_clauses = []
 
@@ -338,16 +338,13 @@ def _build_es_query(query_input: QueryInput, query_embedding: list[float], confi
         else:
             filters.append(must_clauses[0])
 
-    # Adjust k based on filters and similarity threshold
-    if top_k is None:
-        k_value = config.default_max_results
-    elif min_cosine_similarity >= -1.0 or filters:
-        k_value = top_k * 5
-    else:
-        k_value = top_k
-    num_candidates = k_value * 2
+    return filters
 
-    # Build nested KNN query
+
+def _build_es_query_from_filters(
+    query_embedding: list[float], filters: list[dict[str, Any]], k_value: int, num_candidates: int
+) -> dict[str, Any]:
+
     knn_query: dict[str, Any] = {
         "field": "llm.visionEmbeddings.vector",
         "query_vector": query_embedding,
@@ -394,6 +391,16 @@ def _build_es_query(query_input: QueryInput, query_embedding: list[float], confi
     logger.info(f"Search query: {_sanitize_for_logging(search_query)}")
 
     return search_query
+
+
+def _build_count_query(filters: list[dict[str, Any]]) -> dict[str, Any]:
+    if not filters:
+        return {"query": {"match_all": {}}}
+
+    if len(filters) > 1:
+        return {"query": {"bool": {"filter": filters}}}
+
+    return {"query": filters[0]}
 
 
 async def _process_search_hit(
@@ -619,7 +626,36 @@ async def embed_search(config: EmbedSearchConfig, _builder: Builder) -> AsyncGen
         query_embedding = await _generate_query_embedding(query_input, embed_client)
 
         # Step 2: Build ES query
+        top_k_str = query_input.params.get("top_k", "")
+        filters = _build_filter_clauses(query_input)
         search_query = _build_es_query(query_input, query_embedding, config)
+
+        if not top_k_str:
+            count_query = _build_count_query(filters)
+            try:
+                count_response = await es_client.count(index=search_index, body=count_query)
+            except ESNotFoundError as e:
+                if source_type == "video_file":
+                    logger.warning(
+                        "Elasticsearch index '%s' not found during video_file count; returning empty results: %s",
+                        search_index,
+                        e,
+                    )
+                    return EmbedSearchOutput(query_embedding=query_embedding, results=[])
+                logger.error(f"Elasticsearch index '{search_index}' not found during count: {e}")
+                raise ValueError(
+                    f"Search index '{search_index}' does not exist. "
+                    "Please ensure videos have been ingested before searching."
+                ) from e
+
+            total_candidates = int(count_response.get("count", 0))
+            if total_candidates > 0:
+                search_query = _build_es_query_from_filters(
+                    query_embedding=query_embedding,
+                    filters=filters,
+                    k_value=total_candidates,
+                    num_candidates=max(total_candidates * 2, 1),
+                )
 
         # Execute ES search
         try:

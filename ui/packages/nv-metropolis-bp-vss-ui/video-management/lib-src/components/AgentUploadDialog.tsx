@@ -32,6 +32,11 @@ interface AgentUploadDialogProps {
   onFieldChange: (fileId: string, fieldName: string, value: any) => void;
 }
 
+// Mirrors the server-side check in video_upload_url.py and video_search_ingest.py.
+// Characters that have structural meaning in a URL path must be rejected because
+// the filename is embedded verbatim into the PUT request URL.
+const hasInvalidCharsInFilename = (filename: string): boolean => /[\s/#?%&+]/.test(filename);
+
 export const AgentUploadDialog: React.FC<AgentUploadDialogProps> = ({
   open,
   files,
@@ -48,6 +53,9 @@ export const AgentUploadDialog: React.FC<AgentUploadDialogProps> = ({
   const [showUnsavedSettingsConfirm, setShowUnsavedSettingsConfirm] = useState(false);
   const [draftUploadChunkDuration, setDraftUploadChunkDuration] = useState(uploadChunkDuration);
   const [chunkDurationInput, setChunkDurationInput] = useState(String(uploadChunkDuration));
+
+  const invalidFiles = files.filter((f) => hasInvalidCharsInFilename(f.file.name));
+  const hasInvalidFiles = invalidFiles.length > 0;
   void uploadEmbeddingEnabled;
 
   const syncDraftSettings = () => {
@@ -99,7 +107,7 @@ export const AgentUploadDialog: React.FC<AgentUploadDialogProps> = ({
   const hasUnsavedSettings = pendingChunkDuration !== normalizedSavedChunkDuration;
 
   const handleUploadClick = () => {
-    if (files.length === 0) {
+    if (files.length === 0 || hasInvalidFiles) {
       return;
     }
 
@@ -200,6 +208,16 @@ export const AgentUploadDialog: React.FC<AgentUploadDialogProps> = ({
             </button>
           </div>
 
+          {/* Filename rules notice */}
+          <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs text-blue-700 dark:border-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
+            <p className="mb-1 font-semibold">파일명 규칙 안내</p>
+            <ul className="list-inside list-disc space-y-0.5">
+              <li>공백 및 특수문자 <code className="rounded bg-blue-100 px-1 dark:bg-blue-800">&#32;/&#32;#&#32;?&#32;%&#32;&amp;&#32;+</code> 는 사용할 수 없습니다.</li>
+              <li>영문, 숫자, 하이픈(<code className="rounded bg-blue-100 px-1 dark:bg-blue-800">-</code>), 언더스코어(<code className="rounded bg-blue-100 px-1 dark:bg-blue-800">_</code>), 점(<code className="rounded bg-blue-100 px-1 dark:bg-blue-800">.</code>)만 사용하세요.</li>
+              <li>예: <code className="rounded bg-blue-100 px-1 dark:bg-blue-800">my_video-01.mp4</code></li>
+            </ul>
+          </div>
+
           {/* Files list */}
           <div className="mb-4">
             <div className="mb-2 flex items-center justify-between">
@@ -224,15 +242,20 @@ export const AgentUploadDialog: React.FC<AgentUploadDialogProps> = ({
             {files.length > 0 ? (
               <div className="max-h-96 space-y-2 overflow-y-auto">
                 {files.map((item) => {
+                  const isInvalid = hasInvalidCharsInFilename(item.file.name);
                   return (
                     <div
                       key={item.id}
-                      className="overflow-hidden rounded-lg border border-gray-300 dark:border-gray-600"
+                      className={`overflow-hidden rounded-lg border ${
+                        isInvalid
+                          ? 'border-red-400 dark:border-red-500'
+                          : 'border-gray-300 dark:border-gray-600'
+                      }`}
                     >
                       <div className="flex items-center justify-between bg-white p-3 dark:bg-[#343541]">
                         <div className="flex flex-1 items-center gap-2 overflow-hidden">
-                          <IconVideo size={18} className="flex-shrink-0 text-[#76b900]" />
-                          <span className="truncate text-sm text-gray-700 dark:text-gray-300">
+                          <IconVideo size={18} className={`flex-shrink-0 ${isInvalid ? 'text-red-500' : 'text-[#76b900]'}`} />
+                          <span className={`truncate text-sm ${isInvalid ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
                             {item.file.name}
                           </span>
                           <span className="flex-shrink-0 text-xs text-gray-400">
@@ -247,6 +270,11 @@ export const AgentUploadDialog: React.FC<AgentUploadDialogProps> = ({
                           <IconX size={18} />
                         </button>
                       </div>
+                      {isInvalid && (
+                        <div className="bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+                          파일명에 사용할 수 없는 문자가 포함되어 있습니다 (공백, /, #, ?, %, &, +). 파일명을 변경해 주세요.
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -274,9 +302,9 @@ export const AgentUploadDialog: React.FC<AgentUploadDialogProps> = ({
             <button
               onClick={handleUploadClick}
               className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
-                files.length > 0 ? 'bg-[#76b900] hover:bg-[#5a8f00]' : 'bg-gray-400 cursor-not-allowed'
+                files.length > 0 && !hasInvalidFiles ? 'bg-[#76b900] hover:bg-[#5a8f00]' : 'bg-gray-400 cursor-not-allowed'
               }`}
-              disabled={files.length === 0}
+              disabled={files.length === 0 || hasInvalidFiles}
             >
               업로드 {files.length > 0 ? `(${files.length})` : ''}
             </button>

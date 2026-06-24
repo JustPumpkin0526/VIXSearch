@@ -49,9 +49,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const uploadedHasFilePath = uploadedHasFilePathRes.rowCount > 0;
 
       // Build DELETE query for uploaded_videos dynamically to avoid referencing missing columns
+      // $1 is reserved for username, so conditions start at $2
       const uploadedConditions: string[] = [];
-      const uploadedParams: any[] = [];
-      let idx = 1;
+      const uploadedParams: any[] = [username];
+      let idx = 2;
 
       if (video_id) {
         uploadedConditions.push(`video_id = $${idx}`);
@@ -86,7 +87,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       let uploadedRes = { rowCount: 0 } as any;
       if (uploadedConditions.length > 0) {
         const deleteUploadedSql = `DELETE FROM uploaded_videos WHERE username = $1 AND (${uploadedConditions.join(' OR ')})`;
-        uploadedParams.unshift(username);
         uploadedRes = await client.query(deleteUploadedSql, uploadedParams);
       }
 

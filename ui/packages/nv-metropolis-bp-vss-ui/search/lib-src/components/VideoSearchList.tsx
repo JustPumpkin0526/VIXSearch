@@ -31,6 +31,12 @@ type ContextMenuState = {
   targetKey: string;
 } | null;
 
+type ClipAnalysisState = {
+  loading?: boolean;
+  description?: string;
+  error?: string;
+};
+
 function getResultKey(item: SearchData): string {
   return [item.sensor_id, item.start_time, item.end_time, item.video_name].join('::');
 }
@@ -104,6 +110,7 @@ interface VideoSearchListProps {
   isDark: boolean;
   onRefresh: () => void;
   onPlayVideo: (data: SearchData, showObjectsBbox: boolean) => void;
+  agentApiUrl?: string;
   showObjectsBbox?: boolean;
   userQuery?: string;
 }
@@ -115,11 +122,14 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
     isDark,
     onRefresh,
     onPlayVideo,
+    agentApiUrl,
     showObjectsBbox = false,
     userQuery,
 }) => {
     const [selectedKeys, setSelectedKeys] = React.useState<Set<string>>(new Set());
     const [contextMenu, setContextMenu] = React.useState<ContextMenuState>(null);
+    const [clipAnalysisByKey, setClipAnalysisByKey] = React.useState<Record<string, ClipAnalysisState>>({});
+    const [analyzingClips, setAnalyzingClips] = React.useState(false);
   const [creatingReport, setCreatingReport] = React.useState(false);
 
     React.useEffect(() => {
@@ -235,6 +245,79 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
       setContextMenu(null);
     }, [contextMenu?.targetKey, creatingReport, data, selectedItems, userQuery]);
 
+    const analyzeSingleClip = React.useCallback(async (item: SearchData) => {
+      const key = getResultKey(item);
+      if (!agentApiUrl) {
+        setClipAnalysisByKey((prev) => ({
+          ...prev,
+          [key]: { error: 'Agent API URL이 설정되지 않았습니다.' },
+        }));
+        return;
+      }
+
+      setClipAnalysisByKey((prev) => ({
+        ...prev,
+        [key]: { loading: true },
+      }));
+
+      try {
+        const response = await fetch(`${agentApiUrl}/describe_clip`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            sensor_id: item.sensor_id,
+            start_timestamp: item.start_time,
+            end_timestamp: item.end_time,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || `HTTP error ${response.status}`);
+        }
+
+        const result = await response.json();
+        setClipAnalysisByKey((prev) => ({
+          ...prev,
+          [key]: { description: result.description || '' },
+        }));
+      } catch (analysisError) {
+        setClipAnalysisByKey((prev) => ({
+          ...prev,
+          [key]: {
+            error: analysisError instanceof Error ? analysisError.message : 'VLM 분석 요청에 실패했습니다.',
+          },
+        }));
+      }
+    }, [agentApiUrl]);
+
+    const handleAnalyzeContextItems = React.useCallback(async () => {
+      if (analyzingClips) {
+        return;
+      }
+
+      const targetItems = selectedItems.length > 0
+        ? selectedItems
+        : data.filter((item) => getResultKey(item) === contextMenu?.targetKey);
+
+      if (targetItems.length === 0) {
+        setContextMenu(null);
+        return;
+      }
+
+      setAnalyzingClips(true);
+      setContextMenu(null);
+      try {
+        for (const item of targetItems) {
+          await analyzeSingleClip(item);
+        }
+      } finally {
+        setAnalyzingClips(false);
+      }
+    }, [analyzeSingleClip, analyzingClips, contextMenu?.targetKey, data, selectedItems]);
+
     if (loading) {
         return (
           <div className="p-4">
@@ -322,6 +405,7 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
                   (() => {
                     const itemKey = getResultKey(item);
                     const isSelected = selectedKeys.has(itemKey);
+                    const clipAnalysis = clipAnalysisByKey[itemKey];
 
                     return (
                   <div 
@@ -411,17 +495,28 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
                       </div>
 
                       {/* Card Footer */}
-                      <div className="p-4 pt-0 space-y-3 flex justify-between items-baseline">
-                          <div className="flex items-center justify-between">
-                          </div>
+                      <div className="p-4 pt-0 space-y-3">
+                          <div className="flex items-center justify-end gap-2">
                           <div className="flex items-center justify-between text-xs">
-                              <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>
-                                유사도:
-                              </span>
-                              <span className="bg-gray-200 dark:bg-gray-800 dark:text-white text-gray-900 font-semibold ml-1 px-3 py-1 rounded-md">
-                                  {item.similarity.toFixed(2)}
-                              </span>
+                            <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>
+                              유사도:
+                            </span>
+                            <span className="bg-gray-200 dark:bg-gray-800 dark:text-white text-gray-900 font-semibold ml-1 px-3 py-1 rounded-md">
+                                {item.similarity.toFixed(2)}
+                            </span>
                           </div>
+                        </div>
+                        {(clipAnalysis?.description || clipAnalysis?.error) && (
+                          <div
+                            className={`max-h-28 overflow-y-auto rounded-md border p-2 text-xs leading-relaxed ${
+                              clipAnalysis?.error
+                                ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300'
+                                : 'border-amber-200 bg-amber-50 text-gray-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-gray-200'
+                            }`}
+                          >
+                            {clipAnalysis.error || clipAnalysis.description}
+                          </div>
+                        )}
                       </div>
                   </div>
                     );
@@ -446,6 +541,15 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
             className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium text-gray-900 transition-colors hover:bg-gray-100 dark:text-gray-100 dark:hover:bg-gray-700"
           >
             <span>{creatingReport ? '생성 중...' : '보고서 생성'}</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">선택 결과 사용</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleAnalyzeContextItems}
+            disabled={analyzingClips}
+            className="flex w-full items-center justify-between border-t border-gray-200 px-4 py-3 text-left text-sm font-medium text-gray-900 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-400 dark:border-gray-700 dark:text-gray-100 dark:hover:bg-gray-700 dark:disabled:text-gray-500"
+          >
+            <span>{analyzingClips ? '분석 중...' : 'VLM 분석'}</span>
             <span className="text-xs text-gray-500 dark:text-gray-400">선택 결과 사용</span>
           </button>
         </div>

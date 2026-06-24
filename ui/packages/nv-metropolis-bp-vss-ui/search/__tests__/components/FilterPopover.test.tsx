@@ -20,7 +20,6 @@ const defaultProps = {
     endDate: null,
     videoSources: [],
     similarity: 0,
-    topK: 10,
   },
   setFilterParams: jest.fn(),
   containerRef: React.createRef<HTMLDivElement>(),
@@ -40,29 +39,23 @@ describe('FilterDialog', () => {
 
   it('renders when isOpen is true', () => {
     render(<FilterDialog {...defaultProps} />);
-    expect(screen.getByText('From:')).toBeInTheDocument();
-    expect(screen.getByText('To:')).toBeInTheDocument();
-    expect(screen.getByText('Video sources:')).toBeInTheDocument();
-    expect(screen.getByText('Min Cosine Similarity:')).toBeInTheDocument();
-  });
-
-  it('renders Show top K Results label with required marker', () => {
-    render(<FilterDialog {...defaultProps} />);
-    expect(screen.getByText(/Show top K Results/)).toBeInTheDocument();
-    expect(screen.getByText('*')).toBeInTheDocument();
+    expect(screen.getByText('시작 시각:')).toBeInTheDocument();
+    expect(screen.getByText('종료 시각:')).toBeInTheDocument();
+    expect(screen.getByText('비디오 소스:')).toBeInTheDocument();
+    expect(screen.getByText('최소 코사인 유사도:')).toBeInTheDocument();
   });
 
   it('renders Apply and Cancel buttons', () => {
     render(<FilterDialog {...defaultProps} />);
-    expect(screen.getByText('Apply')).toBeInTheDocument();
-    expect(screen.getByText('Cancel')).toBeInTheDocument();
+    expect(screen.getByText('적용')).toBeInTheDocument();
+    expect(screen.getByText('취소')).toBeInTheDocument();
   });
 
   it('calls handleConfirm with pending params when Apply is clicked', () => {
     const handleConfirm = jest.fn();
     render(<FilterDialog {...defaultProps} handleConfirm={handleConfirm} />);
 
-    fireEvent.click(screen.getByText('Apply'));
+    fireEvent.click(screen.getByText('적용'));
     expect(handleConfirm).toHaveBeenCalledWith(defaultProps.filterParams);
   });
 
@@ -70,7 +63,7 @@ describe('FilterDialog', () => {
     const close = jest.fn();
     render(<FilterDialog {...defaultProps} close={close} />);
 
-    fireEvent.click(screen.getByText('Cancel'));
+    fireEvent.click(screen.getByText('취소'));
     expect(close).toHaveBeenCalledTimes(1);
   });
 
@@ -102,7 +95,7 @@ describe('FilterDialog', () => {
 
   it('resets pending params when dialog is closed and reopened', () => {
     const handleConfirm = jest.fn();
-    const newFilterParams = { ...defaultProps.filterParams, similarity: 0.5, topK: 20 };
+    const newFilterParams = { ...defaultProps.filterParams, similarity: 0.5 };
 
     const { rerender } = render(
       <FilterDialog {...defaultProps} handleConfirm={handleConfirm} />
@@ -118,7 +111,7 @@ describe('FilterDialog', () => {
       <FilterDialog {...defaultProps} isOpen={true} filterParams={newFilterParams} handleConfirm={handleConfirm} />
     );
 
-    fireEvent.click(screen.getByText('Apply'));
+    fireEvent.click(screen.getByText('적용'));
     expect(handleConfirm).toHaveBeenCalledWith(newFilterParams);
   });
 

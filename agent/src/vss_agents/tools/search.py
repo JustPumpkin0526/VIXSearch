@@ -131,6 +131,7 @@ async def _run_attribute_only_search(
     top_k: int,
     min_similarity: float | None,
     exclude_videos: list[dict[str, str]] | None = None,
+    object_types: list[str] | None = None,
 ) -> list["SearchResult"]:
     """
     Modular helper function to run attribute-only search.
@@ -150,6 +151,7 @@ async def _run_attribute_only_search(
             "min_similarity": min_similarity if min_similarity is not None else 0.3,
             "fuse_multi_attribute": False,  # Append mode - no fusion
             "exclude_videos": exclude_videos,
+            "object_types": object_types,
         }
 
         attribute_results = await attribute_search_fn.ainvoke(attr_params)
@@ -940,6 +942,13 @@ async def execute_core_search(
         elif attribute_list:  # If has_action is None but attributes exist, treat as attribute-only
             is_attribute_only = True
 
+    class_only_search = bool(search_input.class_only_search or config.class_only_search_default)
+    class_names = [c for c in (search_input.class_names or []) if isinstance(c, str) and c.strip()]
+
+    # In class-only mode, always force attribute path and class-filtered object lookup.
+    if class_only_search:
+        is_attribute_only = True
+
     # ===== EXECUTION FLOW: Three distinct paths =====
     search_results = []
     # Keep track of confirmed and rejected results to avoid re-running the critic agent on the known results
@@ -966,7 +975,39 @@ async def execute_core_search(
         logger.info(
             f"is_attribute_only: {is_attribute_only}, attribute_list: {attribute_list}, config.attribute_search_tool: {config.attribute_search_tool}"
         )
-        if is_attribute_only and attribute_list and config.attribute_search_tool:
+        if class_only_search and config.attribute_search_tool:
+            logger.info("EXECUTION PATH: Class-only attribute search")
+
+            class_only_terms = class_names or [search_input.query]
+            object_types = class_names or None
+
+            yield AgentMessageChunk(
+                type=AgentMessageChunkType.TOOL_CALL,
+                content=(
+                    f"Running class-only search with explicit class filters: {class_names}"
+                    if class_names
+                    else f"Running class-only search with query: {search_input.query}"
+                ),
+            )
+
+            if attribute_search_fn is None:
+                attribute_search_fn = await builder.get_function(config.attribute_search_tool)
+
+            search_results = await _run_attribute_only_search(
+                attribute_list=class_only_terms,
+                search_input=search_input,
+                attribute_search_fn=attribute_search_fn,
+                top_k=fetch_top_k,
+                min_similarity=min_similarity,
+                object_types=object_types,
+            )
+
+            yield AgentMessageChunk(
+                type=AgentMessageChunkType.THOUGHT,
+                content=f"Found {len(search_results)} results from class-only search",
+            )
+
+        elif is_attribute_only and attribute_list and config.attribute_search_tool:
             logger.info("EXECUTION PATH: Attribute-only search (no embed, append mode)")
 
             yield AgentMessageChunk(
@@ -1411,6 +1452,11 @@ class SearchConfig(FunctionBaseConfig, name="search"):
         description="RRF weight w for attribute cosine similarity in Reciprocal Rank Fusion (default: 0.5, only used for RRF)",
     )
 
+    class_only_search_default: bool = Field(
+        default=False,
+        description="If True, bypass embed/fusion and run attribute-search-only by default.",
+    )
+
 
 class SearchInput(BaseModel):
     """Input for the Search tool"""
@@ -1471,6 +1517,16 @@ class SearchInput(BaseModel):
         default=True,
         description="""Request-level flag to enable/disable critic agent for this search request.
         `critic_agent` must be set and `enable_critic` must be True in the config.""",
+    )
+
+    class_only_search: bool = Field(
+        default=False,
+        description="If True, bypass embed/fusion and run attribute-search-only.",
+    )
+
+    class_names: list[str] | None = Field(
+        default=None,
+        description="Optional exact object.type filters for class-only search.",
     )
 
 

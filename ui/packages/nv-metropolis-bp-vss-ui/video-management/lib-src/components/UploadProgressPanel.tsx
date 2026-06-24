@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type { UploadProgress } from '../types';
 
 const formatDuration = (durationMs?: number): string | null => {
@@ -64,6 +64,17 @@ export const UploadProgressPanel: React.FC<UploadProgressPanelProps> = ({
   onClose,
   onCancel,
 }) => {
+  // Tick every second to refresh elapsed-time labels for active uploads/embeddings
+  const [, setTick] = useState(0);
+  const hasActiveTimer = uploads.some(
+    (u) => u.status === 'uploading' || u.status === 'embedding',
+  );
+  useEffect(() => {
+    if (!hasActiveTimer) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [hasActiveTimer]);
+
   if (uploads.length === 0) return null;
 
   const completedCount = uploads.filter((u) => u.status === 'success').length;

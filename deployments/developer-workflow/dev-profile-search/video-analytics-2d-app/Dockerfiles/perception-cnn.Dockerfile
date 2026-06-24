@@ -24,6 +24,7 @@ WORKDIR /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_pe
 
 # copy the dependencies file to the working directory
 COPY ./deepstream/configs/cnn-models/* ./
+COPY ./deepstream/triton-model-overrides ./triton-model-overrides
 
 # copy the start script and make it executable
 COPY ./deepstream/init-scripts/ds-start.sh .

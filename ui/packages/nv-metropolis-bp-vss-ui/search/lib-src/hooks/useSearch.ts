@@ -60,7 +60,7 @@ export const useSearch = ({ agentApiUrl, params = {} }: UseSearchOptions) => {
     const { signal } = abortControllerRef.current;
     
     try {
-      const { query, startDate, endDate, videoSources, similarity, topK = 10, agentMode = false, sourceType = 'video_file' } = searchParams;
+      const { query, startDate, endDate, videoSources, similarity, agentMode = false, sourceType = 'video_file' } = searchParams;
       let body = {};
       let data = {data: []};
       if(!query) {
@@ -72,7 +72,6 @@ export const useSearch = ({ agentApiUrl, params = {} }: UseSearchOptions) => {
         body = {
           agent_mode: agentMode,
           query: query,
-          top_k: topK,
           source_type: sourceType
         }
       } else {
@@ -82,7 +81,6 @@ export const useSearch = ({ agentApiUrl, params = {} }: UseSearchOptions) => {
           timestamp_start: formatDateToLocalISO(startDate || null),
           timestamp_end: formatDateToLocalISO(endDate || null),
           min_cosine_similarity: Number(similarity)?.toFixed(2),
-          top_k: topK,
           agent_mode: agentMode,
           source_type: sourceType
         }

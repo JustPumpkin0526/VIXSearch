@@ -559,6 +559,42 @@ describe('Proxy Request Transformers and Response Processors', () => {
         expect(mockRes.end).toHaveBeenCalled();
       });
 
+      it('should unwrap search agent output into raw search results JSON', async () => {
+        const searchResults = {
+          data: [
+            {
+              video_name: 'clip1.mp4',
+              sensor_id: 'sensor-1',
+              start_time: '2024-01-15T09:00:00',
+              end_time: '2024-01-15T09:05:00',
+            },
+          ],
+        };
+        const mockBackendRes = {
+          ok: true,
+          text: jest.fn().mockResolvedValue(JSON.stringify({
+            content: JSON.stringify({
+              messages: ['Found 1 matching video'],
+              side_effects: {
+                search_results: searchResults,
+              },
+            }),
+          })),
+          headers: {
+            get: jest.fn().mockReturnValue(null),
+          },
+        };
+
+        const mockRes = {
+          writeHead: jest.fn(),
+          end: jest.fn(),
+        };
+
+        await processChat(mockBackendRes, mockRes);
+
+        expect(mockRes.end).toHaveBeenCalledWith(JSON.stringify(searchResults));
+      });
+
       it('should handle non-ok response', async () => {
         const mockBackendRes = {
           ok: false,
@@ -644,6 +680,39 @@ describe('Proxy Request Transformers and Response Processors', () => {
         expect(mockRes.write).toHaveBeenCalledWith('Hello');
         expect(mockRes.write).toHaveBeenCalledWith(' world');
         expect(mockRes.end).toHaveBeenCalled();
+      });
+
+      it('should unwrap streamed search agent output into raw search results JSON', async () => {
+        const searchResults = {
+          data: [
+            {
+              video_name: 'clip1.mp4',
+              sensor_id: 'sensor-1',
+              start_time: '2024-01-15T09:00:00',
+              end_time: '2024-01-15T09:05:00',
+            },
+          ],
+        };
+        const mockBackendRes = createStreamingResponse([
+          `data: ${JSON.stringify({
+            content: JSON.stringify({
+              messages: ['Found 1 matching video'],
+              side_effects: {
+                search_results: searchResults,
+              },
+            }),
+          })}\n`,
+        ]);
+
+        const mockRes = {
+          writeHead: jest.fn(),
+          write: jest.fn(),
+          end: jest.fn(),
+        };
+
+        await processChatStream(mockBackendRes, mockRes);
+
+        expect(mockRes.write).toHaveBeenCalledWith(JSON.stringify(searchResults));
       });
 
       it('should process intermediate_data lines', async () => {

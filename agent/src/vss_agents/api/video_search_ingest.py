@@ -18,9 +18,13 @@ Custom streaming video ingest endpoint for VSS Search.
 This bypasses NAT's standard endpoint pattern to support file streaming.
 """
 
+import asyncio
+from contextlib import asynccontextmanager
+import fcntl
 import json
 import logging
 import os
+import re
 from threading import Lock
 from typing import Any
 import urllib.parse
@@ -44,6 +48,29 @@ logger = logging.getLogger(__name__)
 
 _active_video_ingests: set[str] = set()
 _active_video_ingests_lock = Lock()
+
+# Semaphore: allow only 1 concurrent RTVI embed call.
+# Multiple simultaneous embedding requests overload the GPU and produce
+# race conditions in the Elasticsearch index.  Serial execution is
+# intentional – the agent endpoint already blocks the HTTP response until
+# embedding finishes, so queuing here is transparent to the caller.
+_rtvi_embed_semaphore = asyncio.Semaphore(1)
+
+
+@asynccontextmanager
+async def _rtvi_embed_process_lock(video_id: str):
+    lock_path = os.getenv("RTVI_EMBED_LOCK_PATH", "/tmp/vss_rtvi_embed.lock")
+    lock_file = open(lock_path, "a")
+
+    try:
+        logger.info(f"Waiting for interprocess embedding lock for video_id={video_id}")
+        await asyncio.to_thread(fcntl.flock, lock_file.fileno(), fcntl.LOCK_EX)
+        logger.info(f"Acquired interprocess embedding lock for video_id={video_id}")
+        yield
+    finally:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
+        logger.info(f"Released interprocess embedding lock for video_id={video_id}")
 
 # Allowed video MIME types - Only MP4 and MKV as supported
 ALLOWED_VIDEO_TYPES = {
@@ -128,6 +155,18 @@ def create_streaming_video_ingest_router(
                 effective_chunk_duration = max(1, int(chunk_duration_param))
             except ValueError as e:
                 raise HTTPException(status_code=400, detail="chunk_duration must be a positive integer") from e
+
+        # Reject filenames containing URL-structural characters.  The filename
+        # is embedded verbatim into /vst/api/v1/storage/file/{video_id}/… so
+        # any character that has special meaning in a URL path must be blocked.
+        if re.search(r"[\s/\#\?%&+]", filename):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Filename contains characters that are not allowed in a URL path "
+                    "(spaces, /, #, ?, %, &, +). Please rename the file and try again."
+                ),
+            )
 
         # Fixed timestamp as per requirements
         start_timestamp = "2025-01-01T00:00:00.000Z"
@@ -331,28 +370,34 @@ def create_streaming_video_ingest_router(
             logger.info(f"Calling RTVI Embedding API: POST {embedding_url}")
             logger.info(f"Request body: {embed_request}")
 
-            async with httpx.AsyncClient(timeout=600.0) as client:
-                embed_response = await client.post(
-                    embedding_url,
-                    json=embed_request,
-                    headers={"accept": "application/json", "Content-Type": "application/json"},
-                )
-
-                logger.info(f"RTVI Embedding API response status: {embed_response.status_code}")
-
-                if embed_response.status_code != 200:
-                    error_msg = (
-                        f"Embedding generation failed with status {embed_response.status_code}: {embed_response.text}"
+            # Acquire both in-process and interprocess locks. NAT may run
+            # multiple worker processes, so asyncio.Semaphore alone does not
+            # serialize calls across the whole vss-agent container.
+            async with _rtvi_embed_semaphore, _rtvi_embed_process_lock(vst_sensor_id):
+                logger.info(f"Acquired embedding locks for video_id={vst_sensor_id}")
+                async with httpx.AsyncClient(timeout=600.0) as client:
+                    embed_response = await client.post(
+                        embedding_url,
+                        json=embed_request,
+                        headers={"accept": "application/json", "Content-Type": "application/json"},
                     )
-                    logger.error(error_msg)
-                    raise HTTPException(status_code=502, detail=f"Embedding generation failed: {error_msg}")
 
-                embed_result = embed_response.json()
-                logger.info("RTVI Embedding generation successful")
-                logger.debug(f"RTVI response body: {embed_result}")
+                    logger.info(f"RTVI Embedding API response status: {embed_response.status_code}")
 
-                # Extract chunks processed from response
-                chunks_processed = embed_result.get("usage", {}).get("total_chunks_processed", 0)
+                    if embed_response.status_code != 200:
+                        error_msg = (
+                            f"Embedding generation failed with status {embed_response.status_code}: {embed_response.text}"
+                        )
+                        logger.error(error_msg)
+                        raise HTTPException(status_code=502, detail=f"Embedding generation failed: {error_msg}")
+
+                    embed_result = embed_response.json()
+                    logger.info("RTVI Embedding generation successful")
+                    logger.debug(f"RTVI response body: {embed_result}")
+
+                    # Extract chunks processed from response
+                    chunks_processed = embed_result.get("usage", {}).get("total_chunks_processed", 0)
+                logger.info(f"Released embedding locks for video_id={vst_sensor_id}")
 
             # Attempt to notify UI server so it can persist uploaded_videos row
             try:

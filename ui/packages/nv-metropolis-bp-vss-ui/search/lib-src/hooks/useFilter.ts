@@ -3,9 +3,6 @@ import { useState, useCallback, useEffect } from 'react';
 import { FilterProps, SearchParams, StreamInfo } from '../types';
 import { formatDatetime } from '../utils/Formatter';
 
-// Centralized default constant - exported for use in other components
-export const DEFAULT_TOP_K = 10;
-
 export const useFilter = ({vstApiUrl}: FilterProps) => {
   const [streams, setStreams] = useState<StreamInfo[]>([]);
   const [filterParams, setFilterParams] = useState({
@@ -15,9 +12,9 @@ export const useFilter = ({vstApiUrl}: FilterProps) => {
     similarity: 0,
     agentMode: false,
     query: '',
-    topK: DEFAULT_TOP_K
+    sourceType: 'video_file'
   })
-  const [filterTags, setFilterTags] = useState([{key: 'topK', title: '상위 결과 수', value: DEFAULT_TOP_K.toString()}]);
+  const [filterTags, setFilterTags] = useState<any[]>([]);
 
   const fetchSensorList = useCallback(async () => {
     if (!vstApiUrl) return;
@@ -47,7 +44,7 @@ export const useFilter = ({vstApiUrl}: FilterProps) => {
 
   const addFilter = (params?: any) => {
     const paramsToUse = params || filterParams;
-    const { startDate, endDate, videoSources, similarity, topK } = paramsToUse;
+    const { startDate, endDate, videoSources, similarity } = paramsToUse;
       
     let tags = [];
     if (startDate) {
@@ -62,16 +59,12 @@ export const useFilter = ({vstApiUrl}: FilterProps) => {
     if (similarity) {
       tags.push({key: 'similarity', title: '유사도', value: Number(similarity)?.toFixed(2)});
     }
-    // Always include topK tag (robust to numeric 0 or other non-truthy but valid numbers)
-    if (topK !== undefined && topK !== null) {
-      tags.push({key: 'topK', title: '상위 결과 수', value: topK.toString()});
-    }
     setFilterTags(tags as any);
   };
 
   const removeFilterTag = (tag: any) => {
     if (!tag) {
-      setFilterTags([{key: 'topK', title: '상위 결과 수', value: (filterParams.topK ?? DEFAULT_TOP_K).toString()}]);
+      setFilterTags([]);
     } else {
       setFilterTags(filterTags.filter((t: any) => t !== tag));
     }

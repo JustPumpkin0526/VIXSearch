@@ -125,12 +125,14 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
+  type UploadQueueEntry = { id: string; file: File; formData?: Record<string, any> };
+
   const isUploadingRef = useRef(false);
   const createGroupBackdropPressedRef = useRef(false);
   const detailBackdropPressedRef = useRef(false);
   const uploadSessionIdRef = useRef(0);
   const uploadAbortControllerRef = useRef<AbortController | null>(null);
-  const pendingFilesQueueRef = useRef<Array<{ id: string; file: File }>>([]);
+  const pendingFilesQueueRef = useRef<UploadQueueEntry[]>([]);
 
   useEffect(() => {
     isUploadingRef.current = isUploading;
@@ -280,7 +282,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     }
   }, [fetchVideoGroups, isActive]);
 
-  const processUploadQueue = useCallback(async (fileEntries: Array<{ id: string; file: File; formData?: Record<string, any> }>) => {
+  const processUploadQueue = useCallback(async (fileEntries: UploadQueueEntry[]) => {
     const abortController = new AbortController();
     uploadAbortControllerRef.current = abortController;
     uploadSessionIdRef.current += 1;
@@ -289,7 +291,60 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     setIsUploading(true);
     const isSessionValid = () => uploadSessionIdRef.current === currentSessionId;
 
-    const uploadSingleFile = async (entry: { id: string; file: File; formData?: Record<string, any> }): Promise<void> => {
+    const waitForVideoPersistence = async (sensorId?: string, streamId?: string) => {
+      if (typeof window === 'undefined') {
+        return;
+      }
+
+      const token = window.localStorage?.getItem('vss.auth.token');
+      if (!token || (!sensorId && !streamId)) {
+        return;
+      }
+
+      const startedAtMs = Date.now();
+      const timeoutMs = 30_000;
+      const pollIntervalMs = 1_000;
+
+      while (Date.now() - startedAtMs < timeoutMs) {
+        if (!isSessionValid() || abortController.signal.aborted) {
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/videos/list', {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            signal: abortController.signal,
+          });
+
+          if (response.ok) {
+            const payload = await response.json();
+            const videos = Array.isArray(payload?.videos) ? payload.videos : [];
+            const hasVideo = videos.some((video: any) => {
+              const nextSensorId = typeof video?.sensor_id === 'string' ? video.sensor_id : null;
+              const nextStreamId = typeof video?.video_id === 'string' ? video.video_id : null;
+              return (sensorId && nextSensorId === sensorId) || (streamId && nextStreamId === streamId);
+            });
+
+            if (hasVideo) {
+              return;
+            }
+          }
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') {
+            return;
+          }
+        }
+
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, pollIntervalMs);
+        });
+      }
+    };
+
+    const uploadSingleFile = async (entry: UploadQueueEntry): Promise<void> => {
       const { id, file, formData } = entry;
 
       if (!isSessionValid() || abortController.signal.aborted) return;
@@ -368,7 +423,6 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
             p.id === id && (p.status === 'uploading' || p.status === 'embedding')
               ? {
                   ...p,
-                  status: 'success',
                   progress: 100,
                   streamId: agentResponse?.streamId ?? p.streamId,
                   sensorId: agentResponse?.sensorId ?? p.sensorId,
@@ -379,6 +433,23 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
               : p
           )
         );
+
+        await waitForVideoPersistence(agentResponse?.sensorId, agentResponse?.streamId);
+
+        if (!isSessionValid()) return;
+
+        setUploadProgress((prev) =>
+          prev.map((p) =>
+            p.id === id && (p.status === 'uploading' || p.status === 'embedding')
+              ? {
+                  ...p,
+                  status: 'success',
+                  progress: 100,
+                }
+              : p
+          )
+        );
+
         // Notify server about completed upload so it can persist a user_videos record
         try {
           if (shouldRunEmbedding) {
@@ -903,7 +974,10 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
               },
             }));
             
-            // If already uploading, add to queue
+            // If already uploading, add to queue.
+            // NOTE: isUploadingRef.current is set TRUE here immediately (not via useEffect)
+            // to close the race window where a second onConfirmUpload fires before React
+            // renders the setIsUploading(true) call inside processUploadQueue.
             if (isUploadingRef.current) {
               pendingFilesQueueRef.current.push(...entries);
               const queuedProgress: UploadProgress[] = entries.map((entry) => ({
@@ -915,6 +989,10 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
               }));
               setUploadProgress((prev) => [...prev, ...queuedProgress]);
             } else {
+              // Immediately mark uploading so that any re-entrant onConfirmUpload
+              // (e.g., rapid double-click before React renders) sees the flag and
+              // queues rather than starting a second processUploadQueue session.
+              isUploadingRef.current = true;
               // Start new upload session
               const initialProgress: UploadProgress[] = entries.map((entry) => ({
                 id: entry.id,

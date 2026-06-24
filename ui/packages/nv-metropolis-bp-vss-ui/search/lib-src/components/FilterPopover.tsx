@@ -2,7 +2,6 @@
 import React, { useMemo, useCallback, useState, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Stack, DatePicker, CheckPicker, NumberInput } from 'rsuite';
-import { DEFAULT_TOP_K } from '../hooks/useFilter';
 import { StreamInfo } from '../types';
 
 const FILTER_POPOVER_Z_INDEX = 10600;
@@ -82,7 +81,7 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
     };
   }, [isOpen, triggerRef, updatePortalPosition]);
   
-  const { startDate, endDate, videoSources, similarity, topK } = pendingParams;
+  const { startDate, endDate, videoSources, similarity } = pendingParams;
 
   // Filter streams based on sourceType
   const filteredStreams = useMemo(() => {
@@ -104,8 +103,6 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
     setPendingParams((prev: any) => ({ ...prev, similarity: value })), []);
   const handleVideoSourcesChange = useCallback((value: string[]) => 
     setPendingParams((prev: any) => ({ ...prev, videoSources: value })), []);
-  const handleTopKChange = useCallback((value: string | number | null) => 
-    setPendingParams((prev: any) => ({ ...prev, topK: value })), []);
 
   const handleApply = useCallback(() => {
     handleConfirm(pendingParams);
@@ -206,26 +203,6 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
             value={similarity}
             onChange={handleSimilarityChange}
             placeholder="최소 코사인 유사도"
-            style={inputStyle}
-          />
-        </Stack>
-        <Stack spacing={10} alignItems="center">
-          <span style={labelStyle}>
-            <span style={{ color: 'red' }}>*</span> 상위 결과 수:
-          </span>
-          <NumberInput
-            min={1}
-            step={1}
-            value={topK}
-            disabled={disabled}
-            onBlur={(e) => {
-              const value = (e.target as HTMLInputElement)?.value;
-              if (!value) {
-                setPendingParams((prev: any) => ({ ...prev, topK: DEFAULT_TOP_K }));
-              }
-            }}
-            onChange={handleTopKChange}
-            placeholder="결과 개수"
             style={inputStyle}
           />
         </Stack>
