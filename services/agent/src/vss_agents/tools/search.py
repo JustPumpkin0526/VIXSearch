@@ -881,6 +881,17 @@ async def execute_core_search(
         if isinstance(video_id, str) and video_id.strip()
     }
 
+    if search_input.source_type == "video_file" and search_input.owned_video_ids is not None:
+        if not owned_video_ids:
+            msg = "No uploaded videos are available for the current user."
+            logger.info(msg)
+            yield AgentMessageChunk(
+                type=AgentMessageChunkType.THOUGHT,
+                content=msg,
+            )
+            yield SearchOutput(data=[], search_messages=[msg])
+            return
+
     if search_input.agent_mode and agent_llm:
         try:
             yield AgentMessageChunk(
@@ -1005,6 +1016,30 @@ async def execute_core_search(
                 type=AgentMessageChunkType.ERROR,
                 content=f"Decomposition failed, using original query: {e!s}",
             )
+
+    if search_input.source_type == "video_file" and search_input.owned_video_ids is not None:
+        if search_input.video_sources:
+            before_sources = list(search_input.video_sources)
+            search_input.video_sources = [
+                source
+                for source in search_input.video_sources
+                if source in owned_video_ids
+            ]
+
+            if not search_input.video_sources:
+                msg = (
+                    "No requested video sources are owned by the current user. "
+                    f"requested={before_sources}"
+                )
+                logger.info(msg)
+                yield AgentMessageChunk(
+                    type=AgentMessageChunkType.THOUGHT,
+                    content=msg,
+                )
+                yield SearchOutput(data=[], search_messages=[msg])
+                return
+        else:
+            search_input.video_sources = sorted(owned_video_ids)
 
     # ===== OBJECT_ID PATH: Direct behavior KNN (bypasses embed_search + fusion) =====
     if decomposed and decomposed.object_ids:

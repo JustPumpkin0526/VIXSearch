@@ -58,6 +58,10 @@ class AgentRequestOptions(BaseModel):
         default="video_file", description="Video source type for search: 'video_file' or 'rtsp'"
     )
     use_critic: bool = Field(default=True, description="Whether to verify search results with VLM critic agent")
+    owned_video_ids: list[str] | None = Field(
+        default=None,
+        description="Uploaded video sensor IDs owned by the current UI user.",
+    )
 
 
 class AgentOutput(BaseModel):

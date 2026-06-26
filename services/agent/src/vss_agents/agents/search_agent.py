@@ -154,6 +154,30 @@ def _effective_search_runtime_options(
         search_agent_input.request_options.use_critic,
     )
 
+def _effective_owned_video_ids(
+    search_agent_input: SearchAgentInput,
+) -> list[str] | None:
+    """Resolve owned video IDs from direct search-agent input or parent request options."""
+    if search_agent_input.owned_video_ids is not None:
+        return search_agent_input.owned_video_ids
+
+    request_options = search_agent_input.request_options
+    if request_options is None:
+        return None
+
+    value = getattr(request_options, "owned_video_ids", None)
+
+    if value is None:
+        return None
+
+    if isinstance(value, list):
+        return [
+            str(video_id).strip()
+            for video_id in value
+            if str(video_id).strip()
+        ]
+
+    return None
 
 def _explicit_max_results(search_agent_input: SearchAgentInput) -> int | None:
     """Return max_results only when the caller explicitly provided it."""
@@ -497,6 +521,8 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             getattr(effective_config, "class_only_search_default", False)
         )
 
+        owned_video_ids = _effective_owned_video_ids(search_agent_input)
+
         search_input = SearchInput(
             query=search_agent_input.query,
             source_type=source_type,
@@ -505,7 +531,7 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             agent_mode=search_agent_input.agent_mode,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
-            owned_video_ids=search_agent_input.owned_video_ids,
+            owned_video_ids=owned_video_ids,
             use_critic=use_critic,
             class_only_search=(
                 search_agent_input.class_only_search
@@ -596,6 +622,8 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             getattr(effective_config, "class_only_search_default", False)
         )
 
+        owned_video_ids = _effective_owned_video_ids(search_agent_input)
+
         search_input = SearchInput(
             query=query,
             source_type=source_type,
@@ -604,7 +632,7 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             agent_mode=agent_mode,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
-            owned_video_ids=search_agent_input.owned_video_ids,
+            owned_video_ids=owned_video_ids,
             use_critic=use_critic,
             class_only_search=(
                 search_agent_input.class_only_search
