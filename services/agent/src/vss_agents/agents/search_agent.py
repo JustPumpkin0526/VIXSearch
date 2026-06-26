@@ -117,6 +117,31 @@ class SearchAgentInput(BaseModel):
         description="Per-request options passed by the parent agent. When present, these override matching fields.",
     )
 
+    embed_confidence_threshold: float | None = Field(
+        default=None,
+        description="Override the embed confidence threshold used during fusion fallback",
+    )
+
+    top_k: int | None = Field(
+        default=None,
+        description="Override top_k for internal search retrieval",
+    )
+
+    owned_video_ids: list[str] | None = Field(
+        default=None,
+        description="List of uploaded video sensor IDs owned by the currently logged-in user",
+    )
+
+    class_only_search: bool | None = Field(
+        default=None,
+        description="If True, bypass embed/fusion and run attribute-search-only.",
+    )
+
+    class_names: list[str] | None = Field(
+        default=None,
+        description="Optional exact object.type filters to use in class-only mode.",
+    )
+
 
 def _effective_search_runtime_options(
     search_agent_input: SearchAgentInput,
@@ -254,6 +279,11 @@ class SearchAgentConfig(FunctionBaseConfig, name="search_agent"):
     behavior_index: str = Field(
         default=DEFAULT_BEHAVIOR_INDEX,
         description="Behavior index name for object embedding lookup.",
+    )
+
+    class_only_search_default: bool = Field(
+        default=False,
+        description="If True, bypass embed/fusion and run attribute-search-only by default.",
     )
 
 
@@ -445,17 +475,44 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             except Exception as e:
                 logger.warning(f"Failed to parse end_time: {e}")
 
-        top_k = _candidate_top_k(search_agent_input, config.default_max_results)
+        top_k = (
+            search_agent_input.top_k
+            if search_agent_input.top_k is not None
+            else _candidate_top_k(search_agent_input, config.default_max_results)
+        )
+
         source_type, use_critic = _effective_search_runtime_options(search_agent_input)
+
+        effective_config = config.model_copy(
+            update={
+                "embed_confidence_threshold": (
+                    search_agent_input.embed_confidence_threshold
+                    if search_agent_input.embed_confidence_threshold is not None
+                    else config.embed_confidence_threshold
+                )
+            }
+        )
+
+        class_only_search_default = bool(
+            getattr(effective_config, "class_only_search_default", False)
+        )
 
         search_input = SearchInput(
             query=search_agent_input.query,
             source_type=source_type,
             top_k=top_k,
+            min_cosine_similarity=effective_config.embed_confidence_threshold,
             agent_mode=search_agent_input.agent_mode,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
+            owned_video_ids=search_agent_input.owned_video_ids,
             use_critic=use_critic,
+            class_only_search=(
+                search_agent_input.class_only_search
+                if search_agent_input.class_only_search is not None
+                else class_only_search_default
+            ),
+            class_names=search_agent_input.class_names,
         )
 
         # Use shared core search function (async generator, collect all progress and return final result)
@@ -464,7 +521,7 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             search_input=search_input,
             embed_search=embed_search_fn,
             agent_llm=agent_llm,
-            config=config,
+            config=effective_config,
             builder=builder,
             attribute_search_fn=attribute_search_fn,
             critic_agent=critic_agent,
@@ -519,16 +576,42 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             except Exception as e:
                 logger.warning(f"Failed to parse end_time: {e}")
 
-        top_k = _candidate_top_k(search_agent_input, config.default_max_results)
+        top_k = (
+            search_agent_input.top_k
+            if search_agent_input.top_k is not None
+            else _candidate_top_k(search_agent_input, config.default_max_results)
+        )
+
+        effective_config = config.model_copy(
+            update={
+                "embed_confidence_threshold": (
+                    search_agent_input.embed_confidence_threshold
+                    if search_agent_input.embed_confidence_threshold is not None
+                    else config.embed_confidence_threshold
+                )
+            }
+        )
+
+        class_only_search_default = bool(
+            getattr(effective_config, "class_only_search_default", False)
+        )
 
         search_input = SearchInput(
             query=query,
             source_type=source_type,
             top_k=top_k,
+            min_cosine_similarity=effective_config.embed_confidence_threshold,
             agent_mode=agent_mode,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
+            owned_video_ids=search_agent_input.owned_video_ids,
             use_critic=use_critic,
+            class_only_search=(
+                search_agent_input.class_only_search
+                if search_agent_input.class_only_search is not None
+                else class_only_search_default
+            ),
+            class_names=search_agent_input.class_names,
         )
 
         try:
@@ -539,7 +622,7 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
                 search_input=search_input,
                 embed_search=embed_search_fn,
                 agent_llm=agent_llm,
-                config=config,
+                config=effective_config,
                 builder=builder,
                 attribute_search_fn=attribute_search_fn,
                 critic_agent=critic_agent,

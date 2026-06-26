@@ -1132,7 +1132,8 @@ async def execute_core_search(
         elif attribute_list:  # If has_action is None but attributes exist, treat as attribute-only
             is_attribute_only = True
 
-    class_only_search = bool(search_input.class_only_search or config.class_only_search_default)
+    class_only_search_default = bool(getattr(config, "class_only_search_default", False))
+    class_only_search = bool(search_input.class_only_search or class_only_search_default)
     class_names = [c for c in (search_input.class_names or []) if isinstance(c, str) and c.strip()]
 
     # In class-only mode, always force attribute path and class-filtered object lookup.
@@ -1743,7 +1744,7 @@ class SearchInput(BaseModel):
         description="""Request-level flag to enable/disable critic agent for this search request.
         `critic_agent` must be set and `enable_critic` must be True in the config.""",
     )
-
+    
     class_only_search: bool = Field(
         default=False,
         description="If True, bypass embed/fusion and run attribute-search-only.",
