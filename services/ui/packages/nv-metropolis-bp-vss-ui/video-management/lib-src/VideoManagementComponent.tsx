@@ -470,6 +470,42 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     setShowDeleteConfirm(false);
   }, [isDeleting]);
 
+  async function deleteUploadedVideoOwnershipRecord(stream: StreamInfo) {
+    if (typeof window === 'undefined') return;
+
+    const token = window.localStorage.getItem('vss.auth.token');
+
+    if (!token) {
+      console.warn('[VideoManagement] Missing auth token; skipping uploaded_videos cleanup');
+      return;
+    }
+
+    const response = await fetch('/api/videos/delete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        video_id: stream.sensorId,
+        sensor_id: stream.sensorId,
+        sensorId: stream.sensorId,
+        filename: stream.name,
+        video_url: stream.vodUrl ?? stream.url ?? null,
+        filePath: stream.vodUrl ?? stream.url ?? null,
+      }),
+    });
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => '');
+      console.warn(
+        '[VideoManagement] failed to delete uploaded_videos ownership record:',
+        response.status,
+        message,
+      );
+    }
+  }
+
   // Step 2 of delete: invoked by the confirm button inside DeleteConfirmDialog.
   // This holds the actual destructive API calls that used to live in
   // handleDeleteSelected.
@@ -510,6 +546,9 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
           throw new Error('Agent API URL not configured for video deletion');
         }
         await deleteVideo(agentApiUrl, sensorId);
+        if (firstStream) {
+          await deleteUploadedVideoOwnershipRecord(firstStream);
+        }
         return sensorId;
       });
 
