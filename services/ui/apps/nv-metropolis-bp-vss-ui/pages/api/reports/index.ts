@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { getUiAuthPool, getUsernameFromAuthHeader } from '../auth/_lib';
 import {
   buildAccidentReportWordBuffer,
+  buildAccidentReportPdfBuffer,
   convertWordBufferToPdfBuffer,
   createPdfFileName,
   createWordFileName,
@@ -103,10 +104,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       reportPayload.wordFileUrl = `/api/reports/word/${encodeURIComponent(reportId)}`;
       reportPayload.pdfFileName = createPdfFileName(title, reportId);
       reportPayload.pdfFileUrl = `/api/reports/pdf/${encodeURIComponent(reportId)}`;
-      const pdfBuffer = await convertWordBufferToPdfBuffer(wordBuffer, reportPayload.wordFileName);
+      let pdfBuffer: Buffer;
+      let pdfSource = 'word-converter';
+          
+      try {
+        pdfBuffer = await convertWordBufferToPdfBuffer(
+          wordBuffer,
+          reportPayload.wordFileName,
+        );
+      } catch (error) {
+        console.warn(
+          '[api/reports] Word to PDF conversion failed, using pdf-lib fallback:',
+          error,
+        );
+      
+        pdfBuffer = await buildAccidentReportPdfBuffer(reportPayload);
+        pdfSource = 'pdf-lib';
+      }
+      
       reportPayload.wordBase64 = wordBuffer.toString('base64');
       reportPayload.pdfBase64 = pdfBuffer.toString('base64');
-      reportPayload.pdfSource = 'word-converter';
+      reportPayload.pdfSource = pdfSource;
 
       await pool.query(
         `INSERT INTO ui_user_reports (id, username, title, report_json, created_at, updated_at)
