@@ -22,13 +22,38 @@ import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
 
 const PDF_FONT_CANDIDATES = {
   regular: [
+    // standalone server 실행 위치가 /repo일 때
+    path.join(
+      process.cwd(),
+      'apps/nv-metropolis-bp-vss-ui/assets/fonts/NotoSansCJKkr-Regular.otf',
+    ),
+
+    // standalone app 내부에서 실행 위치가 app root일 때
     path.join(process.cwd(), 'assets/fonts/NotoSansCJKkr-Regular.otf'),
+
+    // Dockerfile에서 시스템 폰트 경로로 복사한 경우
+    '/usr/share/fonts/opentype/noto/NotoSansCJKkr-Regular.otf',
+
+    // apt fonts-noto-cjk 설치 시 생성될 수 있는 경로
     '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
   ],
+
   bold: [
+    path.join(
+      process.cwd(),
+      'apps/nv-metropolis-bp-vss-ui/assets/fonts/NotoSansCJKkr-Bold.otf',
+    ),
     path.join(process.cwd(), 'assets/fonts/NotoSansCJKkr-Bold.otf'),
+    '/usr/share/fonts/opentype/noto/NotoSansCJKkr-Bold.otf',
     '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc',
+
+    // Bold 폰트가 없을 경우 Regular라도 사용
+    path.join(
+      process.cwd(),
+      'apps/nv-metropolis-bp-vss-ui/assets/fonts/NotoSansCJKkr-Regular.otf',
+    ),
     path.join(process.cwd(), 'assets/fonts/NotoSansCJKkr-Regular.otf'),
+    '/usr/share/fonts/opentype/noto/NotoSansCJKkr-Regular.otf',
     '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
   ],
 };
@@ -499,12 +524,17 @@ export async function buildAccidentReportPdfBuffer(report: ReportPayload): Promi
     for (const candidate of PDF_FONT_CANDIDATES[kind]) {
       try {
         const bytes = await readFile(candidate);
+        console.info(`[api/reports] Loaded ${kind} PDF font: ${candidate}`);
         cachedPdfFontBytes = { ...(cachedPdfFontBytes || {}), [kind]: bytes };
         return bytes;
       } catch {
         continue;
       }
     }
+
+    console.warn(
+      `[api/reports] No ${kind} CJK PDF font found. Candidates: ${PDF_FONT_CANDIDATES[kind].join(', ')}`,
+    );
 
     cachedPdfFontBytes = { ...(cachedPdfFontBytes || {}), [kind]: null };
     return null;
@@ -515,16 +545,25 @@ export async function buildAccidentReportPdfBuffer(report: ReportPayload): Promi
   let regularFont: PDFFont;
   let boldFont: PDFFont;
 
+  if (!regularFontBytes) {
+    throw new Error(
+      `No CJK regular font found for PDF generation. Checked: ${PDF_FONT_CANDIDATES.regular.join(', ')}`,
+    );
+  }
+  
   try {
-    regularFont = regularFontBytes
-      ? await pdfDoc.embedFont(regularFontBytes, { subset: true })
-      : await pdfDoc.embedFont(StandardFonts.Helvetica);
+    regularFont = await pdfDoc.embedFont(regularFontBytes, { subset: true });
+  
+    // Bold 폰트가 없으면 Regular 폰트를 Bold 대체용으로 사용
     boldFont = boldFontBytes
       ? await pdfDoc.embedFont(boldFontBytes, { subset: true })
-      : await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  } catch {
-    regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      : regularFont;
+  } catch (error) {
+    throw new Error(
+      `Failed to embed CJK PDF font: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 
   let page = pdfDoc.addPage([595.28, 841.89]);

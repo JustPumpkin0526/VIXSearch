@@ -2,7 +2,6 @@ ARG USER_ID=65532
 ARG GROUP_ID=65532
 ARG BUILD_TYPE=prod
 
-
 # Builder phase
 FROM node:22.22.3 AS builder
 ARG USER_ID
@@ -34,20 +33,70 @@ RUN chmod -R 755 apps/nv-metropolis-bp-vss-ui/public && \
 
 
 # Conditional runner phase
-FROM nvcr.io/nvidia/distroless/node:22-v4.0.7 AS runner-prod
+FROM node:22-bookworm-slim AS runner-prod
 ARG BUILD_TYPE
 
-FROM nvcr.io/nvidia/distroless/node:22-v4.0.7-dev AS runner-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-writer \
+    libreoffice-core \
+    libreoffice-common \
+    fontconfig \
+    fonts-dejavu \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV HOME=/tmp
+ENV SAL_USE_VCLPLUGIN=svp
+ENV FONTCONFIG_PATH=/etc/fonts
+
+RUN which soffice && soffice --headless --version
+
+
+FROM node:22-bookworm-slim AS runner-dev
 ARG BUILD_TYPE
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-writer \
+    libreoffice-core \
+    libreoffice-common \
+    fontconfig \
+    fonts-dejavu \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV HOME=/tmp
+ENV SAL_USE_VCLPLUGIN=svp
+ENV FONTCONFIG_PATH=/etc/fonts
+
+RUN which soffice && soffice --headless --version
 
 
 FROM runner-${BUILD_TYPE} AS runner
 ARG USER_ID
 ARG GROUP_ID
 
-
 WORKDIR /repo
 
+RUN mkdir -p /usr/share/fonts/opentype/noto \
+    /repo/apps/nv-metropolis-bp-vss-ui/assets/fonts
+
+# Copy local Korean CJK fonts for report PDF generation and LibreOffice rendering
+COPY --from=builder --chown=root:root --chmod=444 \
+  /repo/services/ui/apps/nv-metropolis-bp-vss-ui/assets/fonts/NotoSansCJKkr-Regular.otf \
+  /usr/share/fonts/opentype/noto/NotoSansCJKkr-Regular.otf
+
+COPY --from=builder --chown=root:root --chmod=444 \
+  /repo/services/ui/apps/nv-metropolis-bp-vss-ui/assets/fonts/NotoSansCJKkr-Bold.otf \
+  /usr/share/fonts/opentype/noto/NotoSansCJKkr-Bold.otf
+
+# Also keep the same fonts under the app path for _docx.ts pdf-lib fallback lookup
+COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=444 \
+  /repo/services/ui/apps/nv-metropolis-bp-vss-ui/assets/fonts/NotoSansCJKkr-Regular.otf \
+  /repo/apps/nv-metropolis-bp-vss-ui/assets/fonts/NotoSansCJKkr-Regular.otf
+
+COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=444 \
+  /repo/services/ui/apps/nv-metropolis-bp-vss-ui/assets/fonts/NotoSansCJKkr-Bold.otf \
+  /repo/apps/nv-metropolis-bp-vss-ui/assets/fonts/NotoSansCJKkr-Bold.otf
+
+RUN fc-cache -f -v
 
 # Copy standalone output from each app into its own subdirectory (read-only)
 COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=555 /repo/services/ui/apps/nv-metropolis-bp-vss-ui/.next/standalone ./apps/nv-metropolis-bp-vss-ui/
@@ -73,6 +122,13 @@ COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=555 /repo/services/ui
 # Copy license files (read-only)
 COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=444 /repo/services/ui/LICENSE* ./
 COPY --from=builder --chown=root:root --chmod=0444 /repo/services/ui/NVIDIA-Software-License-Agreement.pdf ./
+
+# Fix runtime permissions for non-root user
+RUN chown -R ${USER_ID}:${GROUP_ID} /repo && \
+    find /repo -type d -exec chmod 755 {} \; && \
+    find /repo -type f -exec chmod 555 {} \; && \
+    chmod -R u+rwX,go+rX /repo/apps/nv-metropolis-bp-vss-ui/apps/nv-metropolis-bp-vss-ui/public || true && \
+    chmod -R u+rwX,go+rX /repo/apps/nemo-agent-toolkit-ui/apps/nemo-agent-toolkit-ui/public || true
 
 # Set environment variables
 ENV NODE_ENV production

@@ -15,6 +15,33 @@ import { formatTime, parseDateAsLocal } from '../utils/Formatter';
 const REPORTS_UPDATED_EVENT = 'vss:reports-updated';
 const OPEN_REPORT_TAB_EVENT = 'vss:open-report-tab';
 
+type GeneratedReportItem = {
+  id: string;
+  title: string;
+  createdAt: string;
+  query?: string;
+  description?: string;
+  content?: string;
+  items: Array<{
+    id: string;
+    videoName: string;
+    description: string;
+    startTime: string;
+    endTime: string;
+    sensorId: string;
+    similarity: number;
+    screenshotUrl: string;
+  }>;
+};
+
+type ContextMenuState =
+  | {
+      x: number;
+      y: number;
+      targetKey: string;
+    }
+  | null;
+
 const AddContextButton: React.FC<{
   item: SearchData;
   onAddContext?: (ctx: QueryDataContext) => void;
@@ -30,7 +57,10 @@ const AddContextButton: React.FC<{
     };
   }, []);
 
-  const handleClick = useCallback(() => {
+ const handleClick = useCallback(
+  (event: React.MouseEvent) => {
+    event.stopPropagation();
+
     if (!onAddContext) {
       return;
     }
@@ -38,7 +68,6 @@ const AddContextButton: React.FC<{
     const ctx: QueryDataContext = {
       id: `${item.video_name}-${item.start_time}-${item.end_time}`,
       label: item.video_name,
-      // contextType: UI-only (chip tooltip / future grouping); not sent to the backend — see Chat onSend.
       contextType: 'media/video',
       data: {
         sensorName: item.video_name,
@@ -59,7 +88,9 @@ const AddContextButton: React.FC<{
       setAddedState('idle');
       timeoutRef.current = null;
     }, 2000);
-  }, [item.video_name, item.start_time, item.end_time, onAddContext]);
+  },
+  [item.video_name, item.start_time, item.end_time, onAddContext],
+);
 
   return (
     <Button
@@ -94,6 +125,21 @@ function getResultKey(item: SearchData): string {
   ].join('::');
 }
 
+function getAuthHeaders(): HeadersInit {
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+  };
+
+  if (typeof window !== 'undefined') {
+    const token = window.localStorage.getItem('vss.auth.token');
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
+
+  return headers;
+}
+
 function buildReportTitle(items: SearchData[]): string {
   if (items.length <= 1) {
     return `${items[0]?.video_name ?? '검색 결과'} 보고서`;
@@ -104,7 +150,7 @@ function buildReportTitle(items: SearchData[]): string {
   }건 보고서`;
 }
 
-function toReportItems(items: SearchData[]) {
+function toReportItems(items: SearchData[]): GeneratedReportItem['items'] {
   return items.map((item) => ({
     id: getResultKey(item),
     videoName: item.video_name,
@@ -117,17 +163,46 @@ function toReportItems(items: SearchData[]) {
   }));
 }
 
-async function saveGeneratedReport(
-  items: SearchData[],
-  userQuery?: string,
-): Promise<boolean> {
-  if (typeof window === 'undefined' || items.length === 0) {
-    return false;
+function mergeReportItems(
+  existingItems: GeneratedReportItem['items'],
+  newItems: GeneratedReportItem['items'],
+): GeneratedReportItem['items'] {
+  const merged = new Map<string, GeneratedReportItem['items'][number]>();
+
+  for (const item of existingItems || []) {
+    merged.set(item.id, item);
   }
 
-  const token = window.localStorage.getItem('vss.auth.token');
+  for (const item of newItems || []) {
+    merged.set(item.id, item);
+  }
 
-  const report = {
+  return Array.from(merged.values());
+}
+
+async function fetchExistingReports(): Promise<GeneratedReportItem[]> {
+  const response = await fetch('/api/reports', {
+    method: 'GET',
+    headers: getAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch reports: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return Array.isArray(data.reports) ? data.reports : [];
+}
+
+async function createNewReportFromItems(
+  items: SearchData[],
+  userQuery?: string,
+): Promise<GeneratedReportItem | null> {
+  if (typeof window === 'undefined' || items.length === 0) {
+    return null;
+  }
+
+  const report: GeneratedReportItem = {
     id: `report-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     title: buildReportTitle(items),
     createdAt: new Date().toISOString(),
@@ -135,17 +210,9 @@ async function saveGeneratedReport(
     items: toReportItems(items),
   };
 
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-  };
-
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
   const response = await fetch('/api/reports', {
     method: 'POST',
-    headers,
+    headers: getAuthHeaders(),
     body: JSON.stringify(report),
   });
 
@@ -154,14 +221,44 @@ async function saveGeneratedReport(
   }
 
   window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
-
   window.dispatchEvent(
     new CustomEvent(OPEN_REPORT_TAB_EVENT, {
       detail: { tabId: 'report' },
     }),
   );
 
-  return true;
+  return report;
+}
+
+async function appendItemsToExistingReport(
+  report: GeneratedReportItem,
+  items: SearchData[],
+): Promise<void> {
+  if (typeof window === 'undefined' || items.length === 0) {
+    return;
+  }
+
+  const nextItems = mergeReportItems(report.items || [], toReportItems(items));
+
+  const response = await fetch('/api/reports', {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      ...report,
+      items: nextItems,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to update report: ${response.status}`);
+  }
+
+  window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
+  window.dispatchEvent(
+    new CustomEvent(OPEN_REPORT_TAB_EVENT, {
+      detail: { tabId: 'report' },
+    }),
+  );
 }
 
 interface VideoSearchListProps {
@@ -273,8 +370,12 @@ interface VideoCardProps {
   index: number;
   isDark: boolean;
   showObjectsBbox: boolean;
+  selected: boolean;
+  onToggleSelection: (item: SearchData) => void;
+  onContextMenu: (event: React.MouseEvent, item: SearchData) => void;
   onPlayVideo: (data: SearchData, showObjectsBbox: boolean) => void;
   onAddContext?: (ctx: QueryDataContext) => void;
+  
 }
 
 const VideoCard: React.FC<VideoCardProps> = ({
@@ -284,6 +385,9 @@ const VideoCard: React.FC<VideoCardProps> = ({
   showObjectsBbox,
   onPlayVideo,
   onAddContext,
+  selected,
+  onToggleSelection,
+  onContextMenu,
 }) => {
   const [isOpeningVideo, setIsOpeningVideo] = useState(false);
   const openingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -312,9 +416,13 @@ const VideoCard: React.FC<VideoCardProps> = ({
 
   return (
     <div
+      onClick={() => onToggleSelection(item)}
+      onContextMenu={(event) => onContextMenu(event, item)}
       data-testid="search-result-card"
       key={`${item.video_name}-${index}`}
       className={`rounded-lg overflow-hidden bg-white shadow-sm dark:bg-neutral-900 w-[280px] min-w-[280px] max-w-[280px] box-border border ${
+        selected ? 'ring-2 ring-green-500 ring-offset-2 dark:ring-offset-neutral-950 ' : ''
+      }${
         item.critic_result?.result === 'confirmed'
           ? 'border-green-500 dark:border-green-400'
           : item.critic_result?.result === 'rejected'
@@ -356,7 +464,10 @@ const VideoCard: React.FC<VideoCardProps> = ({
             className={`absolute inset-0 flex items-center justify-center bg-transparent border-none p-0 ${
               isOpeningVideo ? 'cursor-wait' : 'cursor-pointer'
             }`}
-            onClick={handleOpenVideo}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleOpenVideo();
+            }}
             disabled={isOpeningVideo}
             aria-label={`Play ${item.video_name}`}
           >
@@ -487,6 +598,9 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
 }) => {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [creatingReport, setCreatingReport] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
+  const [existingReports, setExistingReports] = useState<GeneratedReportItem[]>([]);
+  const [loadingReports, setLoadingReports] = useState(false);
 
   const sortedData = useMemo(() => {
     const hasCritic = data.some((item) => item.critic_result);
@@ -507,6 +621,62 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
   }, [data]);
 
   useEffect(() => {
+    if (!contextMenu) {
+      return undefined;
+    }
+
+    const handleOutside = () => setContextMenu(null);
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setContextMenu(null);
+      }
+    };
+
+    window.addEventListener('click', handleOutside);
+    window.addEventListener('contextmenu', handleOutside);
+    window.addEventListener('keydown', handleEscape);
+
+    return () => {
+      window.removeEventListener('click', handleOutside);
+      window.removeEventListener('contextmenu', handleOutside);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadReports() {
+      setLoadingReports(true);
+      try {
+        const reports = await fetchExistingReports();
+        if (!cancelled) {
+          setExistingReports(reports);
+        }
+      } catch (error) {
+        console.warn('[VideoSearchList] Failed to fetch existing reports:', error);
+        if (!cancelled) {
+          setExistingReports([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingReports(false);
+        }
+      }
+    }
+
+    loadReports();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
     setSelectedKeys((prev) => {
       const validKeys = new Set(data.map((item) => getResultKey(item)));
       const next = new Set(
@@ -516,6 +686,30 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
       return next.size === prev.size ? prev : next;
     });
   }, [data]);
+
+  const handleContextMenu = useCallback(
+    (event: React.MouseEvent, item: SearchData) => {
+      event.preventDefault();
+      event.stopPropagation();
+    
+      const key = getResultKey(item);
+    
+      setSelectedKeys((prev) => {
+        if (prev.has(key)) {
+          return prev;
+        }
+      
+        return new Set([key]);
+      });
+    
+      setContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        targetKey: key,
+      });
+    },
+    [],
+  );
 
   const selectedItems = useMemo(() => {
     if (selectedKeys.size === 0) {
@@ -541,25 +735,74 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
     });
   }, []);
 
-  const handleCreateReport = useCallback(async () => {
-    if (creatingReport || selectedItems.length === 0) {
+  const getContextTargetItems = useCallback((): SearchData[] => {
+    if (selectedItems.length > 0) {
+      return selectedItems;
+    }
+
+    if (!contextMenu?.targetKey) {
+      return [];
+    }
+
+    return sortedData.filter((item) => getResultKey(item) === contextMenu.targetKey);
+  }, [contextMenu?.targetKey, selectedItems, sortedData]);
+
+  const handleCreateNewReport = useCallback(async () => {
+    if (creatingReport) {
+      return;
+    }
+
+    const targetItems = getContextTargetItems();
+
+    if (targetItems.length === 0) {
+      setContextMenu(null);
       return;
     }
 
     setCreatingReport(true);
 
     try {
-      await saveGeneratedReport(selectedItems);
-    } catch (createError) {
-      console.error('Failed to create report:', createError);
-
+      await createNewReportFromItems(targetItems);
+    } catch (error) {
+      console.error('Failed to create report:', error);
       if (typeof window !== 'undefined') {
         window.alert('보고서 생성에 실패했습니다.');
       }
     } finally {
       setCreatingReport(false);
+      setContextMenu(null);
     }
-  }, [creatingReport, selectedItems]);
+  }, [creatingReport, getContextTargetItems]);
+
+  const handleAppendToReport = useCallback(
+    async (report: GeneratedReportItem) => {
+      if (creatingReport) {
+        return;
+      }
+
+      const targetItems = getContextTargetItems();
+
+      if (targetItems.length === 0) {
+        setContextMenu(null);
+        return;
+      }
+
+      setCreatingReport(true);
+
+      try {
+        await appendItemsToExistingReport(report, targetItems);
+      } catch (error) {
+        console.error('Failed to append report:', error);
+        if (typeof window !== 'undefined') {
+          window.alert('기존 보고서에 클립을 추가하지 못했습니다.');
+        }
+      } finally {
+        setCreatingReport(false);
+        setContextMenu(null);
+      }
+    },
+    [creatingReport, getContextTargetItems],
+  );
 
   if (loading) {
     return <EmptyState isDark={isDark} />;
@@ -585,7 +828,7 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
         <button
           type="button"
           disabled={selectedItems.length === 0 || creatingReport}
-          onClick={handleCreateReport}
+          onClick={handleCreateNewReport}
           className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           {creatingReport ? '보고서 생성 중...' : '선택 클립으로 보고서 생성'}
@@ -599,7 +842,7 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
         {sortedData.map((item, index) => {
           const key = getResultKey(item);
           const selected = selectedKeys.has(key);
-
+                
           return (
             <div
               key={key}
@@ -612,15 +855,19 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
                   type="checkbox"
                   checked={selected}
                   onChange={() => toggleSelection(item)}
+                  onClick={(event) => event.stopPropagation()}
                 />
                 리포트에 포함
               </label>
-
+            
               <VideoCard
                 item={item}
                 index={index}
                 isDark={isDark}
                 showObjectsBbox={showObjectsBbox}
+                selected={selected}
+                onToggleSelection={toggleSelection}
+                onContextMenu={handleContextMenu}
                 onPlayVideo={onPlayVideo}
                 onAddContext={onAddContext}
               />
@@ -628,6 +875,88 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
           );
         })}
       </div>
+      {contextMenu && (
+        <div
+          className={`fixed z-[9999] min-w-[260px] rounded-lg border p-2 shadow-xl ${
+            isDark
+              ? 'border-gray-700 bg-gray-900 text-white'
+              : 'border-gray-200 bg-white text-gray-900'
+          }`}
+          style={{
+            left: contextMenu.x,
+            top: contextMenu.y,
+          }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div
+            className={`px-3 py-2 text-xs ${
+              isDark ? 'text-gray-400' : 'text-gray-500'
+            }`}
+          >
+            {getContextTargetItems().length}개 클립 선택됨
+          </div>
+
+          <button
+            type="button"
+            className={`w-full rounded px-3 py-2 text-left text-sm ${
+              isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
+            }`}
+            disabled={creatingReport}
+            onClick={handleCreateNewReport}
+          >
+            {creatingReport ? '생성 중...' : '신규 보고서 생성'}
+          </button>
+
+          <div
+            className={`my-1 border-t ${
+              isDark ? 'border-gray-700' : 'border-gray-200'
+            }`}
+          />
+
+          <div
+            className={`px-3 py-2 text-xs ${
+              isDark ? 'text-gray-400' : 'text-gray-500'
+            }`}
+          >
+            기존 보고서에 추가
+          </div>
+
+          {loadingReports ? (
+            <div className="px-3 py-2 text-sm">
+              보고서 목록 불러오는 중...
+            </div>
+          ) : existingReports.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-gray-500">
+              기존 보고서가 없습니다
+            </div>
+          ) : (
+            <div className="max-h-56 overflow-y-auto">
+              {existingReports.map((report) => (
+                <button
+                  key={report.id}
+                  type="button"
+                  className={`w-full rounded px-3 py-2 text-left text-sm ${
+                    isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
+                  }`}
+                  disabled={creatingReport}
+                  onClick={() => handleAppendToReport(report)}
+                  title={report.title}
+                >
+                  <div className="truncate">{report.title}</div>
+                  <div
+                    className={`text-xs ${
+                      isDark ? 'text-gray-500' : 'text-gray-400'
+                    }`}
+                  >
+                    {report.items?.length ?? 0}개 클립
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
