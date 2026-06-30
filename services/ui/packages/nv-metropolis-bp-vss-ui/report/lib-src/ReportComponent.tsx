@@ -600,22 +600,22 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
   }, [pdfTotalPages]);
 
   return (
-    <div className="flex-1 overflow-auto bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100">
+    <div className="flex-1 overflow-auto bg-gray-50 text-gray-900 dark:bg-neutral-900 dark:text-neutral-100">
       <div className="min-h-full p-6 lg:p-8">
         <div className="grid min-h-[calc(100vh-10rem)] gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <section className="flex min-h-0 flex-col rounded-3xl border border-gray-200 bg-white/80 p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
-            <header className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-gray-200 pb-4 dark:border-gray-700">
+          <section className="flex min-h-0 flex-col rounded-3xl border border-gray-200 bg-white/80 p-6 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/80">
+            <header className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-gray-200 pb-4 dark:border-neutral-700">
               <div className="flex flex-col gap-2">
                 <div className="inline-flex w-fit items-center gap-2 rounded-full border border-green-400/50 bg-green-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-green-700 dark:bg-green-900/20 dark:text-green-300">
                   <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
                   Report Viewer
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  <p className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
                     {selectedReport?.title || '리포트를 선택하세요'}
                   </p>
                   {selectedReport?.createdAt ? (
-                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">
                       {formatCreatedAt(selectedReport.createdAt)}
                     </p>
                   ) : null}
@@ -627,21 +627,21 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                   type="button"
                   disabled={!selectedReport?.pdfFileUrl || isPdfPreviewLoading || pdfCurrentPage <= 1}
                   onClick={handlePreviewPrevPage}
-                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:disabled:bg-gray-800 dark:disabled:text-gray-500"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:disabled:bg-neutral-800 dark:disabled:text-neutral-500"
                   aria-label="이전 페이지"
                 >
                   <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
                   </svg>
                 </button>
-                <span className="min-w-[72px] text-center text-xs font-medium text-gray-500 dark:text-gray-400">
+                <span className="min-w-[72px] text-center text-xs font-medium text-gray-500 dark:text-neutral-400">
                   {selectedReport?.pdfFileUrl ? `${pdfCurrentPage} / ${pdfTotalPages}` : '- / -'}
                 </span>
                 <button
                   type="button"
                   disabled={!selectedReport?.pdfFileUrl || isPdfPreviewLoading || pdfCurrentPage >= pdfTotalPages}
                   onClick={handlePreviewNextPage}
-                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:disabled:bg-gray-800 dark:disabled:text-gray-500"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:disabled:bg-neutral-800 dark:disabled:text-neutral-500"
                   aria-label="다음 페이지"
                 >
                   <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -652,14 +652,14 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
             </header>
 
             {!selectedReport ? (
-              <div className="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-gray-300 bg-gray-50/70 dark:border-gray-600 dark:bg-gray-950/40">
+              <div className="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-gray-300 bg-gray-50/70 dark:border-neutral-600 dark:bg-neutral-950/40">
                 <div className="text-center">
-                  <p className="text-base font-medium text-gray-500 dark:text-gray-400">리포트를 선택하여 내용을 확인하세요</p>
+                  <p className="text-base font-medium text-gray-500 dark:text-neutral-400">리포트를 선택하여 내용을 확인하세요</p>
                 </div>
               </div>
             ) : (
               <>
-                <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-gray-200 bg-gray-100/80 p-4 shadow-inner dark:border-gray-700 dark:bg-gray-950/60">
+                <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-gray-200 bg-gray-100/80 p-4 shadow-inner dark:border-neutral-700 dark:bg-neutral-950/60">
                   <div className="min-h-0 flex-1 overflow-hidden">
                     <div className="mx-auto flex h-full w-full max-w-[1040px] flex-col bg-transparent p-0 shadow-none">
                       {selectedReport.pdfFileUrl ? (
@@ -670,7 +670,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                           {pdfPreviewData && !pdfPreviewError ? (
                             <div
                               ref={pdfPreviewContainerRef}
-                              className="flex h-[min(72vh,960px)] min-h-[540px] w-full items-center justify-center overflow-hidden rounded-2xl bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(243,244,246,0.98))] p-4 dark:bg-[linear-gradient(180deg,rgba(17,24,39,0.94),rgba(3,7,18,0.98))]"
+                              className="flex h-[min(72vh,960px)] min-h-[540px] w-full items-center justify-center overflow-hidden rounded-2xl bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(243,244,246,0.98))] p-4 dark:bg-neutral-950"
                             >
                               <canvas
                                 ref={pdfCanvasRef}
@@ -694,7 +694,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                   </div>
                 </div>
 
-                <div className="mt-4 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                <div className="mt-4 flex items-center justify-between text-xs text-gray-500 dark:text-neutral-400">
                   <span>리포트 미리보기</span>
                   <span>{selectedReport.wordCount ?? 0} 단어</span>
                 </div>
@@ -702,13 +702,13 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
             )}
           </section>
 
-          <aside className="flex min-h-0 flex-col rounded-3xl border border-gray-200 bg-white/80 p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
-            <header className="mb-4 border-b border-gray-200 pb-4 dark:border-gray-700">
-              <div className="inline-flex w-fit items-center gap-2 rounded-full border border-blue-400/50 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+          <aside className="flex min-h-0 flex-col rounded-3xl border border-gray-200 bg-white/80 p-6 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/80">
+            <header className="mb-4 border-b border-gray-200 pb-4 dark:border-neutral-700">
+              <div className="inline-flex w-fit items-center gap-2 rounded-full border border-green-400/50 bg-green-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-green-700 dark:bg-green-900/20 dark:text-green-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
                 Report Library
               </div>
-              <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">총 {storedReports.length}개의 리포트</p>
+              <p className="mt-3 text-sm text-gray-600 dark:text-neutral-300">총 {storedReports.length}개의 리포트</p>
             </header>
 
             <div className="mb-4 space-y-3">
@@ -716,7 +716,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                 리포트 검색
               </label>
               <div className="relative">
-                <svg className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 dark:text-neutral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
                 <input
@@ -725,7 +725,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                   value={reportSearchQuery}
                   onChange={(event: React.ChangeEvent<HTMLInputElement>) => setReportSearchQuery(event.target.value)}
                   placeholder="리포트 검색..."
-                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 pl-10 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-green-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:placeholder:text-gray-500 dark:focus:border-green-500"
+                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 pl-10 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-green-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-500 dark:focus:border-green-500"
                 />
               </div>
               <div className="flex gap-2">
@@ -734,8 +734,8 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                   onClick={() => setSortBy('date')}
                   className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                     sortBy === 'date'
-                      ? 'bg-green-600 text-white dark:bg-green-500 dark:text-gray-900'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
+                      ? 'bg-green-600 text-white dark:bg-green-500 dark:text-neutral-950'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700'
                   }`}
                 >
                   최신순
@@ -745,8 +745,8 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                   onClick={() => setSortBy('title')}
                   className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                     sortBy === 'title'
-                      ? 'bg-green-600 text-white dark:bg-green-500 dark:text-gray-900'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
+                      ? 'bg-green-600 text-white dark:bg-green-500 dark:text-neutral-950'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700'
                   }`}
                 >
                   제목순
@@ -761,8 +761,8 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
 
             <div className="min-h-0 flex-1 overflow-y-auto space-y-3">
               {visibleReports.length === 0 ? (
-                <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-gray-300 bg-transparent px-6 py-8 text-center dark:border-gray-600">
-                  <span className="text-sm font-medium text-gray-500 dark:text-gray-400">리포트가 없습니다</span>
+                <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-gray-300 bg-transparent px-6 py-8 text-center dark:border-neutral-600">
+                  <span className="text-sm font-medium text-gray-500 dark:text-neutral-400">리포트가 없습니다</span>
                 </div>
               ) : (
                 visibleReports.map((report) => (
@@ -772,7 +772,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                     className={`group flex w-full items-start justify-between gap-3 rounded-xl border p-4 text-left transition-all ${
                       selectedReportId === report.id
                         ? 'border-green-400 bg-green-50/70 shadow-sm dark:border-green-400 dark:bg-green-900/10'
-                        : 'border-gray-200 bg-white hover:border-green-300 hover:shadow-sm dark:border-gray-700 dark:bg-gray-800/60 dark:hover:border-green-500'
+                        : 'border-gray-200 bg-white hover:border-green-300 hover:shadow-sm dark:border-neutral-700 dark:bg-neutral-800/60 dark:hover:border-green-500'
                     }`}
                     role="button"
                     tabIndex={0}
@@ -784,11 +784,11 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                     }}
                   >
                     <div className="min-w-0 flex-1">
-                      <h4 className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">{report.title}</h4>
+                      <h4 className="truncate text-sm font-semibold text-gray-900 dark:text-neutral-100">{report.title}</h4>
                       {report.description ? (
-                        <p className="mt-1 line-clamp-2 text-xs text-gray-600 dark:text-gray-400">{report.description}</p>
+                        <p className="mt-1 line-clamp-2 text-xs text-gray-600 dark:text-neutral-400">{report.description}</p>
                       ) : null}
-                      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+                      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-neutral-400">
                         <span>{formatCreatedAt(report.createdAt)}</span>
                         <span>{report.wordCount ?? 0} 단어</span>
                       </div>
@@ -802,7 +802,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                           setSelectedReportId(report.id);
                           setOpenReportMenuId((current) => (current === report.id ? null : report.id));
                         }}
-                        className="rounded-lg p-1.5 text-gray-500 opacity-0 transition-all hover:bg-gray-100 hover:text-gray-700 group-hover:opacity-100 focus:opacity-100 focus:outline-none dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                        className="rounded-lg p-1.5 text-gray-500 opacity-0 transition-all hover:bg-gray-100 hover:text-gray-700 group-hover:opacity-100 focus:opacity-100 focus:outline-none dark:text-neutral-400 dark:hover:bg-neutral-700 dark:hover:text-gray-200"
                       >
                         <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
                           <path d="M10 6a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 5.5A1.5 1.5 0 1110 8a1.5 1.5 0 010 3.5zm0 5.5a1.5 1.5 0 110-3 1.5 1.5 0 010 3z" />
@@ -810,7 +810,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                       </button>
                       {openReportMenuId === report.id ? (
                         <div
-                          className="absolute right-0 top-9 z-10 min-w-[170px] overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800"
+                          className="absolute right-0 top-9 z-10 min-w-[170px] overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-800"
                           onClick={(event) => event.stopPropagation()}
                         >
                           <button
@@ -821,7 +821,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                               await handleDownloadWord(report);
                               setOpenReportMenuId(null);
                             }}
-                            className="flex w-full items-center px-4 py-2 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-200 dark:hover:bg-gray-700"
+                            className="flex w-full items-center px-4 py-2 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-neutral-200 dark:hover:bg-neutral-700"
                           >
                             Word 다운로드
                           </button>
@@ -833,7 +833,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                               await handleDownloadPdf(report);
                               setOpenReportMenuId(null);
                             }}
-                            className="flex w-full items-center px-4 py-2 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-200 dark:hover:bg-gray-700"
+                            className="flex w-full items-center px-4 py-2 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-neutral-200 dark:hover:bg-neutral-700"
                           >
                             PDF 다운로드
                           </button>
@@ -856,22 +856,22 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
               )}
             </div>
 
-            <div className="mt-4 border-t border-gray-200 pt-4 dark:border-gray-700">
+            <div className="mt-4 border-t border-gray-200 pt-4 dark:border-neutral-700">
               <div className="flex items-center justify-center gap-2">
                 <button
                   type="button"
                   onClick={() => setListPage((current) => Math.max(1, current - 1))}
                   disabled={listPage <= 1}
-                  className="rounded-lg bg-gray-100 px-3 py-1 text-sm text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                  className="rounded-lg bg-gray-100 px-3 py-1 text-sm text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
                 >
                   〈
                 </button>
-                <span className="text-sm text-gray-500 dark:text-gray-400">Page {listPage} / {totalListPages}</span>
+                <span className="text-sm text-gray-500 dark:text-neutral-400">Page {listPage} / {totalListPages}</span>
                 <button
                   type="button"
                   onClick={() => setListPage((current) => Math.min(totalListPages, current + 1))}
                   disabled={listPage >= totalListPages}
-                  className="rounded-lg bg-gray-100 px-3 py-1 text-sm text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                  className="rounded-lg bg-gray-100 px-3 py-1 text-sm text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
                 >
                   〉
                 </button>

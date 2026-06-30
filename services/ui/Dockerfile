@@ -123,13 +123,6 @@ COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=555 /repo/services/ui
 COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=444 /repo/services/ui/LICENSE* ./
 COPY --from=builder --chown=root:root --chmod=0444 /repo/services/ui/NVIDIA-Software-License-Agreement.pdf ./
 
-# Fix runtime permissions for non-root user
-RUN chown -R ${USER_ID}:${GROUP_ID} /repo && \
-    find /repo -type d -exec chmod 755 {} \; && \
-    find /repo -type f -exec chmod 555 {} \; && \
-    chmod -R u+rwX,go+rX /repo/apps/nv-metropolis-bp-vss-ui/apps/nv-metropolis-bp-vss-ui/public || true && \
-    chmod -R u+rwX,go+rX /repo/apps/nemo-agent-toolkit-ui/apps/nemo-agent-toolkit-ui/public || true
-
 # Set environment variables
 ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
