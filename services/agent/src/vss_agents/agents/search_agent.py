@@ -27,6 +27,7 @@ All paths yield AgentMessageChunk for real-time visibility.
 from collections.abc import AsyncGenerator
 from datetime import UTC
 from datetime import datetime
+from datetime import timedelta
 import json
 import logging
 import time
@@ -56,6 +57,7 @@ from vss_agents.tools.search import SearchOutput
 from vss_agents.tools.search import SearchResult
 from vss_agents.tools.search import execute_core_search
 from vss_agents.tools.vst.utils import get_name_to_stream_id_map
+from vss_agents.utils.time_convert import datetime_to_iso8601
 from vss_agents.utils.time_convert import iso8601_to_datetime
 
 logger = logging.getLogger(__name__)
@@ -195,6 +197,62 @@ def _apply_final_result_limit(
     if max_results is None:
         return results
     return results[:max_results]
+
+_MIN_RESULT_CLIP_SECONDS = 5.0
+
+
+def _expand_zero_duration_results(
+    results: list[SearchResult],
+    min_duration_seconds: float = _MIN_RESULT_CLIP_SECONDS,
+) -> list[SearchResult]:
+    """Ensure every returned SearchResult has a positive clip duration.
+
+    Some search paths, especially frame/object-level attribute search, can return
+    start_time and end_time as the same timestamp. The UI/VST clip renderer then
+    treats that as a 0-second clip. Expand those results to a small time window.
+    """
+    fixed_results: list[SearchResult] = []
+
+    for result in results:
+        try:
+            if not result.start_time or not result.end_time:
+                fixed_results.append(result)
+                continue
+
+            start_dt = iso8601_to_datetime(result.start_time)
+            end_dt = iso8601_to_datetime(result.end_time)
+
+            if end_dt > start_dt:
+                fixed_results.append(result)
+                continue
+
+            new_end_dt = start_dt + timedelta(seconds=min_duration_seconds)
+
+            logger.info(
+                "Expanded zero-duration search result: sensor_id=%s start=%s end=%s -> %s",
+                result.sensor_id,
+                result.start_time,
+                result.end_time,
+                datetime_to_iso8601(new_end_dt),
+            )
+
+            fixed_results.append(
+                result.model_copy(
+                    update={
+                        "end_time": datetime_to_iso8601(new_end_dt),
+                    }
+                )
+            )
+
+        except Exception as e:
+            logger.warning(
+                "Failed to normalize search result timestamp for sensor_id=%s: %s",
+                getattr(result, "sensor_id", None),
+                e,
+            )
+            fixed_results.append(result)
+
+    return fixed_results
 
 
 def _candidate_top_k(search_agent_input: SearchAgentInput, default_top_k: int) -> int:

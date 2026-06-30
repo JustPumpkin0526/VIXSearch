@@ -226,8 +226,79 @@ export const Chat = () => {
   const [currentMessage, setCurrentMessage] = useState<Message>();
   const [autoScrollEnabled, setAutoScrollEnabled] = useState<boolean>(true);
   const [showSettings, setShowSettings] = useState<boolean>(false);
-  const [showScrollDownButton, setShowScrollDownButton] =
-    useState<boolean>(false);
+  const [showScrollDownButton, setShowScrollDownButton] = useState<boolean>(false);
+
+  const isSearchTabChat =
+    typeof storageKeyPrefix === 'string' &&
+    storageKeyPrefix.startsWith('searchTab');
+
+  const fetchOwnedVideoIdsForSearch = useCallback(async (): Promise<string[]> => {
+    if (!isSearchTabChat || typeof window === 'undefined') {
+      return [];
+    }
+
+    const token = window.localStorage.getItem('vss.auth.token');
+
+    if (!token) {
+      return [];
+    }
+
+    try {
+      const response = await fetch('/api/videos/list', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        console.warn(
+          'Failed to fetch owned uploaded videos for search:',
+          response.status,
+        );
+        return [];
+      }
+
+      const payload = await response.json();
+      const videos: Array<{ sensor_id?: string }> = Array.isArray(payload?.videos)
+        ? payload.videos
+        : [];
+
+      const ownedVideoIds: string[] = [];
+
+      for (const video of videos) {
+        const sensorId =
+          typeof video?.sensor_id === 'string' ? video.sensor_id.trim() : '';
+
+        if (sensorId) {
+          ownedVideoIds.push(sensorId);
+        }
+      }
+
+      return ownedVideoIds;
+    } catch (error) {
+      console.warn('Failed to resolve owned uploaded videos for search:', error);
+      return [];
+    }
+  }, [isSearchTabChat]);
+
+  const buildSearchAwareCustomParams = useCallback(
+    async (
+      customParams?: CustomAgentParamsValues | null,
+    ): Promise<CustomAgentParamsValues> => {
+      const nextCustomParams: CustomAgentParamsValues = {
+        ...(customParams || {}),
+      };
+
+      if (isSearchTabChat) {
+        nextCustomParams.owned_video_ids = await fetchOwnedVideoIdsForSearch();
+        nextCustomParams.search_source_type = 'video_file';
+      }
+
+      return nextCustomParams;
+    },
+    [isSearchTabChat, fetchOwnedVideoIdsForSearch],
+  );
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -1533,14 +1604,24 @@ export const Chat = () => {
   // Expose programmatic submit to embedder (send a message to the agent without user typing)
   useEffect(() => {
     if (!onSubmitMessageReady || !selectedConversation) return;
-    const submitMessage = (content: string) => {
+
+    const submitMessage = async (content: string) => {
       if (uploadFlowActiveRef.current) return;
+
+      customAgentParamsRef.current = await buildSearchAwareCustomParams(
+        customAgentParamsRef.current,
+      );
+
       const message: Message = { role: 'user', content };
       handleSendRef.current?.(message, 0);
-      onMessageSubmitted?.();
     };
+
     onSubmitMessageReady(submitMessage);
-  }, [onSubmitMessageReady, selectedConversation?.id, onMessageSubmitted]);
+  }, [
+    onSubmitMessageReady,
+    selectedConversation?.id,
+    buildSearchAwareCustomParams,
+  ]);
 
   // Expose addQueryContext to embedder so external panels can add context items to the chat input
   useEffect(() => {
@@ -1550,11 +1631,20 @@ export const Chat = () => {
 
   // Create stable onEdit callback to prevent unnecessary re-renders of MemoizedChatMessage
   // Uses ref to access the latest handleSend without depending on it directly
-  const handleEditMessage = useCallback((editedMessage: Message, deleteCount?: number) => {
-    if (uploadFlowActiveRef.current) return;
-    setCurrentMessage(editedMessage);
-    handleSendRef.current?.(editedMessage, deleteCount || 0);
-  }, []); // Empty deps - stable reference forever
+  const handleEditMessage = useCallback(
+    async (editedMessage: Message, deleteCount?: number) => {
+      if (uploadFlowActiveRef.current) return;
+
+      setCurrentMessage(editedMessage);
+
+      customAgentParamsRef.current = await buildSearchAwareCustomParams(
+        customAgentParamsRef.current,
+      );
+
+      handleSendRef.current?.(editedMessage, deleteCount || 0);
+    },
+    [buildSearchAwareCustomParams],
+  ); // Empty deps - stable reference forever
 
   // Create stable onDelete callback - uses refs to access latest state
   const handleDeleteMessage = useCallback((messageIndex: number) => {
@@ -1841,11 +1931,10 @@ export const Chat = () => {
           chatBlocked={uploadFlowActive}
           getActiveConversationId={getActiveConversationId}
           onUploadFlowActiveChange={reportUploadFlowActive}
-          onSend={(message, customParams) => {
+          onSend={async (message, customParams) => {
             const items = queryContextRef.current;
+                    
             if (items.length > 0) {
-              // id, label, and contextType live on QueryDataContext for UI only (keys, chips, tooltips).
-              // Never send contextType to the backend — omit it even if mistakenly duplicated inside `data`.
               const contextJson = JSON.stringify(
                 items.map(({ data }) => {
                   const { contextType: _omitUiContextType, ...payload } = {
@@ -1854,18 +1943,33 @@ export const Chat = () => {
                   return payload;
                 }),
               );
+            
               const prefix = `[Context: ${contextJson}]`;
-              message = { ...message, content: message.content ? `${prefix}\n\n${message.content}` : prefix };
+            
+              message = {
+                ...message,
+                content: message.content
+                  ? `${prefix}\n\n${message.content}`
+                  : prefix,
+              };
+            
               setQueryContextItems([]);
             }
+          
             setCurrentMessage(message);
-            if (customParams) {
-              customAgentParamsRef.current = customParams;
-            }
+          
+            customAgentParamsRef.current = await buildSearchAwareCustomParams(
+              customParams,
+            );
+          
             handleSend(message, 0);
           }}
           onScrollDownClick={handleScrollDown}
-          onRegenerate={() => {
+          onRegenerate={async () => {
+            customAgentParamsRef.current = await buildSearchAwareCustomParams(
+              customAgentParamsRef.current,
+            );
+          
             if (currentMessage && currentMessage?.role === 'user') {
               handleSend(currentMessage, 0);
             } else {
@@ -1873,6 +1977,7 @@ export const Chat = () => {
                 messages: selectedConversation?.messages || [],
                 role: 'user',
               });
+            
               lastUserMessage && handleSend(lastUserMessage, 1);
             }
           }}
