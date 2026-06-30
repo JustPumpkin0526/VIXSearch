@@ -21,18 +21,19 @@ export interface Message {
   id?: string;
   role: Role;
   content: string;
+
+  // VIXSearch search-result rendering support
+  rawContent?: string;
+  searchResults?: any[];
+  searchResultsSummary?: string;
+
   intermediateSteps?: any;
   humanInteractionMessages?: any;
   errorMessages?: any;
   timestamp?: number;
   parentId?: string;
-  /** Parent app supplied metadata to render caller-info section on assistant responses. */
   callerInfo?: CallerInfo;
-  hidden?: boolean; // If true, message will not be displayed in chat UI but will still be sent to API
-  /**
-   * Conversation active when an upload batch started. Used to drop stale auto-prompts
-   * if the user switched chats before upload finished. Stripped before persistence.
-   */
+  hidden?: boolean;
   uploadConversationId?: string;
 }
 

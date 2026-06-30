@@ -13,11 +13,7 @@ import type {
   QueryDataContext
 } from '@nv-metropolis-bp-vss-ui/all';
 import {
-  IconMessageCircle,
   IconSearch,
-  IconAlertTriangle,
-  IconLayoutDashboard,
-  IconMapPin,
   IconVideo,
   IconSun,
   IconMoon,
@@ -270,77 +266,71 @@ const SidebarNemoAgentToolkitApp = dynamicComponents.NemoAgentToolkitApp;
 export default function Home({ alertsData, searchData, dashboardData, mapData, videoManagementData, serverRenderTime }: HomeProps) {
   // Get deployment configuration from environment variables - memoize to prevent recreation
   const deploymentConfig = useMemo(() => {
+
     return {
-      enableChatTab: (env('NEXT_PUBLIC_ENABLE_CHAT_TAB') || process.env.NEXT_PUBLIC_ENABLE_CHAT_TAB) !== 'false',
-      enableAlertsTab: (env('NEXT_PUBLIC_ENABLE_ALERTS_TAB') || process.env.NEXT_PUBLIC_ENABLE_ALERTS_TAB) !== 'false',
-      enableSearchTab: (env('NEXT_PUBLIC_ENABLE_SEARCH_TAB') || process.env.NEXT_PUBLIC_ENABLE_SEARCH_TAB) !== 'false',
-      enableDashboardTab: (env('NEXT_PUBLIC_ENABLE_DASHBOARD_TAB') || process.env.NEXT_PUBLIC_ENABLE_DASHBOARD_TAB) !== 'false',
-      enableMapTab: (env('NEXT_PUBLIC_ENABLE_MAP_TAB') || process.env.NEXT_PUBLIC_ENABLE_MAP_TAB) !== 'false',
-      enableVideoManagementTab: (env('NEXT_PUBLIC_ENABLE_VIDEO_MANAGEMENT_TAB') || process.env.NEXT_PUBLIC_ENABLE_VIDEO_MANAGEMENT_TAB) !== 'false',
-      enableReportTab: (env('NEXT_PUBLIC_ENABLE_REPORT_TAB') || process.env.NEXT_PUBLIC_ENABLE_REPORT_TAB) !== 'false',
+
+      enableChatTab:
+        (env('NEXT_PUBLIC_ENABLE_CHAT_TAB') ||
+          process.env.NEXT_PUBLIC_ENABLE_CHAT_TAB) !== 'false',
+
+      enableAlertsTab:
+        (env('NEXT_PUBLIC_ENABLE_ALERTS_TAB') ||
+          process.env.NEXT_PUBLIC_ENABLE_ALERTS_TAB) !== 'false',
+
+      enableSearchTab:
+        (env('NEXT_PUBLIC_ENABLE_SEARCH_TAB') ||
+          process.env.NEXT_PUBLIC_ENABLE_SEARCH_TAB) !== 'false',
+
+      enableDashboardTab:
+        (env('NEXT_PUBLIC_ENABLE_DASHBOARD_TAB') ||
+          process.env.NEXT_PUBLIC_ENABLE_DASHBOARD_TAB) !== 'false',
+
+      enableMapTab:
+        (env('NEXT_PUBLIC_ENABLE_MAP_TAB') ||
+          process.env.NEXT_PUBLIC_ENABLE_MAP_TAB) !== 'false',
+
+      enableVideoManagementTab:
+        (env('NEXT_PUBLIC_ENABLE_VIDEO_MANAGEMENT_TAB') ||
+          process.env.NEXT_PUBLIC_ENABLE_VIDEO_MANAGEMENT_TAB) !== 'false',
+
+      enableReportTab:
+        (env('NEXT_PUBLIC_ENABLE_REPORT_TAB') ||
+          process.env.NEXT_PUBLIC_ENABLE_REPORT_TAB) !== 'false',
+
       chatSidebarEnabled: getChatSidebarEnabled(),
     };
-  }, []); // Empty deps - env vars don't change during runtime
+  }, []);
 
   // Define all possible tabs with their configuration - memoize to prevent recreation
-  const allTabs: TabConfig[] = useMemo(() => [
-    { 
-      id: 'chat', 
-      label: 'Chat', 
-      icon: <IconMessageCircle size={16} />, 
-      alt: 'Chat with Agent',
-      enabled: deploymentConfig.enableChatTab,
-      component: 'NemoAgentToolkitApp'
-    },
-    { 
-      id: 'search', 
-      label: 'Search', 
-      icon: <IconSearch size={16} />, 
-      alt: 'Search',
-      enabled: deploymentConfig.enableSearchTab,
-      component: 'SearchComponent'
-    },
-    { 
-      id: 'alerts', 
-      label: 'Alerts', 
-      icon: <IconAlertTriangle size={16} />, 
-      alt: 'Alerts List',
-      enabled: deploymentConfig.enableAlertsTab,
-      component: 'AlertsComponent'
-    },
-    { 
-      id: 'dashboard', 
-      label: 'Dashboard', 
-      icon: <IconLayoutDashboard size={16} />, 
-      alt: 'Dashboard',
-      enabled: deploymentConfig.enableDashboardTab,
-      component: 'DashboardComponent'
-    },
-    { 
-      id: 'map', 
-      label: 'Map', 
-      icon: <IconMapPin size={16} />, 
-      alt: 'Map',
-      enabled: deploymentConfig.enableMapTab,
-      component: 'MapComponent'
-    },
-    { 
-      id: 'video-management', 
-      label: 'Video Management', 
-      icon: <IconVideo size={16} />, 
-      alt: 'Video Management',
-      enabled: deploymentConfig.enableVideoManagementTab,
-      component: 'VideoManagementComponent'
-    },
-    {
-      id: 'report',
-      label: 'Report',
-      icon: <IconFileText size={20} />,
-      alt: 'Report',
-      enabled: deploymentConfig.enableReportTab,
-      component: 'ReportComponent'
-    },
-  ], [deploymentConfig]);
+  const allTabs: TabConfig[] = useMemo(
+    () => [
+      {
+        id: 'search',
+        label: 'Search',
+        icon: <IconSearch size={20} />,
+        alt: 'Agent Search',
+        enabled: true,
+        component: 'NemoAgentToolkitApp',
+      },
+      {
+        id: 'report',
+        label: 'Report',
+        icon: <IconFileText size={20} />,
+        alt: 'Report',
+        enabled: true,
+        component: 'ReportComponent',
+      },
+      {
+        id: 'video-management',
+        label: 'Video Management',
+        icon: <IconVideo size={20} />,
+        alt: 'Video Management',
+        enabled: true,
+        component: 'VideoManagementComponent',
+      },
+    ],
+    [],
+  );
 
   // Filter tabs based on deployment configuration
   const visibleTabs = useMemo(() => 
@@ -661,31 +651,40 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
 
   // Clear mode controls when switching tabs
   React.useEffect(() => {
-    if (activeTab !== 'chat') {
+    const currentTabConfig = visibleTabs.find((tab) => tab.id === activeTab);
+    const activeTabUsesAgentChat =
+      currentTabConfig?.component === 'NemoAgentToolkitApp';
+  
+    if (!activeTabUsesAgentChat) {
       setChatControlHandlers(null);
       chatHandlersSetRef.current = false;
     }
+  
     if (activeTab !== 'alerts') {
       setAlertsControlHandlers(null);
       alertsHandlersSetRef.current = false;
     }
+  
     if (activeTab !== 'search') {
       setSearchControlHandlers(null);
       searchHandlersSetRef.current = false;
     }
-    if (activeTab !== 'dashboard') {
+  
+    if (activeTab !== 'dashboard' && activeTab !== 'report') {
       setDashboardControlHandlers(null);
       dashboardHandlersSetRef.current = false;
     }
+  
     if (activeTab !== 'map') {
       setMapControlHandlers(null);
       mapHandlersSetRef.current = false;
     }
+  
     if (activeTab !== 'video-management') {
       setVideoManagementControlHandlers(null);
       videoManagementHandlersSetRef.current = false;
     }
-  }, [activeTab]);
+  }, [activeTab, visibleTabs]);
 
   // Render a single tab component with visibility control
   const renderTabComponent = (tabConfig: TabConfig) => {
@@ -708,7 +707,7 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
       );
     }
 
-    // Main Chat tab: use default env (no RuntimeConfigProvider = getWorkflowName() reads NEXT_PUBLIC_WORKFLOW)
+    // Agent Chat tab: can be used by the Chat tab or by the Search tab in agent-only mode.
     if (componentName === 'NemoAgentToolkitApp') {
       return (
         <div 
@@ -810,8 +809,13 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
       </div>
     );
 
+    const activeTabConfig = visibleTabs.find((tab) => tab.id === activeTab);
+
+    const activeTabUsesMainChat =
+      activeTabConfig?.component === 'NemoAgentToolkitApp';
+      
     const showFloatingChatSidebar =
-      deploymentConfig.chatSidebarEnabled && activeTab !== 'chat';
+      deploymentConfig.chatSidebarEnabled && !activeTabUsesMainChat;
 
     if (!showFloatingChatSidebar) {
       return tabStack;
