@@ -6,6 +6,11 @@ import { createPortal } from 'react-dom';
 
 import { VideoModal } from '../Markdown/VideoModal';
 
+type CriticResult = {
+  result: 'confirmed' | 'rejected' | 'unverified' | string;
+  criteria_met: Record<string, boolean>;
+};
+
 export type SearchResultItem = {
   video_name: string;
   sensor_id: string;
@@ -18,6 +23,7 @@ export type SearchResultItem = {
   clip_url?: string;
   url?: string;
   object_ids?: string[];
+  critic_result?: CriticResult | null;
 };
 
 type ParsedSearchResultsMessage = {
@@ -153,6 +159,43 @@ function normalizePossibleLink(value: unknown): string {
   return trimmed;
 }
 
+function normalizeCriticResult(value: unknown): CriticResult | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const raw = value as Record<string, unknown>;
+
+  const result =
+    typeof raw.result === 'string'
+      ? raw.result
+      : typeof raw.verdict === 'string'
+        ? raw.verdict
+        : '';
+
+  if (!result) {
+    return null;
+  }
+
+  const criteriaRaw =
+    raw.criteria_met && typeof raw.criteria_met === 'object'
+      ? raw.criteria_met
+      : raw.criteriaMet && typeof raw.criteriaMet === 'object'
+        ? raw.criteriaMet
+        : {};
+
+  const criteria_met: Record<string, boolean> = {};
+
+  for (const [key, met] of Object.entries(criteriaRaw as Record<string, unknown>)) {
+    criteria_met[key] = Boolean(met);
+  }
+
+  return {
+    result,
+    criteria_met,
+  };
+}
+
 function normalizeSearchResult(candidate: unknown): SearchResultItem | null {
   if (!candidate || typeof candidate !== 'object') {
     return null;
@@ -192,6 +235,7 @@ function normalizeSearchResult(candidate: unknown): SearchResultItem | null {
       : Array.isArray(value.objectIds)
         ? value.objectIds.filter((item): item is string => typeof item === 'string')
         : [],
+    critic_result: normalizeCriticResult(value.critic_result ?? value.criticResult),
   };
 }
 
@@ -265,6 +309,18 @@ export function extractSearchResultsMessage(rawContent: string): ParsedSearchRes
 
   return null;
 }
+
+const CRITIC_SORT_ORDER: Record<string, number> = {
+  confirmed: 0,
+  unverified: 1,
+  rejected: 2,
+};
+
+function getCriticSortRank(item: SearchResultItem): number {
+  return item.critic_result
+    ? CRITIC_SORT_ORDER[item.critic_result.result] ?? 3
+    : 3;
+};
 
 function getResultKey(item: SearchResultItem): string {
   return [item.sensor_id, item.video_name, item.start_time, item.end_time].join('::');
@@ -958,6 +1014,24 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
     }
   }, [existingReports, reportSourceItems, savingReport, selectedExistingReportId, sourceQuery]);
 
+  const sortedResults = React.useMemo(() => {
+    const hasCritic = results.some((item) => item.critic_result);
+
+    if (!hasCritic) {
+      return results;
+    }
+
+    return [...results].sort((a, b) => {
+      const rankDiff = getCriticSortRank(a) - getCriticSortRank(b);
+
+      if (rankDiff !== 0) {
+        return rankDiff;
+      }
+
+      return (Number(b.similarity) || 0) - (Number(a.similarity) || 0);
+    });
+  }, [results]);
+
   const renderContextMenu = () => {
     if (!contextMenu || typeof document === 'undefined') {
       return null;
@@ -1049,7 +1123,7 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
         </div>
 
         <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
-          {results.map((item) => {
+          {sortedResults.map((item) => {
             const key = getResultKey(item);
             const isSelected = selectedKeys.includes(key);
             const playableUrl = getPlayableUrl(item);
@@ -1060,10 +1134,14 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
               <div
                 key={key}
                 onContextMenu={(event) => handleCardContextMenu(event, item)}
-                className={`group relative w-full overflow-hidden rounded-2xl border bg-white shadow-sm transition-colors dark:bg-gray-700 ${
-                  isSelected
-                    ? 'border-green-500 shadow-[0_0_0_2px_rgba(34,197,94,0.22)] dark:border-green-400'
-                    : 'border-gray-200 dark:border-gray-600'
+                className={`overflow-hidden rounded-lg bg-white shadow-sm dark:bg-neutral-950 border ${
+                  item.critic_result?.result === 'confirmed'
+                    ? 'border-green-500 dark:border-green-400'
+                    : item.critic_result?.result === 'rejected'
+                      ? 'border-red-500 dark:border-red-400'
+                      : item.critic_result?.result === 'unverified'
+                        ? 'border-yellow-500 dark:border-yellow-400'
+                        : 'border-gray-200 dark:border-gray-700'
                 }`}
               >
                 <div className="space-y-3 p-4 pb-0">
@@ -1133,13 +1211,18 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
                 <div className="flex items-baseline justify-between p-4 pt-3">
                   <div className="min-w-0 pr-3">
                     {clipAnalysis?.loading ? (
-                      <p className="text-xs font-medium text-amber-600 dark:text-amber-300">VLM 분석 중...</p>
+                      <p className="text-xs font-medium text-amber-600 dark:text-amber-300">
+                        VLM 분석 중...
+                      </p>
                     ) : item.description ? (
-                      <p className="line-clamp-1 text-xs text-gray-500 dark:text-gray-300">{item.description}</p>
+                      <p className="line-clamp-1 text-xs text-gray-500 dark:text-gray-300">
+                        {item.description}
+                      </p>
                     ) : (
                       <p className="text-xs text-gray-500 dark:text-gray-400">설명 없음</p>
                     )}
                   </div>
+                  
                   <div className="shrink-0">
                     <span className="text-xs text-gray-600 dark:text-gray-400">Similarity:</span>
                     <span className="ml-1 rounded-md bg-gray-200 px-3 py-1 text-xs font-semibold text-gray-900 dark:bg-gray-800 dark:text-white">
@@ -1147,6 +1230,42 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
                     </span>
                   </div>
                 </div>
+                  
+                {item.critic_result ? (
+                  <div
+                    className={`mx-4 mb-4 rounded-md px-2 py-2 text-xs ${
+                      item.critic_result.result === 'confirmed'
+                        ? 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300'
+                        : item.critic_result.result === 'rejected'
+                          ? 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                          : item.critic_result.result === 'unverified'
+                            ? 'bg-yellow-50 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-300'
+                            : 'bg-gray-50 text-gray-700 dark:bg-neutral-800 dark:text-gray-300'
+                    }`}
+                  >
+                    <div className="mb-1 font-semibold">
+                      VLM Critic Result:{' '}
+                      {item.critic_result.result === 'confirmed'
+                        ? '✓ Confirmed'
+                        : item.critic_result.result === 'rejected'
+                          ? '✗ Rejected'
+                          : item.critic_result.result === 'unverified'
+                            ? '? Unverified'
+                            : item.critic_result.result}
+                    </div>
+                      
+                    {Object.keys(item.critic_result.criteria_met ?? {}).length > 0 ? (
+                      <div className="space-y-1">
+                        {Object.entries(item.critic_result.criteria_met).map(([criterion, met]) => (
+                          <div key={criterion} className="flex items-center gap-1">
+                            <span>{met ? '✓' : '✗'}</span>
+                            <span>{criterion}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 {(clipAnalysis?.description || clipAnalysis?.error) ? (
                   <div
                     className={`mx-4 mb-4 max-h-32 overflow-y-auto rounded-xl border px-3 py-2 text-xs leading-relaxed ${
