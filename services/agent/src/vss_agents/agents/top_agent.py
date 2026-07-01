@@ -1537,16 +1537,22 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
         ),
     )
 
-    async def _response_fn(
-        request: ChatRequestOrMessage,
-    ) -> AsyncGenerator[str]:
-        """Streaming top agent response.
+    async def _response_fn(request: ChatRequestOrMessage) -> AsyncGenerator[str]:
 
-        Args:
-            request: ChatRequestOrMessage with messages and optional reasoning parameters
-        """
-        # Validate as TopAgentRequest for typed access to per-request option fields
-        typed_request = TopAgentRequest.model_validate(request.model_dump())
+        logger.info(
+            "Top agent received request dump: %s",
+            request.model_dump(mode="json"),
+        )
+
+        typed_request = TopAgentRequest.model_validate(
+            request.model_dump(mode="json")
+        )
+
+        logger.info(
+            "Top agent typed request ownership: owned_video_ids=%s, search_source_type=%s",
+            typed_request.owned_video_ids,
+            typed_request.search_source_type,
+        )
 
         options = AgentRequestOptions(
             llm_reasoning=(
@@ -1570,26 +1576,26 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
 
         # Override with WebSocket payload values if present (WebSocket requests don't pass params through request object)
         context = Context.get()
-        
+
         if hasattr(context.metadata, "payload") and isinstance(context.metadata.payload, dict):
             payload = context.metadata.payload
             options_payload = options.model_dump(mode="json")
-        
+
             if "llm_reasoning" in payload:
                 options_payload["llm_reasoning"] = bool(payload["llm_reasoning"])
-        
+
             if "vlm_reasoning" in payload:
                 options_payload["vlm_reasoning"] = bool(payload["vlm_reasoning"])
-        
+
             if "search_source_type" in payload:
                 options_payload["search_source_type"] = payload["search_source_type"]
-        
+
             if "use_critic" in payload:
                 options_payload["use_critic"] = bool(payload["use_critic"])
-        
+
             if "owned_video_ids" in payload:
                 raw_owned_video_ids = payload.get("owned_video_ids")
-        
+
                 if isinstance(raw_owned_video_ids, list):
                     options_payload["owned_video_ids"] = [
                         str(video_id).strip()
@@ -1598,7 +1604,7 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                     ]
                 else:
                     options_payload["owned_video_ids"] = []
-        
+
             options = AgentRequestOptions.model_validate(options_payload)
             logger.info("Extracted from WebSocket payload - %s", options)
 
@@ -1663,4 +1669,8 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
             message += chunk
         return message
 
-    yield FunctionInfo.create(stream_fn=_response_fn, single_fn=_single_fn, input_schema=ChatRequestOrMessage)
+    yield FunctionInfo.create(
+        stream_fn=_response_fn,
+        single_fn=_single_fn,
+        input_schema=ChatRequestOrMessage,
+    )

@@ -225,15 +225,24 @@ export const Chat = () => {
 
   const [currentMessage, setCurrentMessage] = useState<Message>();
   const [autoScrollEnabled, setAutoScrollEnabled] = useState<boolean>(true);
-  const [showSettings, setShowSettings] = useState<boolean>(false);
   const [showScrollDownButton, setShowScrollDownButton] = useState<boolean>(false);
 
-  const isSearchTabChat =
-    typeof storageKeyPrefix === 'string' &&
-    storageKeyPrefix.startsWith('searchTab');
+  const getActiveMainTabId = useCallback((): string => {
+    if (typeof window === 'undefined') {
+      return '';
+    }
+
+    return window.sessionStorage.getItem('activeTab') || '';
+  }, []);
+
+  const isSearchSidebarContext = useCallback((): boolean => {
+    const activeMainTabId = getActiveMainTabId();
+
+    return activeMainTabId === 'search';
+  }, [getActiveMainTabId]);
 
   const fetchOwnedVideoIdsForSearch = useCallback(async (): Promise<string[]> => {
-    if (!isSearchTabChat || typeof window === 'undefined') {
+    if (!isSearchSidebarContext() || typeof window === 'undefined') {
       return [];
     }
 
@@ -280,7 +289,7 @@ export const Chat = () => {
       console.warn('Failed to resolve owned uploaded videos for search:', error);
       return [];
     }
-  }, [isSearchTabChat]);
+  }, [isSearchSidebarContext]);
 
   const buildSearchAwareCustomParams = useCallback(
     async (
@@ -290,14 +299,40 @@ export const Chat = () => {
         ...(customParams || {}),
       };
 
-      if (isSearchTabChat) {
-        nextCustomParams.owned_video_ids = await fetchOwnedVideoIdsForSearch();
+      const activeMainTabId = getActiveMainTabId();
+      const isSearchContext = activeMainTabId === 'search';
+
+      console.log('[VIXSearch][Chat] search context check', {
+        storageKeyPrefix,
+        activeMainTabId,
+        isSearchContext,
+        customParams,
+      });
+
+      if (isSearchContext) {
+        const ownedVideoIds = await fetchOwnedVideoIdsForSearch();
+
+        console.log('[VIXSearch][Chat] owned video ids resolved', {
+          ownedVideoIds,
+          count: ownedVideoIds.length,
+        });
+
+        nextCustomParams.owned_video_ids = ownedVideoIds;
         nextCustomParams.search_source_type = 'video_file';
+      } else {
+        console.warn('[VIXSearch][Chat] not search context, skip owned_video_ids', {
+          storageKeyPrefix,
+          activeMainTabId,
+        });
       }
 
       return nextCustomParams;
     },
-    [isSearchTabChat, fetchOwnedVideoIdsForSearch],
+    [
+      storageKeyPrefix,
+      getActiveMainTabId,
+      fetchOwnedVideoIdsForSearch,
+    ],
   );
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1014,6 +1049,7 @@ export const Chat = () => {
 
       // chat with bot
       if (selectedConversation) {
+        const shouldSendChatHistory = chatHistory && !isSearchSidebarContext();
         let updatedConversation: Conversation;
         if (deleteCount) {
           const updatedMessages = [...selectedConversation.messages];
@@ -1093,7 +1129,7 @@ export const Chat = () => {
           saveConversations(updatedConversations, storageKeyPrefix);
 
           let chatMessages;
-          if (chatHistory) {
+          if (shouldSendChatHistory) {
             chatMessages = updatedConversation?.messages?.map(
               (message: Message) => {
                 return {
@@ -1171,7 +1207,7 @@ export const Chat = () => {
         const chatBody: ChatBody = {
           // Spread custom params first so fixed fields take precedence
           ...(customAgentParamsRef.current || {}),
-          messages: chatHistory
+          messages: shouldSendChatHistory
             ? messagesCleaned
             : [{ role: 'user', content: message?.content }],
           chatCompletionURL:

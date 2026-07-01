@@ -27,6 +27,7 @@ import {
   getChatSidebarEnabled,
 } from '../utils/tabChatSidebarConfig';
 
+import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
 import { useAppChatSidebar } from '../hooks/useAppChatSidebar';
 import { useChatSidebarMainTabBridge } from '../hooks/useChatSidebarMainTabBridge';
@@ -264,6 +265,8 @@ const dynamicComponents = {
 const SidebarNemoAgentToolkitApp = dynamicComponents.NemoAgentToolkitApp;
 
 export default function Home({ alertsData, searchData, dashboardData, mapData, videoManagementData, serverRenderTime }: HomeProps) {
+  
+  const { ready: authReady, user } = useAuth();
   // Get deployment configuration from environment variables - memoize to prevent recreation
   const deploymentConfig = useMemo(() => {
 
@@ -371,12 +374,31 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
 
   const sidebarApi = useAppChatSidebar();
 
+  const sidebarStorageKeyPrefix = useMemo(() => {
+  if (activeTab !== 'search') {
+    return CHAT_SIDEBAR_INSTANCE_STORAGE_PREFIX;
+  }
+
+  const basePrefix = `${CHAT_SIDEBAR_INSTANCE_STORAGE_PREFIX}:search`;
+
+  if (!authReady) {
+    return `${basePrefix}:auth-pending`;
+  }
+
+  const username =
+      typeof user?.username === 'string'
+        ? user.username.trim().toLowerCase()
+        : '';
+
+    return username ? `${basePrefix}:${username}` : `${basePrefix}:anonymous`;
+  }, [activeTab, authReady, user?.username]);
+
   const sidebarRuntimeConfig = useMemo(
     () => ({
       workflow: getTabChatWorkflow(SIDEBAR_CHAT_ENV_TAB_KEY, 'App Chat'),
-      storageKeyPrefix: CHAT_SIDEBAR_INSTANCE_STORAGE_PREFIX,
+      storageKeyPrefix: sidebarStorageKeyPrefix,
     }),
-    [],
+    [sidebarStorageKeyPrefix],
   );
 
   const sidebarChatInitialStateOverride = useMemo(
@@ -568,15 +590,17 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
 
   const renderAppSidebarChat = React.useCallback(
     () => (
-      <RuntimeConfigProvider value={sidebarRuntimeConfig}>
+      <RuntimeConfigProvider
+        key={sidebarRuntimeConfig.storageKeyPrefix}
+        value={sidebarRuntimeConfig}
+      >
         <SidebarNemoAgentToolkitApp
+          key={sidebarRuntimeConfig.storageKeyPrefix}
           theme={theme}
           onThemeChange={handleThemeChange}
-          isActive={activeTab !== 'chat'}
           initialStateOverride={sidebarChatInitialStateOverride}
-          storageKeyPrefix={CHAT_SIDEBAR_INSTANCE_STORAGE_PREFIX}
-          renderControlsInLeftSidebar={false}
           renderApplicationHead={false}
+          storageKeyPrefix={sidebarRuntimeConfig.storageKeyPrefix}
           onAnswerComplete={handleSidebarAnswerComplete}
           onAnswerCompleteWithContent={handleSidebarAnswerCompleteWithContent}
           onSubmitMessageReady={handleSidebarSubmitMessageReady}
