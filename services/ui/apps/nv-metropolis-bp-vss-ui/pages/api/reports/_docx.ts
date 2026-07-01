@@ -64,11 +64,7 @@ export type ReportSceneItem = {
   id: string;
   videoName: string;
   description: string;
-  startTime: string;
-  endTime: string;
-  sensorId: string;
-  similarity: number;
-  screenshotUrl: string;
+  screenshotUrl?: string;
 };
 
 export type ReportPayload = {

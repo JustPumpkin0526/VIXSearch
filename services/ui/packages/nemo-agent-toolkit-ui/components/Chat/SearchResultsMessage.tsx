@@ -43,8 +43,11 @@ type ClipAnalysisState = {
   error?: string;
 };
 
-type ClipDescribeResponse = {
+type ClipAnalyzeResponse = {
+  analysis?: string;
   description?: string;
+  error?: string;
+  detail?: unknown;
 };
 
 type VideoModalState = {
@@ -57,11 +60,13 @@ type ReportSceneItem = {
   id: string;
   videoName: string;
   description: string;
-  startTime: string;
-  endTime: string;
-  sensorId: string;
-  similarity: number;
-  screenshotUrl: string;
+  screenshotUrl?: string;
+
+  // 기존 보고서 데이터와의 호환성을 위해 optional로 유지
+  startTime?: string;
+  endTime?: string;
+  sensorId?: string;
+  similarity?: number;
 };
 
 type StoredReport = {
@@ -326,11 +331,6 @@ function getResultKey(item: SearchResultItem): string {
   return [item.sensor_id, item.video_name, item.start_time, item.end_time].join('::');
 }
 
-function buildDescribeClipUrl(agentApiUrl: string): string {
-  const trimmed = agentApiUrl.replace(/\/$/, '');
-  return trimmed.endsWith('/api/v1') ? `${trimmed}/describe_clip` : `${trimmed}/api/v1/describe_clip`;
-}
-
 function parseDateAsLocal(value: string): Date | null {
   if (!value) {
     return null;
@@ -390,16 +390,29 @@ function getPlayableUrl(item: SearchResultItem): string {
   return item.clip_url || item.video_url || item.url || '';
 }
 
-function toReportItems(items: SearchResultItem[]): ReportSceneItem[] {
+function getReportDescription(
+  item: SearchResultItem,
+  clipAnalysisByKey: Record<string, ClipAnalysisState> = {},
+): string {
+  const key = getResultKey(item);
+  const vlmDescription = clipAnalysisByKey?.[key]?.description?.trim();
+
+  if (vlmDescription) {
+    return vlmDescription;
+  }
+
+  return item.description?.trim() || '설명 없음';
+}
+
+function toReportItems(
+  items: SearchResultItem[],
+  clipAnalysisByKey: Record<string, ClipAnalysisState> = {},
+): ReportSceneItem[] {
   return items.map((item) => ({
     id: getResultKey(item),
     videoName: item.video_name,
-    description: item.description,
-    startTime: item.start_time,
-    endTime: item.end_time,
-    sensorId: item.sensor_id,
-    similarity: item.similarity,
-    screenshotUrl: item.screenshot_url,
+    description: getReportDescription(item, clipAnalysisByKey),
+    screenshotUrl: item.screenshot_url || undefined,
   }));
 }
 
@@ -411,38 +424,34 @@ function buildReportTitle(items: SearchResultItem[]): string {
   return `${items[0]?.video_name ?? '검색 결과'} 외 ${items.length - 1}건 보고서`;
 }
 
-function buildReportDescription(items: SearchResultItem[]): string {
-  const sensorCount = new Set(items.map((item) => item.sensor_id).filter(Boolean)).size;
-  return `선택된 검색 결과 ${items.length}건과 센서 ${sensorCount}개를 바탕으로 생성된 보고서입니다.`;
+function buildReportDescription(
+  items: SearchResultItem[],
+  clipAnalysisByKey: Record<string, ClipAnalysisState> = {},
+): string {
+  const descriptions = items
+    .map((item) => getReportDescription(item, clipAnalysisByKey))
+    .filter((description) => description && description !== '설명 없음');
+
+  return descriptions[0] || 'VLM 분석 결과를 바탕으로 생성된 보고서입니다.';
 }
 
-function buildReportSection(items: SearchResultItem[], sectionTitle: string, createdAt: string): string {
-  const sensorCount = new Set(items.map((item) => item.sensor_id).filter(Boolean)).size;
-  const similarities = items.map((item) => item.similarity || 0);
-  const averageSimilarity = similarities.length > 0
-    ? similarities.reduce((sum, value) => sum + value, 0) / similarities.length
-    : 0;
-  const maxSimilarity = similarities.length > 0 ? Math.max(...similarities) : 0;
+function buildReportSection(
+  items: SearchResultItem[],
+  sectionTitle: string,
+  clipAnalysisByKey: Record<string, ClipAnalysisState> = {},
+): string {
   const sceneLines = items.map((item, index) => {
-    const description = item.description?.trim() || '설명 없음';
+    const description = getReportDescription(item, clipAnalysisByKey);
+
     return [
       `${index + 1}. ${item.video_name || '검색 결과 클립'}`,
-      `   시간: ${formatOriginalTimestamp(item.start_time)} ~ ${formatOriginalTimestamp(item.end_time)}`,
-      `   센서 ID: ${item.sensor_id || '-'}`,
-      `   유사도: ${item.similarity.toFixed(2)}`,
-      `   설명: ${description}`,
+      description,
     ].join('\n');
   });
 
   return [
     sectionTitle,
-    `생성 시각: ${new Date(createdAt).toLocaleString('ko-KR')}`,
-    `선택된 클립 수: ${items.length}건`,
-    `포함된 센서 수: ${sensorCount}개`,
-    `평균 유사도: ${averageSimilarity.toFixed(2)}`,
-    `최고 유사도: ${maxSimilarity.toFixed(2)}`,
     '',
-    '장면 목록',
     sceneLines.join('\n\n'),
   ].join('\n');
 }
@@ -629,12 +638,6 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
   const menuRef = React.useRef<HTMLDivElement | null>(null);
   const abortControllerRef = React.useRef<AbortController | null>(null);
   const vstApiUrl = env('NEXT_PUBLIC_VST_API_URL') || process?.env?.NEXT_PUBLIC_VST_API_URL || '';
-  const agentApiUrl = env('NEXT_PUBLIC_AGENT_API_URL')
-    || env('NEXT_PUBLIC_AGENT_API_URL_BASE')
-    || process?.env?.NEXT_PUBLIC_AGENT_API_URL
-    || process?.env?.NEXT_PUBLIC_AGENT_API_URL_BASE
-    || '';
-
   const allKeys = React.useMemo(() => results.map((item) => getResultKey(item)), [results]);
   const selectedItems = React.useMemo(
     () => results.filter((item) => selectedKeys.includes(getResultKey(item))),
@@ -742,34 +745,31 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
     };
   }, [results, vstApiUrl]);
 
-  const setDefaultCreateForm = React.useCallback((items: SearchResultItem[]) => {
-    setCreateForm({
-      title: buildReportTitle(items),
-      author: buildDefaultAuthor(),
-      description: buildReportDescription(items),
-    });
-  }, []);
-
+  const setDefaultCreateForm = React.useCallback(
+    (items: SearchResultItem[]) => {
+      setCreateForm({
+        title: buildReportTitle(items),
+        author: buildDefaultAuthor(),
+        description: buildReportDescription(items, clipAnalysisByKey),
+      });
+    },
+    [clipAnalysisByKey],
+  );
   const toggleSelection = React.useCallback((key: string) => {
     setSelectedKeys((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]);
   }, []);
 
-  const openVideoModal = React.useCallback(async (item: SearchResultItem) => {
-    const directUrl = getPlayableUrl(item);
-    if (directUrl) {
-      setVideoModal({ isOpen: true, videoUrl: directUrl, title: item.video_name });
-      return;
-    }
+  const resolveClipVideoUrl = React.useCallback(
+    async (item: SearchResultItem): Promise<string> => {
+      const directUrl = getPlayableUrl(item);
+      if (directUrl) {
+        return directUrl;
+      }
 
-    if (!vstApiUrl || !item.sensor_id) {
-      return;
-    }
+      if (!vstApiUrl || !item.sensor_id) {
+        return '';
+      }
 
-    abortControllerRef.current?.abort();
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-
-    try {
       const params = new URLSearchParams({
         startTime: item.start_time,
         endTime: item.end_time,
@@ -778,20 +778,22 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
         disableAudio: 'true',
       });
 
-      const response = await fetch(`${vstApiUrl}/v1/storage/file/${item.sensor_id}/url?${params.toString()}`, {
-        signal: abortController.signal,
-      });
+      const response = await fetch(
+        `${vstApiUrl}/v1/storage/file/${item.sensor_id}/url?${params.toString()}`,
+      );
 
       if (!response.ok) {
         throw new Error(`Failed to fetch video URL: ${response.status}`);
       }
 
-      const payload = await response.json() as { videoUrl?: string };
-      if (abortController.signal.aborted || !payload.videoUrl) {
-        return;
+      const payload = (await response.json()) as { videoUrl?: string };
+
+      if (!payload.videoUrl) {
+        return '';
       }
 
       let resolvedVideoUrl = payload.videoUrl;
+
       try {
         const baseUrl = new URL(vstApiUrl);
         const clipUrl = new URL(payload.videoUrl);
@@ -799,7 +801,10 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
         const clipVstIndex = clipUrl.pathname.indexOf('/vst');
 
         if (baseVstIndex !== -1 && clipVstIndex !== -1) {
-          const basePrefix = `${baseUrl.protocol}//${baseUrl.host}${baseUrl.pathname.substring(0, baseVstIndex + 4)}`;
+          const basePrefix = `${baseUrl.protocol}//${baseUrl.host}${baseUrl.pathname.substring(
+            0,
+            baseVstIndex + 4,
+          )}`;
           const clipSuffix = clipUrl.pathname.substring(clipVstIndex + 4);
           resolvedVideoUrl = `${basePrefix}${clipSuffix}${clipUrl.search}${clipUrl.hash}`;
         }
@@ -807,18 +812,33 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
         resolvedVideoUrl = payload.videoUrl;
       }
 
-      setVideoModal({ isOpen: true, videoUrl: resolvedVideoUrl, title: item.video_name });
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        return;
+      return resolvedVideoUrl;
+    },
+    [vstApiUrl],
+  );
+
+  const openVideoModal = React.useCallback(
+    async (item: SearchResultItem) => {
+      abortControllerRef.current?.abort();
+
+      try {
+        const videoUrl = await resolveClipVideoUrl(item);
+
+        if (!videoUrl) {
+          return;
+        }
+
+        setVideoModal({
+          isOpen: true,
+          videoUrl,
+          title: item.video_name,
+        });
+      } catch (error) {
+        console.error('Error fetching video URL:', error);
       }
-      console.error('Error fetching video URL:', error);
-    } finally {
-      if (abortControllerRef.current === abortController) {
-        abortControllerRef.current = null;
-      }
-    }
-  }, [vstApiUrl]);
+    },
+    [resolveClipVideoUrl],
+  );
 
   const handleCardContextMenu = React.useCallback((event: React.MouseEvent, item: SearchResultItem) => {
     event.preventDefault();
@@ -873,51 +893,77 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
     }
   }, [reportSourceItems]);
 
-  const analyzeSingleClip = React.useCallback(async (item: SearchResultItem) => {
-    const key = getResultKey(item);
-    if (!agentApiUrl) {
+  const analyzeSingleClip = React.useCallback(
+    async (item: SearchResultItem) => {
+      const key = getResultKey(item);
+
       setClipAnalysisByKey((current) => ({
         ...current,
-        [key]: { error: 'Agent API URL이 설정되지 않았습니다.' },
+        [key]: { loading: true },
       }));
-      return;
-    }
 
-    setClipAnalysisByKey((current) => ({
-      ...current,
-      [key]: { loading: true },
-    }));
+      try {
+        const videoUrl = await resolveClipVideoUrl(item);
 
-    try {
-      const response = await fetch(buildDescribeClipUrl(agentApiUrl), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sensor_id: item.sensor_id,
-          start_timestamp: item.start_time,
-          end_timestamp: item.end_time,
-        }),
-      });
+        const response = await fetch('/api/vlm/analyze', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            videoUrl,
+            imageUrl: item.screenshot_url,
+            clip: {
+              videoName: item.video_name,
+              sensorId: item.sensor_id,
+              startTime: item.start_time,
+              endTime: item.end_time,
+              screenshotUrl: item.screenshot_url,
+            },
+            prompt: [
+              '이 검색 결과 클립을 분석해주세요.',
+              '사람 쓰러짐, 화재, 연기, 위험 행동, 비정상 이벤트가 보이는지 확인해주세요.',
+              '관제자가 이해하기 쉽게 한국어로 요약해주세요.',
+              '이벤트가 명확하지 않으면 불확실하다고 설명해주세요.',
+            ].join('\n'),
+          }),
+        });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `HTTP error ${response.status}`);
+        const payload = (await response.json()) as ClipAnalyzeResponse;
+
+        if (!response.ok) {
+          throw new Error(
+            typeof payload.error === 'string'
+              ? payload.error
+              : typeof payload.detail === 'string'
+                ? payload.detail
+                : `HTTP error ${response.status}`,
+          );
+        }
+
+        setClipAnalysisByKey((current) => ({
+          ...current,
+          [key]: {
+            description:
+              payload.analysis ||
+              payload.description ||
+              '분석 결과가 비어 있습니다.',
+          },
+        }));
+      } catch (error) {
+        setClipAnalysisByKey((current) => ({
+          ...current,
+          [key]: {
+            error:
+              error instanceof Error
+                ? error.message
+                : 'VLM 분석 요청에 실패했습니다.',
+          },
+        }));
       }
-
-      const payload = await response.json() as ClipDescribeResponse;
-      setClipAnalysisByKey((current) => ({
-        ...current,
-        [key]: { description: payload.description || '' },
-      }));
-    } catch (error) {
-      setClipAnalysisByKey((current) => ({
-        ...current,
-        [key]: { error: error instanceof Error ? error.message : 'VLM 분석 요청에 실패했습니다.' },
-      }));
-    }
-  }, [agentApiUrl]);
+    },
+    [resolveClipVideoUrl],
+  );
 
   const handleAnalyzeClips = React.useCallback(async () => {
     if (reportSourceItems.length === 0 || analyzingClips) {
@@ -941,78 +987,140 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
     }
 
     const createdAt = new Date().toISOString();
-    const content = buildReportSection(reportSourceItems, '보고서 개요', createdAt);
+
+    const content = buildReportSection(
+      reportSourceItems,
+      '보고서 개요',
+      clipAnalysisByKey,
+    );
+
     const normalizedSourceQuery = sourceQuery.trim();
+
     const payload: StoredReport = {
       id: `report-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
       title: createForm.title.trim() || buildReportTitle(reportSourceItems),
+
+      // DB 정렬/관리용 필드는 유지
+      // 단, 보고서 본문(content)에는 출력하지 않음
       createdAt,
+
       author: createForm.author.trim(),
       query: normalizedSourceQuery || undefined,
-      description: createForm.description.trim() || buildReportDescription(reportSourceItems),
+
+      description:
+        createForm.description.trim() ||
+        buildReportDescription(reportSourceItems, clipAnalysisByKey),
+
       content,
       wordCount: countWords(content),
-      items: toReportItems(reportSourceItems),
+      items: toReportItems(reportSourceItems, clipAnalysisByKey),
     };
 
     setSavingReport(true);
     setReportError('');
+
     try {
       await postReport(payload);
       setCreateModalOpen(false);
       window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
-      window.dispatchEvent(new CustomEvent(OPEN_REPORT_TAB_EVENT, { detail: { tabId: 'dashboard' } }));
+      window.dispatchEvent(
+        new CustomEvent(OPEN_REPORT_TAB_EVENT, {
+          detail: { tabId: 'dashboard' },
+        }),
+      );
     } catch (error) {
-      setReportError(error instanceof Error ? error.message : '보고서를 생성하지 못했습니다.');
+      setReportError(
+        error instanceof Error ? error.message : '보고서를 생성하지 못했습니다.',
+      );
     } finally {
       setSavingReport(false);
     }
-  }, [createForm.author, createForm.description, createForm.title, reportSourceItems, savingReport, sourceQuery]);
-
+  }, [
+    clipAnalysisByKey,
+    createForm.author,
+    createForm.description,
+    createForm.title,
+    reportSourceItems,
+    savingReport,
+    sourceQuery,
+  ]);
   const handleAppendToExistingReport = React.useCallback(async () => {
     if (!selectedExistingReportId || reportSourceItems.length === 0 || savingReport) {
       return;
     }
-
-    const baseReport = existingReports.find((report) => report.id === selectedExistingReportId);
+  
+    const baseReport = existingReports.find(
+      (report) => report.id === selectedExistingReportId,
+    );
+  
     if (!baseReport) {
       setReportError('추가할 보고서를 선택해주세요.');
       return;
     }
-
+  
     const appendedSection = buildReportSection(
       reportSourceItems,
-      `추가 장면 (${new Date().toLocaleString('ko-KR')})`,
-      new Date().toISOString(),
+      '추가 장면',
+      clipAnalysisByKey,
     );
-    const nextContent = [baseReport.content?.trim(), appendedSection].filter(Boolean).join('\n\n');
-    const nextItems = mergeReportItems(baseReport.items, toReportItems(reportSourceItems));
+  
+    const nextContent = [
+      baseReport.content?.trim(),
+      appendedSection,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  
+    const nextItems = mergeReportItems(
+      baseReport.items,
+      toReportItems(reportSourceItems, clipAnalysisByKey),
+    );
+  
     const normalizedSourceQuery = sourceQuery.trim();
+  
     const payload: StoredReport = {
       id: baseReport.id,
       title: baseReport.title,
       createdAt: baseReport.createdAt,
       author: baseReport.author ?? '',
       query: baseReport.query?.trim() || normalizedSourceQuery || undefined,
-      description: baseReport.description ?? buildReportDescription(reportSourceItems),
+      description:
+        baseReport.description ??
+        buildReportDescription(reportSourceItems, clipAnalysisByKey),
       content: nextContent,
       wordCount: countWords(nextContent),
       items: nextItems,
     };
-
+  
     setSavingReport(true);
     setReportError('');
+  
     try {
       await patchReport(payload);
       setExistingModalOpen(false);
       window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
-      window.dispatchEvent(new CustomEvent(OPEN_REPORT_TAB_EVENT, { detail: { tabId: 'dashboard' } }));
+      window.dispatchEvent(
+        new CustomEvent(OPEN_REPORT_TAB_EVENT, {
+          detail: { tabId: 'dashboard' },
+        }),
+      );
     } catch (error) {
-      setReportError(error instanceof Error ? error.message : '기존 보고서에 추가하지 못했습니다.');
+      setReportError(
+        error instanceof Error
+          ? error.message
+          : '기존 보고서에 추가하지 못했습니다.',
+      );
     } finally {
       setSavingReport(false);
     }
-  }, [existingReports, reportSourceItems, savingReport, selectedExistingReportId, sourceQuery]);
+  }, [
+    clipAnalysisByKey,
+    existingReports,
+    reportSourceItems,
+    savingReport,
+    selectedExistingReportId,
+    sourceQuery,
+  ]);
 
   const sortedResults = React.useMemo(() => {
     const hasCritic = results.some((item) => item.critic_result);
