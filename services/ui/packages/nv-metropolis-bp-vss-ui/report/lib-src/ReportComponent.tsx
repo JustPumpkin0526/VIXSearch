@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 export type ReportListItem = {
@@ -32,6 +32,7 @@ export interface ReportComponentProps {
   reports?: ReportListItem[];
 }
 
+const OPEN_REPORT_TAB_EVENT = 'vss:open-report-tab';
 const REPORTS_UPDATED_EVENT = 'vss:reports-updated';
 const EMPTY_REPORTS: ReportListItem[] = [];
 
@@ -179,6 +180,7 @@ async function deleteReportFromApi(reportId: string): Promise<void> {
 }
 
 export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => {
+  const pendingSelectReportIdRef = React.useRef<string | null>(null);
   const initialReports = reports ?? EMPTY_REPORTS;
   const pdfCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const pdfPreviewContainerRef = React.useRef<HTMLDivElement | null>(null);
@@ -214,8 +216,22 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
     const syncReports = async () => {
       try {
         const nextReports = await loadReportsFromApi();
+
         if (!cancelled) {
           setStoredReports(nextReports);
+        
+          const pendingReportId = pendingSelectReportIdRef.current;
+        
+          if (
+            pendingReportId &&
+            nextReports.some((report) => report.id === pendingReportId)
+          ) {
+            setSelectedReportId(pendingReportId);
+            pendingSelectReportIdRef.current = null;
+            setReportSearchQuery('');
+            setSortBy('date');
+            setListPage(1);
+          }
         }
       } catch (error) {
         console.warn('Failed to load reports from DB:', error);
@@ -242,14 +258,67 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
       setSelectedReportId(null);
       return;
     }
-
+  
+    const pendingReportId = pendingSelectReportIdRef.current;
+  
+    if (
+      pendingReportId &&
+      storedReports.some((report) => report.id === pendingReportId)
+    ) {
+      setSelectedReportId(pendingReportId);
+      pendingSelectReportIdRef.current = null;
+      return;
+    }
+  
     setSelectedReportId((current) => {
       if (current && storedReports.some((report) => report.id === current)) {
         return current;
       }
+    
       return storedReports[0].id;
     });
   }, [storedReports]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const handleOpenReportTab = (event: Event) => {
+      const customEvent = event as CustomEvent<{
+        tabId?: string;
+        reportId?: string;
+      }>;
+
+      const reportId =
+        typeof customEvent.detail?.reportId === 'string'
+          ? customEvent.detail.reportId
+          : '';
+
+      if (!reportId) {
+        return;
+      }
+
+      pendingSelectReportIdRef.current = reportId;
+
+      setReportSearchQuery('');
+      setSortBy('date');
+      setListPage(1);
+      setSelectedReportId(reportId);
+    };
+
+    window.addEventListener(
+      OPEN_REPORT_TAB_EVENT,
+      handleOpenReportTab as EventListener,
+    );
+
+    return () => {
+      window.removeEventListener(
+        OPEN_REPORT_TAB_EVENT,
+        handleOpenReportTab as EventListener,
+      );
+    };
+  }, []);
 
   const normalizedQuery = reportSearchQuery.trim().toLowerCase();
   const filteredReports = useMemo(() => {

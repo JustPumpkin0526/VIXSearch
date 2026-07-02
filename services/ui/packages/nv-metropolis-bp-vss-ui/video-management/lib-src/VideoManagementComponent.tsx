@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import type { VideoManagementComponentProps, UploadProgress, StreamInfo } from './types';
+import type {
+  VideoManagementComponentProps,
+  UploadProgress,
+  StreamInfo,
+  VideoGroup,
+} from './types';
 import { useStreams, useStorageTimelines } from './hooks';
 import { filterStreams, isRtspStream } from './utils';
 import {
@@ -89,6 +94,16 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [loadingStreamId, setLoadingStreamId] = useState<string | null>(null);
+  const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
+
+  const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
+  const [currentGroupId, setCurrentGroupId] = useState<string | null>(null);
+
+  const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+
+  const createGroupBackdropPressedRef = useRef(false);
 
   const isUploadingRef = useRef(false);
   const uploadSessionIdRef = useRef(0);
@@ -111,10 +126,78 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const { getEndTimeForStream, getLastTimelineForStream, refetch: refetchTimelines } = useStorageTimelines({ vstApiUrl });
   const { videoModal, openVideoModal, closeVideoModal } = useVideoModal(vstApiUrl ?? undefined);
 
+  
+  const streamsById = useMemo(
+    () => new Map(streams.map((stream) => [stream.streamId, stream])),
+    [streams],
+  );
+
+  const streamsBySensorId = useMemo(
+    () => new Map(streams.map((stream) => [stream.sensorId, stream])),
+    [streams],
+  );
+
+  const currentGroup = useMemo(
+    () => videoGroups.find((group) => group.id === currentGroupId) ?? null,
+    [currentGroupId, videoGroups],
+  );
+
+  const groupedSensorIds = useMemo(() => {
+    const ids = new Set<string>();
+
+    videoGroups.forEach((group) => {
+      group.sensorIds.forEach((sensorId) => ids.add(sensorId));
+    });
+
+    return ids;
+  }, [videoGroups]);
+
+  const visibleRootGroups = useMemo(() => {
+    if (!showVideos) {
+      return [];
+    }
+  
+    const normalizedQuery = appliedSearchQuery.trim().toLowerCase();
+  
+    if (!normalizedQuery) {
+      return videoGroups;
+    }
+  
+    return videoGroups.filter((group) => {
+      if (group.name.toLowerCase().includes(normalizedQuery)) {
+        return true;
+      }
+    
+      return group.sensorIds.some((sensorId) => {
+        const streamName = streamsBySensorId.get(sensorId)?.name ?? '';
+        return streamName.toLowerCase().includes(normalizedQuery);
+      });
+    });
+  }, [appliedSearchQuery, showVideos, streamsBySensorId, videoGroups]);
+
   const filteredStreams = useMemo(
     () => filterStreams(streams, showVideos, showRtsps, appliedSearchQuery),
     [streams, showVideos, showRtsps, appliedSearchQuery]
   );
+
+  const visibleStreams = useMemo(() => {
+    if (currentGroup) {
+      const currentGroupSensorIds = new Set(currentGroup.sensorIds);
+
+      return filteredStreams.filter(
+        (stream) =>
+          !isRtspStream(stream) && currentGroupSensorIds.has(stream.sensorId),
+      );
+    }
+
+    return filteredStreams.filter((stream) => {
+      if (isRtspStream(stream)) {
+        return true;
+      }
+
+      return !groupedSensorIds.has(stream.sensorId);
+    });
+  }, [currentGroup, filteredStreams, groupedSensorIds]);
 
   const { hasVideoStreams, hasRtspStreams } = useMemo(() => {
     const hasVideo = streams.some((stream) => !isRtspStream(stream));
@@ -125,6 +208,55 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const refetchRef = useRef(refetch);
   const refetchTimelinesRef = useRef(refetchTimelines);
   const vstApiUrlRef = useRef(vstApiUrl);
+
+  const fetchVideoGroups = useCallback(async () => {
+    if (typeof window === 'undefined') {
+      setVideoGroups([]);
+      return [] as VideoGroup[];
+    }
+
+    const token = window.localStorage?.getItem('vss.auth.token');
+
+    if (!token) {
+      setVideoGroups([]);
+      return [] as VideoGroup[];
+    }
+
+    const response = await fetch('/api/videos/groups', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch video groups: ${response.status}`);
+    }
+
+    const payload = await response.json();
+
+    const nextGroups: VideoGroup[] = Array.isArray(payload?.groups)
+      ? payload.groups
+          .filter((item: any) => Boolean(item?.id) && Array.isArray(item?.sensorIds))
+          .map((item: any) => ({
+            id: String(item.id),
+            name:
+              typeof item.name === 'string' && item.name.trim()
+                ? item.name.trim()
+                : '새 그룹',
+            sensorIds: item.sensorIds
+              .map((sensorId: unknown) => String(sensorId))
+              .filter(Boolean),
+            createdAt:
+              typeof item.createdAt === 'string'
+                ? item.createdAt
+                : new Date().toISOString(),
+          }))
+      : [];
+
+    setVideoGroups(nextGroups);
+    return nextGroups;
+  }, []);
 
   useEffect(() => {
     refetchRef.current = refetch;
@@ -140,8 +272,12 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     if (isActive) {
       refetchRef.current();
       refetchTimelinesRef.current();
+
+      fetchVideoGroups().catch((groupError) => {
+        console.warn('Failed to fetch video groups:', groupError);
+      });
     }
-  }, [isActive]);
+  }, [fetchVideoGroups, isActive]);
 
   const refreshStreamsAfterChatUpload = useCallback(() => {
     refetchRef.current();
@@ -322,7 +458,11 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     }
 
     setIsUploading(false);
-    await Promise.all([refetchRef.current(), refetchTimelinesRef.current()]);
+    await Promise.all([
+      refetchRef.current(),
+      refetchTimelinesRef.current(),
+      fetchVideoGroups(),
+    ]);
   }, [vstApiUrl, agentApiUrl]);
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
@@ -362,7 +502,11 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     setIsUploading(false);
 
     if (successCount > 0) {
-      await Promise.all([refetchRef.current(), refetchTimelinesRef.current()]);
+      await Promise.all([
+        refetchRef.current(),
+        refetchTimelinesRef.current(),
+        fetchVideoGroups(),
+      ]);
     }
   }, []);
 
@@ -443,13 +587,162 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     });
   }, []);
 
-  const handleSelectAll = useCallback((selected: boolean) => {
-    if (selected) {
-      setSelectedStreams(new Set(filteredStreams.map((s) => s.streamId)));
-    } else {
-      setSelectedStreams(new Set());
+  const handleGroupSelectionChange = useCallback(
+    (groupId: string, selected: boolean) => {
+      setSelectedGroups((prev) => {
+        const next = new Set(prev);
+
+        if (selected) {
+          next.add(groupId);
+        } else {
+          next.delete(groupId);
+        }
+
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleOpenGroup = useCallback((groupId: string) => {
+    setSelectedStreams(new Set());
+    setSelectedGroups(new Set());
+    setCurrentGroupId(groupId);
+  }, []);
+
+  const handleSelectAll = useCallback(
+    (selected: boolean) => {
+      if (selected) {
+        setSelectedStreams(new Set(visibleStreams.map((stream) => stream.streamId)));
+
+        setSelectedGroups(
+          currentGroup
+            ? new Set()
+            : new Set(visibleRootGroups.map((group) => group.id)),
+        );
+      } else {
+        setSelectedStreams(new Set());
+        setSelectedGroups(new Set());
+      }
+    },
+    [currentGroup, visibleRootGroups, visibleStreams],
+  );
+
+  const selectedGroupStreams = useMemo(
+    () =>
+      Array.from(selectedStreams)
+        .map((streamId) => streamsById.get(streamId))
+        .filter(
+          (stream): stream is StreamInfo =>
+            Boolean(stream) && !isRtspStream(stream as StreamInfo),
+        ),
+    [selectedStreams, streamsById],
+  );
+
+  const handleCreateGroup = useCallback(() => {
+    if (selectedGroupStreams.length === 0) {
+      return;
     }
-  }, [filteredStreams]);
+
+    setNewGroupName(`그룹 ${videoGroups.length + 1}`);
+    setIsCreateGroupModalOpen(true);
+  }, [selectedGroupStreams.length, videoGroups.length]);
+
+  const handleCloseCreateGroupModal = useCallback(() => {
+    if (isCreatingGroup) {
+      return;
+    }
+
+    setIsCreateGroupModalOpen(false);
+    setNewGroupName('');
+  }, [isCreatingGroup]);
+
+  const handleConfirmCreateGroup = useCallback(async () => {
+    if (selectedGroupStreams.length === 0) {
+      handleCloseCreateGroupModal();
+      return;
+    }
+  
+    if (typeof window === 'undefined') {
+      return;
+    }
+  
+    const token = window.localStorage?.getItem('vss.auth.token');
+  
+    if (!token) {
+      console.warn('Missing auth token; cannot persist video group');
+      return;
+    }
+  
+    const suggestedName = `그룹 ${videoGroups.length + 1}`;
+    const nextName = newGroupName.trim() || suggestedName;
+  
+    const selectedSensorIds = Array.from(
+      new Set(selectedGroupStreams.map((stream) => stream.sensorId).filter(Boolean)),
+    );
+  
+    if (selectedSensorIds.length === 0) {
+      handleCloseCreateGroupModal();
+      return;
+    }
+  
+    setIsCreatingGroup(true);
+  
+    try {
+      const response = await fetch('/api/videos/groups', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: nextName,
+          sensorIds: selectedSensorIds,
+        }),
+      });
+    
+      if (!response.ok) {
+        throw new Error(`Failed to create video group: ${response.status}`);
+      }
+    
+      const payload = await response.json();
+    
+      const nextGroups: VideoGroup[] = Array.isArray(payload?.groups)
+        ? payload.groups
+            .filter((item: any) => Boolean(item?.id) && Array.isArray(item?.sensorIds))
+            .map((item: any) => ({
+              id: String(item.id),
+              name:
+                typeof item.name === 'string' && item.name.trim()
+                  ? item.name.trim()
+                  : '새 그룹',
+              sensorIds: item.sensorIds
+                .map((sensorId: unknown) => String(sensorId))
+                .filter(Boolean),
+              createdAt:
+                typeof item.createdAt === 'string'
+                  ? item.createdAt
+                  : new Date().toISOString(),
+            }))
+        : [];
+          
+      setVideoGroups(nextGroups);
+      setSelectedStreams(new Set());
+      setSelectedGroups(new Set());
+      setCurrentGroupId(null);
+      setIsCreateGroupModalOpen(false);
+      setNewGroupName('');
+    } catch (groupError) {
+      console.error('Failed to create video group:', groupError);
+    } finally {
+      setIsCreatingGroup(false);
+    }
+  }, [
+    handleCloseCreateGroupModal,
+    newGroupName,
+    selectedGroupStreams,
+    videoGroups.length,
+  ]);
 
   // Resolve selected stream IDs back to full StreamInfo objects so the confirm
   // dialog can show the user exactly which items are about to be deleted.
@@ -461,9 +754,12 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   // Step 1 of delete: just open the confirmation dialog. The Toolbar's "Delete
   // Selected" button is wired to this so a single click never destroys data.
   const handleDeleteSelected = useCallback(() => {
-    if (selectedStreams.size === 0 || isDeleting) return;
+    if ((selectedStreams.size === 0 && selectedGroups.size === 0) || isDeleting) {
+      return;
+    }
+
     setShowDeleteConfirm(true);
-  }, [selectedStreams.size, isDeleting]);
+  }, [selectedGroups.size, selectedStreams.size, isDeleting]);
 
   const handleCancelDelete = useCallback(() => {
     if (isDeleting) return;
@@ -512,6 +808,8 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const handleConfirmDelete = useCallback(async () => {
     if (selectedStreams.size === 0 || isDeleting) return;
 
+    const selectedGroupIds = Array.from(selectedGroups);
+
     const selectedStreamIds = Array.from(selectedStreams);
 
     const sensorToStreams = new Map<string, StreamInfo[]>();
@@ -528,6 +826,33 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     setIsDeleting(true);
 
     try {
+      if (selectedGroupIds.length > 0) {
+        if (typeof window === 'undefined') {
+          throw new Error('Window is unavailable; cannot delete groups');
+        }
+      
+        const token = window.localStorage?.getItem('vss.auth.token');
+      
+        if (!token) {
+          throw new Error('Missing auth token; cannot delete video groups');
+        }
+      
+        const groupDeleteResponse = await fetch('/api/videos/groups', {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            groupIds: selectedGroupIds,
+          }),
+        });
+      
+        if (!groupDeleteResponse.ok) {
+          throw new Error(`Failed to delete video groups: ${groupDeleteResponse.status}`);
+        }
+      }
+
       const deletePromises = uniqueSensorIds.map(async (sensorId) => {
         const sensorStreams = sensorToStreams.get(sensorId) || [];
         const firstStream = sensorStreams[0];
@@ -560,7 +885,13 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         }
       });
       setSelectedStreams(new Set());
-      await Promise.all([refetch(), refetchTimelines()]);
+      setSelectedGroups(new Set());
+
+      await Promise.all([
+        refetch(),
+        refetchTimelines(),
+        fetchVideoGroups(),
+      ]);
     } finally {
       setIsDeleting(false);
       setShowDeleteConfirm(false);
@@ -592,15 +923,20 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
       return <EmptyState onFilesSelected={handleFilesSelected} enableVideoUpload={enableVideoUpload} />;
     }
 
-    if (filteredStreams.length === 0) {
+    if (
+      visibleStreams.length === 0 &&
+      (!currentGroup ? visibleRootGroups.length === 0 : true)
+    ) {
       return (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <p className="text-lg font-medium mb-2 text-gray-600 dark:text-gray-300">
-              No streams found
+              {currentGroup ? '그룹 안에 동영상이 없습니다' : '스트림을 찾을 수 없습니다'}
             </p>
             <p className="text-sm text-gray-400 dark:text-gray-500">
-              Try adjusting your search or filter criteria
+              {currentGroup
+                ? '다른 그룹을 선택하거나 그룹을 다시 구성해 보세요'
+                : '검색어나 필터 조건을 조정해 보세요'}
             </p>
           </div>
         </div>
@@ -609,10 +945,14 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
 
     return (
       <StreamsGrid
-        streams={filteredStreams}
+        streams={visibleStreams}
+        groups={currentGroup ? [] : visibleRootGroups}
+        streamsById={streamsById}
         selectedStreams={selectedStreams}
+        selectedGroups={selectedGroups}
         vstApiUrl={vstApiUrl}
         onSelectionChange={handleSelectionChange}
+        onGroupSelectionChange={handleGroupSelectionChange}
         onSelectAll={handleSelectAll}
         showVideos={showVideos}
         showRtsps={showRtsps}
@@ -620,6 +960,15 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         onPlayStream={handlePlayStream}
         loadingStreamId={loadingStreamId}
         onAddChatQueryContext={addChatQueryContext}
+        onOpenGroup={handleOpenGroup}
+        onCreateGroup={handleCreateGroup}
+        onDeleteSelected={handleDeleteSelected}
+        currentGroupName={currentGroup?.name ?? null}
+        onBackToGroups={() => {
+          setSelectedStreams(new Set());
+          setSelectedGroups(new Set());
+          setCurrentGroupId(null);
+        }}
       />
     );
   };

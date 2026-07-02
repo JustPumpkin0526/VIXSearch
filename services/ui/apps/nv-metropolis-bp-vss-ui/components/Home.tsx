@@ -886,8 +886,8 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
                 <IconMenu2 size={20} />
               </button>
             )}
-            <div className="flex items-center gap-2 p-2 flex-shrink-0 relative">
-              {/* Render both logos, toggle visibility via CSS for instant switching */}
+            {/* <div className="flex items-center gap-2 p-2 flex-shrink-0 relative">
+              Render both logos, toggle visibility via CSS for instant switching 
               <img 
                 src="/NV-logo-white.svg"
                 alt="NVIDIA Logo" 
@@ -898,7 +898,7 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
                 alt="NVIDIA Logo" 
                 className={`h-5 w-auto transition-opacity duration-150 ${isDark ? 'opacity-0 absolute' : 'opacity-100'}`}
               />
-            </div>
+            </div> */}
             <div className="flex-shrink-0 w-[2px] h-[19px] bg-black dark:bg-white" />
             <h4
               className="font-bold text-gray-900 dark:text-gray-100 truncate text-xl font-sans"

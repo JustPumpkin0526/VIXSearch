@@ -17,6 +17,7 @@ interface StreamCardProps {
   isLoadingPlay?: boolean;
   /** When set, adds this stream as a chip in the app Chat sidebar (and still copies JSON). */
   onAddChatQueryContext?: (ctx: ChatSidebarQueryContext) => void;
+  onContextMenu?: (event: React.MouseEvent, stream: StreamInfo) => void;
 }
 
 export const StreamCard: React.FC<StreamCardProps> = ({
@@ -28,6 +29,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({
   onPlay,
   isLoadingPlay = false,
   onAddChatQueryContext,
+  onContextMenu,
 }) => {
   const extension = getFileExtension(stream.url);
   const isRtsp = isRtspStream(stream);
@@ -149,6 +151,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({
 
   return (
     <div
+      onContextMenu={(event) => onContextMenu?.(event, stream)}
       className={`rounded-lg border overflow-hidden bg-white dark:bg-neutral-900 border-gray-200 dark:border-gray-700 ${isSelected ? 'ring-2 ring-green-500' : ''}`}
     >
       <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-neutral-900">

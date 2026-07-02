@@ -117,3 +117,9 @@ export interface VideoManagementComponentProps {
   addChatQueryContext?: (ctx: ChatSidebarQueryContext) => void;
 }
 
+export interface VideoGroup {
+  id: string;
+  name: string;
+  sensorIds: string[];
+  createdAt: string;
+}

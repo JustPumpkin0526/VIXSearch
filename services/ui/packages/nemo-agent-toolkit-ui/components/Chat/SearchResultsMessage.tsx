@@ -90,6 +90,23 @@ type CreateReportFormState = {
 const OPEN_REPORT_TAB_EVENT = 'vss:open-report-tab';
 const REPORTS_UPDATED_EVENT = 'vss:reports-updated';
 
+function notifyReportCreated(reportId: string) {
+  window.dispatchEvent(
+    new CustomEvent(REPORTS_UPDATED_EVENT, {
+      detail: { reportId },
+    }),
+  );
+
+  window.dispatchEvent(
+    new CustomEvent(OPEN_REPORT_TAB_EVENT, {
+      detail: {
+        tabId: 'report',
+        reportId,
+      },
+    }),
+  );
+}
+
 function tryParseJson<T>(value: string): T | null {
   try {
     return JSON.parse(value) as T;
@@ -1022,12 +1039,7 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
     try {
       await postReport(payload);
       setCreateModalOpen(false);
-      window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
-      window.dispatchEvent(
-        new CustomEvent(OPEN_REPORT_TAB_EVENT, {
-          detail: { tabId: 'dashboard' },
-        }),
-      );
+      notifyReportCreated(payload.id);
     } catch (error) {
       setReportError(
         error instanceof Error ? error.message : '보고서를 생성하지 못했습니다.',
@@ -1098,12 +1110,7 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
     try {
       await patchReport(payload);
       setExistingModalOpen(false);
-      window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
-      window.dispatchEvent(
-        new CustomEvent(OPEN_REPORT_TAB_EVENT, {
-          detail: { tabId: 'dashboard' },
-        }),
-      );
+      notifyReportCreated(payload.id);
     } catch (error) {
       setReportError(
         error instanceof Error

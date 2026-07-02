@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MIT
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@nvidia/foundations-react-core';
-import type { StreamInfo, ChatSidebarQueryContext } from '../types';
+import type {
+  StreamInfo,
+  VideoGroup,
+  ChatSidebarQueryContext,
+} from '../types';
 import { StreamCard } from './StreamCard';
 
 // Grid constants
@@ -11,9 +15,12 @@ const TARGET_ROWS = 4; // Target number of rows per page (reduced by ~25% from 5
 
 interface StreamsGridProps {
   streams: StreamInfo[];
+  groups?: VideoGroup[];
   selectedStreams: Set<string>;
+  selectedGroups?: Set<string>;
   vstApiUrl?: string | null;
   onSelectionChange: (streamId: string, selected: boolean) => void;
+  onGroupSelectionChange?: (groupId: string, selected: boolean) => void;
   onSelectAll: (selected: boolean) => void;
   showVideos: boolean;
   showRtsps: boolean;
@@ -21,7 +28,86 @@ interface StreamsGridProps {
   onPlayStream?: (stream: StreamInfo) => void;
   loadingStreamId?: string | null;
   onAddChatQueryContext?: (ctx: ChatSidebarQueryContext) => void;
+
+  onOpenGroup?: (groupId: string) => void;
+  onCreateGroup?: () => void;
+  onDeleteSelected?: () => void | Promise<void>;
+  currentGroupName?: string | null;
+  onBackToGroups?: () => void;
 }
+
+const FolderCard: React.FC<{
+  group: VideoGroup;
+  isSelected: boolean;
+  onSelectionChange?: (groupId: string, selected: boolean) => void;
+  onOpen: () => void;
+  onContextMenu?: (event: React.MouseEvent, group: VideoGroup) => void;
+}> = ({ group, isSelected, onSelectionChange, onOpen, onContextMenu }) => {
+  const clickTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  return (
+    <div
+      onClick={() => {
+        if (clickTimeoutRef.current) {
+          clearTimeout(clickTimeoutRef.current);
+        }
+
+        clickTimeoutRef.current = setTimeout(() => {
+          onSelectionChange?.(group.id, !isSelected);
+          clickTimeoutRef.current = null;
+        }, 180);
+      }}
+      onDoubleClick={() => {
+        if (clickTimeoutRef.current) {
+          clearTimeout(clickTimeoutRef.current);
+          clickTimeoutRef.current = null;
+        }
+
+        onOpen();
+      }}
+      onContextMenu={(event) => {
+        if (clickTimeoutRef.current) {
+          clearTimeout(clickTimeoutRef.current);
+          clickTimeoutRef.current = null;
+        }
+
+        onContextMenu?.(event, group);
+      }}
+      className={`group relative flex min-h-[220px] flex-col items-center justify-between rounded-xl border bg-gradient-to-b p-5 text-center transition hover:-translate-y-0.5 hover:shadow-md ${
+        isSelected
+          ? 'border-cyan-500 from-cyan-50 to-white shadow-md dark:border-cyan-400 dark:from-cyan-950/40 dark:to-gray-800'
+          : 'border-amber-200/80 from-amber-50 to-white hover:border-amber-300 dark:border-amber-700/60 dark:from-gray-800 dark:to-gray-800 dark:hover:border-amber-600'
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={isSelected}
+        onClick={(event) => event.stopPropagation()}
+        onChange={(event) => onSelectionChange?.(group.id, event.target.checked)}
+        className="h-4 w-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
+        aria-label={`${group.name} 그룹 선택`}
+      />
+
+      <div className="flex flex-1 flex-col items-center justify-center gap-3">
+        <div className="text-5xl">📁</div>
+        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          {group.name}
+        </div>
+        <div className="text-xs text-gray-500 dark:text-gray-400">
+          동영상 {group.sensorIds.length}개
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export const StreamsGrid: React.FC<StreamsGridProps> = ({
   streams,
@@ -94,10 +180,20 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
   const totalPages = Math.ceil(streams.length / itemsPerPage);
   
   // Get streams for current page only - these are the only ones that will fetch images
-  const paginatedStreams = useMemo(() => {
+  const rootItems = useMemo(
+    () => [
+      ...groups.map((group) => ({ kind: 'group' as const, group })),
+      ...streams.map((stream) => ({ kind: 'stream' as const, stream })),
+    ],
+    [groups, streams],
+  );
+
+  const totalPages = Math.ceil(rootItems.length / itemsPerPage);
+
+  const paginatedItems = useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage;
-    return streams.slice(startIndex, startIndex + itemsPerPage);
-  }, [streams, currentPage, itemsPerPage]);
+    return rootItems.slice(startIndex, startIndex + itemsPerPage);
+  }, [rootItems, currentPage, itemsPerPage]);
 
   // Reset to page 1 when streams change significantly (e.g., filter applied)
   useEffect(() => {
@@ -229,19 +325,33 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
           ref={gridRef}
           className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4"
         >
-          {paginatedStreams.map((stream) => (
-            <StreamCard
-              key={stream.streamId}
-              stream={stream}
-              isSelected={selectedStreams.has(stream.streamId)}
-              vstApiUrl={vstApiUrl}
-              onSelectionChange={onSelectionChange}
-              getEndTimeForStream={getEndTimeForStream}
-              onPlay={onPlayStream}
-              isLoadingPlay={loadingStreamId === stream.streamId}
-              onAddChatQueryContext={onAddChatQueryContext}
-            />
-          ))}
+          {paginatedItems.map((item) => {
+            if (item.kind === 'group') {
+              return (
+                <FolderCard
+                  key={`group-${item.group.id}`}
+                  group={item.group}
+                  isSelected={selectedGroups.has(item.group.id)}
+                  onSelectionChange={onGroupSelectionChange}
+                  onOpen={() => onOpenGroup?.(item.group.id)}
+                />
+              );
+            }
+          
+            return (
+              <StreamCard
+                key={item.stream.streamId}
+                stream={item.stream}
+                isSelected={selectedStreams.has(item.stream.streamId)}
+                vstApiUrl={vstApiUrl}
+                onSelectionChange={onSelectionChange}
+                getEndTimeForStream={getEndTimeForStream}
+                onPlay={onPlayStream}
+                isLoadingPlay={loadingStreamId === item.stream.streamId}
+                onAddChatQueryContext={onAddChatQueryContext}
+              />
+            );
+          })}
         </div>
       </div>
 
