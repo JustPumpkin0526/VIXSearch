@@ -1329,13 +1329,11 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
                       <p className="text-xs font-medium text-amber-600 dark:text-amber-300">
                         VLM 분석 중...
                       </p>
-                    ) : item.description ? (
+                    ) : item.description?.trim() ? (
                       <p className="line-clamp-1 text-xs text-gray-500 dark:text-gray-300">
-                        {item.description}
+                        {item.description.trim()}
                       </p>
-                    ) : (
-                      <p className="text-xs text-gray-500 dark:text-gray-400">설명 없음</p>
-                    )}
+                    ) : null}
                   </div>
                   
                   <div className="shrink-0">

@@ -40,70 +40,107 @@ const FolderCard: React.FC<{
   group: VideoGroup;
   isSelected: boolean;
   onSelectionChange?: (groupId: string, selected: boolean) => void;
-  onOpen: () => void;
-  onContextMenu?: (event: React.MouseEvent, group: VideoGroup) => void;
-}> = ({ group, isSelected, onSelectionChange, onOpen, onContextMenu }) => {
-  const clickTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  onOpen?: () => void;
+}> = ({ group, isSelected, onSelectionChange, onOpen }) => {
+  const clickTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
-  React.useEffect(() => {
-    return () => {
-      if (clickTimeoutRef.current) {
-        clearTimeout(clickTimeoutRef.current);
-      }
-    };
-  }, []);
+  const handleCardClick = () => {
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+    }
+
+    clickTimeoutRef.current = setTimeout(() => {
+      onSelectionChange?.(group.id, !isSelected);
+      clickTimeoutRef.current = null;
+    }, 180);
+  };
+
+  const handleDoubleClick = () => {
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+    }
+
+    onOpen?.();
+  };
 
   return (
     <div
-      onClick={() => {
-        if (clickTimeoutRef.current) {
-          clearTimeout(clickTimeoutRef.current);
-        }
-
-        clickTimeoutRef.current = setTimeout(() => {
-          onSelectionChange?.(group.id, !isSelected);
-          clickTimeoutRef.current = null;
-        }, 180);
-      }}
-      onDoubleClick={() => {
-        if (clickTimeoutRef.current) {
-          clearTimeout(clickTimeoutRef.current);
-          clickTimeoutRef.current = null;
-        }
-
-        onOpen();
-      }}
-      onContextMenu={(event) => {
-        if (clickTimeoutRef.current) {
-          clearTimeout(clickTimeoutRef.current);
-          clickTimeoutRef.current = null;
-        }
-
-        onContextMenu?.(event, group);
-      }}
-      className={`group relative flex min-h-[220px] flex-col items-center justify-between rounded-xl border bg-gradient-to-b p-5 text-center transition hover:-translate-y-0.5 hover:shadow-md ${
-        isSelected
-          ? 'border-cyan-500 from-cyan-50 to-white shadow-md dark:border-cyan-400 dark:from-cyan-950/40 dark:to-gray-800'
-          : 'border-amber-200/80 from-amber-50 to-white hover:border-amber-300 dark:border-amber-700/60 dark:from-gray-800 dark:to-gray-800 dark:hover:border-amber-600'
-      }`}
+      onClick={handleCardClick}
+      onDoubleClick={handleDoubleClick}
+      className={[
+        'rounded-lg border overflow-hidden cursor-pointer select-none',
+        'bg-white dark:bg-neutral-900',
+        'border-gray-200 dark:border-gray-700',
+        'transition-all duration-150',
+        'hover:border-cyan-500 hover:shadow-md',
+        isSelected ? 'ring-2 ring-cyan-500 border-cyan-500' : '',
+      ].join(' ')}
     >
-      <input
-        type="checkbox"
-        checked={isSelected}
-        onClick={(event) => event.stopPropagation()}
-        onChange={(event) => onSelectionChange?.(group.id, event.target.checked)}
-        className="h-4 w-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
-        aria-label={`${group.name} 그룹 선택`}
-      />
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-neutral-950 border-b border-gray-200 dark:border-gray-800">
+        <div className="flex items-center gap-2 min-w-0">
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => {
+              onSelectionChange?.(group.id, event.target.checked);
+            }}
+            className="w-4 h-4 rounded border-2 cursor-pointer bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-cyan-600 focus:ring-cyan-500"
+            aria-label={`${group.name} 그룹 선택`}
+          />
 
-      <div className="flex flex-1 flex-col items-center justify-center gap-3">
-        <div className="text-5xl">📁</div>
-        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-          {group.name}
+          <span
+            className="text-sm font-semibold text-gray-900 dark:text-white truncate"
+            title={group.name}
+          >
+            {group.name}
+          </span>
         </div>
-        <div className="text-xs text-gray-500 dark:text-gray-400">
+
+        <span className="shrink-0 rounded bg-cyan-900/40 px-2 py-0.5 text-[10px] font-semibold text-cyan-200 border border-cyan-700/50">
+          GROUP
+        </span>
+      </div>
+
+      {/* Body */}
+      <div className="relative aspect-video bg-neutral-950">
+        <div className="absolute inset-0 bg-gradient-to-br from-neutral-900 via-neutral-950 to-slate-900" />
+
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+          <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-cyan-500/10 border border-cyan-400/30">
+            <svg
+              className="h-8 w-8 text-cyan-300"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="M10 4l2 2h8a2 2 0 012 2v10.5A2.5 2.5 0 0119.5 21h-15A2.5 2.5 0 012 18.5v-13A1.5 1.5 0 013.5 4H10z" />
+            </svg>
+          </div>
+
+          <div className="text-center">
+            <div className="text-sm font-semibold text-white">
+              Video Group
+            </div>
+            <div className="mt-1 text-xs text-gray-400">
+              {group.sensorIds.length} videos
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="flex items-center justify-between px-3 py-2 text-xs bg-gray-50 dark:bg-neutral-950 border-t border-gray-200 dark:border-gray-800">
+        <span className="text-gray-600 dark:text-gray-400">
           동영상 {group.sensorIds.length}개
-        </div>
+        </span>
+
+        <span className="text-gray-500 dark:text-gray-500">
+          더블클릭하여 열기
+        </span>
       </div>
     </div>
   );
