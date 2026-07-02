@@ -111,9 +111,12 @@ const FolderCard: React.FC<{
 
 export const StreamsGrid: React.FC<StreamsGridProps> = ({
   streams,
+  groups = [],
   selectedStreams,
+  selectedGroups = new Set<string>(),
   vstApiUrl,
   onSelectionChange,
+  onGroupSelectionChange,
   onSelectAll,
   showVideos,
   showRtsps,
@@ -121,6 +124,11 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
   onPlayStream,
   loadingStreamId,
   onAddChatQueryContext,
+  onOpenGroup,
+  onCreateGroup,
+  onDeleteSelected,
+  currentGroupName,
+  onBackToGroups,
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerRow, setItemsPerRow] = useState(0); // 0 means not yet calculated
@@ -175,9 +183,6 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
     }
     return itemsPerRow * TARGET_ROWS;
   }, [itemsPerRow]);
-
-  // Calculate pagination
-  const totalPages = Math.ceil(streams.length / itemsPerPage);
   
   // Get streams for current page only - these are the only ones that will fetch images
   const rootItems = useMemo(
@@ -279,6 +284,22 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
       {/* Header */}
       <div className="flex items-center justify-between px-6 pt-6 pb-4">
         <div className="flex items-center">
+          {currentGroupName && onBackToGroups && (
+            <>
+              <Button
+                kind="tertiary"
+                onClick={onBackToGroups}
+              >
+                Back
+              </Button>
+
+              <span className="mx-3 text-sm font-semibold text-gray-700 dark:text-gray-200">
+                {currentGroupName}
+              </span>
+
+              <span className="mx-4 text-gray-300 dark:text-gray-600">|</span>
+            </>
+          )}
           <div className="flex items-center gap-3">
             <input
               ref={selectAllCheckboxRef}
@@ -310,12 +331,31 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
           </span>
         </div>
 
-        {/* Page info */}
-        {totalPages > 1 && (
-          <span className="text-sm text-gray-500">
-            {streams.length} streams
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {onCreateGroup && selectedStreams.size > 0 && !currentGroupName && (
+            <Button
+              kind="primary"
+              onClick={onCreateGroup}
+            >
+              Create Group
+            </Button>
+          )}
+        
+          {onDeleteSelected && (selectedStreams.size > 0 || selectedGroups.size > 0) && (
+            <Button
+              kind="secondary"
+              onClick={onDeleteSelected}
+            >
+              Delete Selected
+            </Button>
+          )}
+        
+          {totalPages > 1 && (
+            <span className="text-sm text-gray-500">
+              {rootItems.length} items
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Grid - scrollable */}

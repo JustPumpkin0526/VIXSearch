@@ -98,9 +98,8 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
 
   const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
   const [currentGroupId, setCurrentGroupId] = useState<string | null>(null);
-
   const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false);
-  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupName, setNewGroupName] = useState("");
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
 
   const createGroupBackdropPressedRef = useRef(false);
@@ -141,6 +140,12 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     () => videoGroups.find((group) => group.id === currentGroupId) ?? null,
     [currentGroupId, videoGroups],
   );
+
+  useEffect(() => {
+    if (currentGroupId && !videoGroups.some((group) => group.id === currentGroupId)) {
+      setCurrentGroupId(null);
+    }
+  }, [currentGroupId, videoGroups]);
 
   const groupedSensorIds = useMemo(() => {
     const ids = new Set<string>();
@@ -751,6 +756,11 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     [streams, selectedStreams]
   );
 
+  const selectedGroupInfos = useMemo(
+    () => videoGroups.filter((group) => selectedGroups.has(group.id)),
+    [videoGroups, selectedGroups],
+  );
+
   // Step 1 of delete: just open the confirmation dialog. The Toolbar's "Delete
   // Selected" button is wired to this so a single click never destroys data.
   const handleDeleteSelected = useCallback(() => {
@@ -806,7 +816,9 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   // This holds the actual destructive API calls that used to live in
   // handleDeleteSelected.
   const handleConfirmDelete = useCallback(async () => {
-    if (selectedStreams.size === 0 || isDeleting) return;
+    if ((selectedStreams.size === 0 && selectedGroups.size === 0) || isDeleting) {
+      return;
+    }
 
     const selectedGroupIds = Array.from(selectedGroups);
 
@@ -896,7 +908,16 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
       setIsDeleting(false);
       setShowDeleteConfirm(false);
     }
-  }, [selectedStreams, streams, isDeleting, agentApiUrl, refetch, refetchTimelines]);
+  }, [
+    selectedStreams,
+    selectedGroups,
+    streams,
+    isDeleting,
+    agentApiUrl,
+    refetch,
+    refetchTimelines,
+    fetchVideoGroups,
+  ]);
 
   const controlsComponent = useMemo(
     () => (
@@ -1008,7 +1029,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         onShowRtspsChange={setShowRtsps}
         onFilesSelected={handleFilesSelected}
         onAddRtspClick={handleAddRtspClick}
-        selectedCount={selectedStreams.size}
+        selectedCount={selectedStreams.size + selectedGroups.size}
         onDeleteSelected={handleDeleteSelected}
         isDeleting={isDeleting}
         enableAddRtspButton={enableAddRtspButton}
@@ -1087,6 +1108,78 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
           }
         />
 
+        {isCreateGroupModalOpen ? (
+          <div
+            className="absolute inset-0 z-40 flex items-center justify-center bg-black/50"
+            onMouseDown={(event) => {
+              createGroupBackdropPressedRef.current = event.target === event.currentTarget;
+            }}
+            onClick={(event) => {
+              const shouldClose =
+                createGroupBackdropPressedRef.current &&
+                event.target === event.currentTarget;
+            
+              createGroupBackdropPressedRef.current = false;
+            
+              if (shouldClose) {
+                handleCloseCreateGroupModal();
+              }
+            }}
+          >
+            <div
+              className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl dark:bg-neutral-900"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h2 className="mb-2 text-lg font-semibold">그룹 생성</h2>
+          
+              <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
+                선택한 동영상을 새 그룹으로 묶습니다.
+              </p>
+          
+              <label className="mb-1 block text-sm font-medium">그룹명</label>
+              <input
+                value={newGroupName}
+                onChange={(event) => setNewGroupName(event.target.value)}
+                placeholder="그룹 이름을 입력하세요"
+                className="mb-4 w-full rounded border px-3 py-2 text-sm dark:bg-neutral-800"
+                autoFocus
+              />
+
+              <div className="mb-4 rounded border p-3 text-sm dark:border-neutral-700">
+                <div className="mb-2 font-medium">
+                  선택한 동영상 목록: 총 {selectedGroupStreams.length}개
+                </div>
+          
+                <ul className="max-h-40 overflow-auto text-gray-600 dark:text-gray-300">
+                  {selectedGroupStreams.map((stream) => (
+                    <li key={stream.streamId}>- {stream.name}</li>
+                  ))}
+                </ul>
+              </div>
+                
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={isCreatingGroup}
+                  onClick={handleCloseCreateGroupModal}
+                  className="rounded border px-4 py-2 text-sm"
+                >
+                  닫기
+                </button>
+                
+                <button
+                  type="button"
+                  disabled={isCreatingGroup || selectedGroupStreams.length === 0}
+                  onClick={handleConfirmCreateGroup}
+                  className="rounded bg-cyan-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+                >
+                  {isCreatingGroup ? '생성 중...' : '생성'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <UploadProgressPanel
           uploads={uploadProgress}
           onClose={handleClearUploadProgress}
@@ -1105,6 +1198,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
           overlay="contained"
           isOpen={showDeleteConfirm}
           streams={selectedStreamInfos}
+          groups={selectedGroupInfos}
           isDeleting={isDeleting}
           onCancel={handleCancelDelete}
           onConfirm={handleConfirmDelete}
