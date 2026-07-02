@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import React, { useEffect, useState } from 'react';
 import { Button } from '@nvidia/foundations-react-core';
-import type { StreamInfo } from '../types';
+import type { StreamInfo, VideoGroup } from '../types';
 
 const POPUP_OVERLAY_VIEWPORT =
   'fixed inset-0 z-50 flex items-center justify-center bg-black/50';
@@ -12,10 +12,10 @@ const POPUP_OVERLAY_CONTAINED =
 interface DeleteConfirmDialogProps {
   isOpen: boolean;
   streams: StreamInfo[];
+  groups?: VideoGroup[];
   isDeleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
-  /** `contained` = overlay only the nearest positioned ancestor (Video Management pane). Default `viewport` = full window. */
   overlay?: 'viewport' | 'contained';
 }
 
