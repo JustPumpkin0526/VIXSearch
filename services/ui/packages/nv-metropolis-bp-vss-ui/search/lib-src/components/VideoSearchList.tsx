@@ -140,6 +140,27 @@ function getAuthHeaders(): HeadersInit {
   return headers;
 }
 
+function getDisplayDescription(description?: string | null): string | null {
+  const text = description?.trim();
+
+  if (!text) {
+    return null;
+  }
+
+  const emptyDescriptionTexts = new Set([
+    '설명 없음',
+    '설명이 없습니다',
+    'No description',
+    'No description available',
+  ]);
+
+  if (emptyDescriptionTexts.has(text)) {
+    return null;
+  }
+
+  return text;
+}
+
 function buildReportTitle(items: SearchData[]): string {
   if (items.length <= 1) {
     return `${items[0]?.video_name ?? '검색 결과'} 보고서`;
@@ -154,7 +175,7 @@ function toReportItems(items: SearchData[]): GeneratedReportItem['items'] {
   return items.map((item) => ({
     id: getResultKey(item),
     videoName: item.video_name,
-    description: item.description,
+    description: getDisplayDescription(item.description) ?? '',
     startTime: item.start_time,
     endTime: item.end_time,
     sensorId: item.sensor_id,
@@ -403,16 +424,18 @@ const VideoCard: React.FC<VideoCardProps> = ({
   const handleOpenVideo = useCallback(() => {
     setIsOpeningVideo(true);
     onPlayVideo(item, showObjectsBbox);
-
+  
     if (openingTimeoutRef.current) {
       clearTimeout(openingTimeoutRef.current);
     }
-
+  
     openingTimeoutRef.current = setTimeout(() => {
       setIsOpeningVideo(false);
       openingTimeoutRef.current = null;
     }, 900);
   }, [item, onPlayVideo, showObjectsBbox]);
+  
+  const displayDescription = getDisplayDescription(item.description);
 
   return (
     <div
@@ -497,11 +520,11 @@ const VideoCard: React.FC<VideoCardProps> = ({
               </span>
             </div>
 
-            {item.description && (
+            {displayDescription && (
               <Whisper
                 placement="top"
                 trigger="hover"
-                speaker={<Tooltip>{item.description}</Tooltip>}
+                speaker={<Tooltip>{displayDescription}</Tooltip>}
               >
                 <div className="flex items-center gap-1 bg-white/20 backdrop-blur-sm rounded-full px-2 py-1 cursor-default">
                   <svg
@@ -524,8 +547,6 @@ const VideoCard: React.FC<VideoCardProps> = ({
 
       <div className="p-4 pt-0 space-y-2 my-2">
         <div className="flex justify-between items-baseline">
-          <div className="flex items-center justify-between" />
-
           <div className="flex items-center justify-between text-xs">
             <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>
               Similarity:

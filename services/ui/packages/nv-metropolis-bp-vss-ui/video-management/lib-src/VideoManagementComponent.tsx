@@ -968,7 +968,6 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
       <StreamsGrid
         streams={visibleStreams}
         groups={currentGroup ? [] : visibleRootGroups}
-        streamsById={streamsById}
         selectedStreams={selectedStreams}
         selectedGroups={selectedGroups}
         vstApiUrl={vstApiUrl}
