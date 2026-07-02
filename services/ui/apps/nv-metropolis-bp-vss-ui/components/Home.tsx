@@ -12,14 +12,8 @@ import type {
   VideoManagementSidebarControlHandlers,
   QueryDataContext
 } from '@nv-metropolis-bp-vss-ui/all';
-import {
-  IconSearch,
-  IconVideo,
-  IconSun,
-  IconMoon,
-  IconMenu2,
-  IconFileText
-} from '@tabler/icons-react';
+import { IconSearch, IconVideo, IconSun, IconMoon, IconMenu2, IconFileText, IconUserCog } from '@tabler/icons-react';
+import AdminUsersPanel from './AdminUsersPanel';
 import { getTabChatInitialStateOverride, getTabChatWorkflow } from '../utils/tabChatEnv';
 import {
   CHAT_SIDEBAR_INSTANCE_STORAGE_PREFIX,
@@ -267,6 +261,7 @@ const SidebarNemoAgentToolkitApp = dynamicComponents.NemoAgentToolkitApp;
 export default function Home({ alertsData, searchData, dashboardData, mapData, videoManagementData, serverRenderTime }: HomeProps) {
   
   const { ready: authReady, user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   // Get deployment configuration from environment variables - memoize to prevent recreation
   const deploymentConfig = useMemo(() => {
 
@@ -331,8 +326,16 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
         enabled: true,
         component: 'VideoManagementComponent',
       },
+      {
+        id: 'admin-users',
+        label: 'Admin',
+        icon: <IconUserCog size={18} />,
+        alt: 'Admin User Management',
+        enabled: isAdmin,
+        component: 'AdminUsersPanel',
+      },
     ],
-    [],
+    [isAdmin],
   );
 
   // Filter tabs based on deployment configuration
@@ -714,6 +717,16 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
   const renderTabComponent = (tabConfig: TabConfig) => {
     const isActive = activeTab === tabConfig.id;
     const componentName = tabConfig.component as keyof typeof dynamicComponents;
+    if (tabConfig.component === 'AdminUsersPanel') {
+      return (
+        <div
+          key={tabConfig.id}
+          className={`${isActive ? 'block' : 'hidden'} h-full`}
+        >
+          <AdminUsersPanel />
+        </div>
+      );
+    }
     const DynamicComponent = dynamicComponents[componentName];
 
     if (!DynamicComponent) {

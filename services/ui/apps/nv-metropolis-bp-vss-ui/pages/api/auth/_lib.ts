@@ -1,11 +1,21 @@
 import crypto from 'crypto';
 import { Pool } from 'pg';
 
+export type UserRole = 'admin' | 'user';
+
 type StoredUser = {
   username: string;
   passwordHash: string;
   salt: string;
+  role: UserRole;
+  isActive: boolean;
   createdAt: string;
+  createdBy?: string | null;
+};
+
+export type AuthUser = {
+  username: string;
+  role: UserRole;
 };
 
 type JwtVerification = {
@@ -17,6 +27,39 @@ type JwtVerification = {
 const DATABASE_URL = String(process.env.UI_AUTH_DATABASE_URL || '').trim();
 let pool: Pool | null = null;
 let dbInitPromise: Promise<void> | null = null;
+
+export async function getAuthenticatedUserFromAuthHeader(
+  rawHeader: string | string[] | undefined,
+): Promise<AuthUser | null> {
+  const username = getUsernameFromAuthHeader(rawHeader);
+
+  if (!username) {
+    return null;
+  }
+
+  const user = await findUserByUsername(username);
+
+  if (!user || !user.isActive) {
+    return null;
+  }
+
+  return {
+    username: user.username,
+    role: user.role,
+  };
+}
+
+export async function requireAdminFromAuthHeader(
+  rawHeader: string | string[] | undefined,
+): Promise<AuthUser | null> {
+  const user = await getAuthenticatedUserFromAuthHeader(rawHeader);
+
+  if (!user || user.role !== 'admin') {
+    return null;
+  }
+
+  return user;
+}
 
 function base64url(input: Buffer | string): string {
   return Buffer.from(input)
@@ -51,6 +94,56 @@ function getPool(): Pool {
   return pool;
 }
 
+async function ensureBootstrapAdminUser(): Promise<void> {
+  const username = sanitizeUsername(
+    String(process.env.UI_AUTH_BOOTSTRAP_ADMIN_USERNAME || 'admin'),
+  );
+  const password = String(process.env.UI_AUTH_BOOTSTRAP_ADMIN_PASSWORD || '');
+
+  if (!password) {
+    return;
+  }
+
+  const existingAdmin = await getPool().query(
+    `SELECT username FROM ui_auth_users WHERE role = 'admin' LIMIT 1`,
+  );
+
+  if ((existingAdmin.rowCount ?? 0) > 0) {
+    return;
+  }
+
+  const validationError = validateCredentials(username, password);
+  if (validationError) {
+    console.warn(`[auth/bootstrap] invalid bootstrap admin: ${validationError}`);
+    return;
+  }
+
+  const { hash, salt } = hashPassword(password);
+
+  await getPool().query(
+    `
+      INSERT INTO ui_auth_users (
+        username,
+        password_hash,
+        salt,
+        role,
+        is_active,
+        created_by,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, 'admin', TRUE, 'bootstrap', NOW(), NOW())
+      ON CONFLICT (username) DO UPDATE
+      SET role = 'admin',
+          is_active = TRUE,
+          updated_at = NOW()
+    `,
+    [username, hash, salt],
+  );
+
+  console.info(`[auth/bootstrap] admin user is ready: ${username}`);
+}
+
 export async function ensureUiAuthSchema(): Promise<void> {
   if (!dbInitPromise) {
     dbInitPromise = (async () => {
@@ -59,8 +152,38 @@ export async function ensureUiAuthSchema(): Promise<void> {
           username TEXT PRIMARY KEY,
           password_hash TEXT NOT NULL,
           salt TEXT NOT NULL,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          role TEXT NOT NULL DEFAULT 'user'
+            CHECK (role IN ('admin', 'user')),
+          is_active BOOLEAN NOT NULL DEFAULT TRUE,
+          created_by TEXT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+
+        ALTER TABLE ui_auth_users
+          ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
+
+        ALTER TABLE ui_auth_users
+          ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
+        ALTER TABLE ui_auth_users
+          ADD COLUMN IF NOT EXISTS created_by TEXT NULL;
+
+        ALTER TABLE ui_auth_users
+          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'ui_auth_users_role_check'
+          ) THEN
+            ALTER TABLE ui_auth_users
+              ADD CONSTRAINT ui_auth_users_role_check
+              CHECK (role IN ('admin', 'user'));
+          END IF;
+        END $$;
 
         CREATE TABLE IF NOT EXISTS ui_user_chat_state (
           username TEXT NOT NULL REFERENCES ui_auth_users(username) ON DELETE CASCADE,
@@ -83,6 +206,8 @@ export async function ensureUiAuthSchema(): Promise<void> {
         CREATE INDEX IF NOT EXISTS idx_ui_user_reports_username_created_at
           ON ui_user_reports (username, created_at DESC);
       `);
+
+      await ensureBootstrapAdminUser();
     })().catch((error) => {
       dbInitPromise = null;
       throw error;
@@ -146,23 +271,42 @@ export async function getUiAuthPool(): Promise<Pool> {
 
 export async function findUserByUsername(username: string): Promise<StoredUser | null> {
   await ensureUiAuthSchema();
+
   const result = await getPool().query(
-    `SELECT username, password_hash, salt, created_at
-     FROM ui_auth_users
-     WHERE username = $1`,
-    [username]
+    `
+      SELECT
+        username,
+        password_hash,
+        salt,
+        role,
+        is_active,
+        created_by,
+        created_at
+      FROM ui_auth_users
+      WHERE username = $1
+    `,
+    [username],
   );
+
   if (result.rowCount === 0) return null;
+
   const row = result.rows[0] as {
     username: string;
     password_hash: string;
     salt: string;
+    role: UserRole;
+    is_active: boolean;
+    created_by: string | null;
     created_at: string;
   };
+
   return {
     username: row.username,
     passwordHash: row.password_hash,
     salt: row.salt,
+    role: row.role,
+    isActive: row.is_active,
+    createdBy: row.created_by,
     createdAt: row.created_at,
   };
 }
@@ -209,7 +353,10 @@ export function validateCredentials(username: string, password: string): string 
   return null;
 }
 
-export function issueJwt(username: string): { token: string; exp: number } {
+export function issueJwt(
+    username: string,
+    role: UserRole = 'user',
+  ): { token: string; exp: number } {
   const secret = process.env.JWT_SECRET || 'dev-jwt-secret-change-me';
   const algorithm = (process.env.JWT_ALGORITHM || 'HS256').toUpperCase();
   if (algorithm !== 'HS256') {
@@ -223,6 +370,7 @@ export function issueJwt(username: string): { token: string; exp: number } {
   const header = { alg: 'HS256', typ: 'JWT' };
   const payload = {
     sub: username,
+    role,
     iat: now,
     exp,
   };

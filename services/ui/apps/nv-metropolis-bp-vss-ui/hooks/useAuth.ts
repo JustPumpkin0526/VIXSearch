@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+export type UserRole = 'admin' | 'user';
+
 export type AuthUser = {
   username: string;
+  role: UserRole;
 };
 
 export type AuthResponse = {

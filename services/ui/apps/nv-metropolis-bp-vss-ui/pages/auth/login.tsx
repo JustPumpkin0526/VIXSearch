@@ -93,20 +93,9 @@ export default function LoginPage() {
                 {loading ? '로그인 중...' : '로그인'}
               </button>
               <div className="text-center mt-2 flex items-center justify-center gap-2">
-                <span className="text-sm text-gray-300">계정이 없으신가요?</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (routerRef.current && routerRef.current.router && typeof routerRef.current.push === 'function') {
-                      routerRef.current.push('/auth/register');
-                    } else {
-                      window.location.href = '/auth/register';
-                    }
-                  }}
-                  className="text-sm text-blue-400 hover:underline"
-                >
-                  회원가입
-                </button>
+                <p className="text-sm text-gray-400">
+                  계정은 관리자에 의해 생성됩니다.
+                </p>
               </div>
             </div>
           </div>

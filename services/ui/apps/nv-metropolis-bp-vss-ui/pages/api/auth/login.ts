@@ -1,6 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-
-import { findUserByUsername, issueJwt, sanitizeUsername, verifyPassword } from './_lib';
+import {
+  findUserByUsername,
+  issueJwt,
+  sanitizeUsername,
+  verifyPassword,
+} from './_lib';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
@@ -17,18 +21,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const user = await findUserByUsername(username);
-    if (!user) {
+
+    if (!user || !user.isActive) {
       return res.status(401).json({ error: 'invalid credentials' });
     }
 
     const ok = verifyPassword(password, user.salt, user.passwordHash);
+
     if (!ok) {
       return res.status(401).json({ error: 'invalid credentials' });
     }
 
-    const { token, exp } = issueJwt(user.username);
+    const { token, exp } = issueJwt(user.username, user.role);
+
     return res.status(200).json({
-      user: { username: user.username },
+      user: {
+        username: user.username,
+        role: user.role,
+      },
       token,
       expiresAt: exp,
     });
