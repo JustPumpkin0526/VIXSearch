@@ -339,10 +339,17 @@ const CRITIC_SORT_ORDER: Record<string, number> = {
 };
 
 function getCriticSortRank(item: SearchResultItem): number {
-  return item.critic_result
-    ? CRITIC_SORT_ORDER[item.critic_result.result] ?? 3
-    : 3;
-};
+  const result = getCriticResultValue(item);
+  return result ? CRITIC_SORT_ORDER[result] ?? 3 : 3;
+}
+
+function getCriticResultValue(item: SearchResultItem): string {
+  return String(item.critic_result?.result ?? '').trim().toLowerCase();
+}
+
+function isRejectedByCritic(item: SearchResultItem): boolean {
+  return getCriticResultValue(item) === 'rejected';
+}
 
 function getResultKey(item: SearchResultItem): string {
   return [item.sensor_id, item.video_name, item.start_time, item.end_time].join('::');
@@ -655,14 +662,27 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
   const menuRef = React.useRef<HTMLDivElement | null>(null);
   const abortControllerRef = React.useRef<AbortController | null>(null);
   const vstApiUrl = env('NEXT_PUBLIC_VST_API_URL') || process?.env?.NEXT_PUBLIC_VST_API_URL || '';
-  const allKeys = React.useMemo(() => results.map((item) => getResultKey(item)), [results]);
+  const visibleResults = React.useMemo(
+    () => results.filter((item) => !isRejectedByCritic(item)),
+    [results],
+  );
+  // const hiddenRejectedCount = results.length - visibleResults.length;
+  const allKeys = React.useMemo(
+    () => visibleResults.map((item) => getResultKey(item)),
+    [visibleResults],
+  );
+  React.useEffect(() => {
+    setSelectedKeys((current) =>
+      current.filter((key) => allKeys.includes(key)),
+    );
+  }, [allKeys]);
   const selectedItems = React.useMemo(
-    () => results.filter((item) => selectedKeys.includes(getResultKey(item))),
-    [results, selectedKeys],
+    () => visibleResults.filter((item) => selectedKeys.includes(getResultKey(item))),
+    [visibleResults, selectedKeys],
   );
   const contextTargetItem = React.useMemo(
-    () => results.find((item) => getResultKey(item) === contextMenu?.targetKey) ?? null,
-    [contextMenu?.targetKey, results],
+    () => visibleResults.find((item) => getResultKey(item) === contextMenu?.targetKey) ?? null,
+    [contextMenu?.targetKey, visibleResults],
   );
   const reportSourceItems = React.useMemo(() => {
     if (selectedItems.length > 0) {
@@ -713,12 +733,13 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
   }, []);
 
   React.useEffect(() => {
-    if (!vstApiUrl || results.length === 0) {
+    if (!vstApiUrl || visibleResults.length === 0) {
       setTimelineStartTimes({});
       return undefined;
     }
-
-    const sensorIds = Array.from(new Set(results.map((item) => item.sensor_id).filter(Boolean)));
+    const sensorIds = Array.from(
+      new Set(visibleResults.map((item) => item.sensor_id).filter(Boolean)),
+    );
     if (sensorIds.length === 0) {
       setTimelineStartTimes({});
       return undefined;
@@ -760,7 +781,7 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
     return () => {
       cancelled = true;
     };
-  }, [results, vstApiUrl]);
+  }, [visibleResults, vstApiUrl]);
 
   const setDefaultCreateForm = React.useCallback(
     (items: SearchResultItem[]) => {
@@ -1130,13 +1151,13 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
   ]);
 
   const sortedResults = React.useMemo(() => {
-    const hasCritic = results.some((item) => item.critic_result);
+    const hasCritic = visibleResults.some((item) => item.critic_result);
 
     if (!hasCritic) {
-      return results;
+      return visibleResults;
     }
 
-    return [...results].sort((a, b) => {
+    return [...visibleResults].sort((a, b) => {
       const rankDiff = getCriticSortRank(a) - getCriticSortRank(b);
 
       if (rankDiff !== 0) {
@@ -1145,7 +1166,7 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
 
       return (Number(b.similarity) || 0) - (Number(a.similarity) || 0);
     });
-  }, [results]);
+  }, [visibleResults]);
 
   const renderContextMenu = () => {
     if (!contextMenu || typeof document === 'undefined') {
@@ -1211,7 +1232,7 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
               Search Results
             </h4>
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
-              {results.length} items
+              {visibleResults.length} items
             </span>
             {selectedItems.length > 0 ? (
               <span className="rounded-full bg-green-100 px-2.5 py-1 text-[11px] font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-300">
@@ -1237,6 +1258,11 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
           </div>
         </div>
 
+        {sortedResults.length === 0 ? (
+          <div className="rounded-xl border border-gray-200 bg-white px-5 py-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-neutral-950 dark:text-gray-400">
+            Critic Agent 재검증 결과, 표시할 검색 결과가 없습니다.
+          </div>
+        ) : (
         <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
           {sortedResults.map((item) => {
             const key = getResultKey(item);
@@ -1244,17 +1270,18 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
             const playableUrl = getPlayableUrl(item);
             const canPlay = Boolean(playableUrl || (vstApiUrl && item.sensor_id));
             const clipAnalysis = clipAnalysisByKey[key];
+            const criticResult = getCriticResultValue(item);
 
             return (
               <div
                 key={key}
                 onContextMenu={(event) => handleCardContextMenu(event, item)}
                 className={`overflow-hidden rounded-lg bg-white shadow-sm dark:bg-neutral-950 border ${
-                  item.critic_result?.result === 'confirmed'
+                  criticResult === 'confirmed'
                     ? 'border-green-500 dark:border-green-400'
-                    : item.critic_result?.result === 'rejected'
+                    : criticResult === 'rejected'
                       ? 'border-red-500 dark:border-red-400'
-                      : item.critic_result?.result === 'unverified'
+                      : criticResult === 'unverified'
                         ? 'border-yellow-500 dark:border-yellow-400'
                         : 'border-gray-200 dark:border-gray-700'
                 }`}
@@ -1394,6 +1421,7 @@ export const SearchResultsMessage: React.FC<{ results: SearchResultItem[]; sourc
             );
           })}
         </div>
+        )}
       </div>
 
       {renderContextMenu()}
