@@ -1,12 +1,18 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
+  buildRefreshTokenCookie,
+  createRefreshToken,
   findUserByUsername,
   issueJwt,
   sanitizeUsername,
+  storeRefreshToken,
   verifyPassword,
 } from './_lib';
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse,
+) {
   try {
     if (req.method !== 'POST') {
       res.setHeader('Allow', 'POST');
@@ -17,7 +23,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const password = String(req.body?.password || '');
 
     if (!username || !password) {
-      return res.status(400).json({ error: 'username and password are required' });
+      return res.status(400).json({
+        error: 'username and password are required',
+      });
     }
 
     const user = await findUserByUsername(username);
@@ -33,6 +41,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const { token, exp } = issueJwt(user.username, user.role);
+
+    const refreshToken = createRefreshToken();
+    await storeRefreshToken(user.username, refreshToken);
+
+    res.setHeader('Set-Cookie', buildRefreshTokenCookie(refreshToken));
 
     return res.status(200).json({
       user: {

@@ -34,44 +34,69 @@ export async function chunkedUpload(options: ChunkedUploadOptions): Promise<File
  * and RTVI ``camera_name``); the rest is ignored. ``formData`` is sent as
  * top-level ``custom_params`` for per-upload params from the dialog template.
  */
+const inFlightCompleteRequests = new Set<string>();
+
 export async function notifyUploadComplete(
   agentApiUrl: string,
   filename: string,
   videoUploadApiResponse: FileUploadResponse,
-  formData?: Record<string, any>,
+  formData?: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<void> {
   const sensorId = (videoUploadApiResponse as unknown as { sensorId?: string }).sensorId;
+
   if (!sensorId) {
     throw new Error('notifyUploadComplete: VST upload response missing sensorId');
   }
-  // Universal /complete endpoint — works on every profile.
-  // agentApiUrl already includes /api/v1, so just append the resource path.
-  const url = `${agentApiUrl.replace(/\/$/, '')}/videos/${encodeURIComponent(sensorId)}/complete`;
 
-  // Body = full upload response + filename + custom_params (if any).
-  // custom_params is omitted entirely when formData is undefined/empty so the
-  // body stays minimal on profiles that don't use the dialog's config template.
-  const body: Record<string, any> = { ...videoUploadApiResponse, filename };
-  if (formData && Object.keys(formData).length > 0) {
-    body.custom_params = formData;
+  if (inFlightCompleteRequests.has(sensorId)) {
+    console.warn(`notifyUploadComplete skipped: already processing ${sensorId}`);
+    return;
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal,
-  });
+  inFlightCompleteRequests.add(sensorId);
 
-  if (!response.ok) {
-    let message = `Post-processing failed with status ${response.status}`;
-    try {
-      const errorData = await response.json();
-      if (errorData?.detail) {
-        message = typeof errorData.detail === 'string' ? errorData.detail : JSON.stringify(errorData.detail);
+  try {
+    const url = `${agentApiUrl.replace(/\/$/, '')}/videos/${encodeURIComponent(sensorId)}/complete`;
+
+    const body: Record<string, unknown> = {
+      ...videoUploadApiResponse,
+      filename,
+    };
+
+    if (formData && Object.keys(formData).length > 0) {
+      body.custom_params = formData;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // 자동 토큰 재발급 wrapper에서 이 헤더를 보고 retry 제외 가능
+        'X-Skip-Auth-Retry': 'true',
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+
+    if (!response.ok) {
+      let message = `Post-processing failed with status ${response.status}`;
+
+      try {
+        const errorData = await response.json();
+        if (errorData?.detail) {
+          message =
+            typeof errorData.detail === 'string'
+              ? errorData.detail
+              : JSON.stringify(errorData.detail);
+        }
+      } catch {
+        // use default
       }
-    } catch { /* use default */ }
-    throw new Error(message);
+
+      throw new Error(message);
+    }
+  } finally {
+    inFlightCompleteRequests.delete(sensorId);
   }
 }

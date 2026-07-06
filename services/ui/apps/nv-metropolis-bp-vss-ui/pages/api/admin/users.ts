@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
+  getAuthenticatedUserFromAuthHeader,
   getUiAuthPool,
   hashPassword,
   requireAdminFromAuthHeader,
@@ -20,11 +21,23 @@ function normalizeRole(raw: unknown): UserRole {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const admin = await requireAdminFromAuthHeader(req.headers.authorization);
+    const user = await getAuthenticatedUserFromAuthHeader(
+      req.headers.authorization,
+    );
 
-    if (!admin) {
-      return res.status(403).json({ error: 'admin permission required' });
+    if (!user) {
+      return res.status(401).json({
+        error: 'authentication required or token expired',
+      });
     }
+
+    if (user.role !== 'admin') {
+      return res.status(403).json({
+        error: 'admin permission required',
+      });
+    }
+
+    const admin = user;
 
     const pool = await getUiAuthPool();
 

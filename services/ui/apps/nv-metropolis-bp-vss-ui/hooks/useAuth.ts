@@ -30,6 +30,25 @@ function safeJsonParse<T>(raw: string | null): T | null {
   }
 }
 
+async function refreshAccessToken(): Promise<AuthResponse | null> {
+  try {
+    const response = await fetch('/api/auth/refresh', {
+      method: 'POST',
+      credentials: 'include',
+    });
+
+    const payload = await parseApiPayload(response);
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return payload as AuthResponse;
+  } catch {
+    return null;
+  }
+}
+
 async function parseApiPayload(response: Response): Promise<AuthResponse | ErrorPayload | null> {
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
@@ -59,21 +78,58 @@ export function useAuth() {
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
-    const storedToken = window.localStorage.getItem(TOKEN_KEY) || '';
-    const storedUser = safeJsonParse<AuthUser>(window.localStorage.getItem(USER_KEY));
-    const expRaw = window.localStorage.getItem(EXP_KEY);
-    const exp = expRaw ? Number(expRaw) : 0;
-
-    const now = Math.floor(Date.now() / 1000);
-    if (storedToken && storedUser && exp > now) {
-      setToken(storedToken);
-      setUser(storedUser);
-    } else {
-      window.localStorage.removeItem(TOKEN_KEY);
-      window.localStorage.removeItem(USER_KEY);
-      window.localStorage.removeItem(EXP_KEY);
-    }
-    setReady(true);
+    let cancelled = false;
+    
+    const initializeAuth = async () => {
+      const storedToken = window.localStorage.getItem(TOKEN_KEY) || '';
+      const storedUser = safeJsonParse<AuthUser>(
+        window.localStorage.getItem(USER_KEY),
+      );
+      const expRaw = window.localStorage.getItem(EXP_KEY);
+      const exp = expRaw ? Number(expRaw) : 0;
+      const now = Math.floor(Date.now() / 1000);
+    
+      if (storedToken && storedUser && exp > now + 30) {
+        if (!cancelled) {
+          setToken(storedToken);
+          setUser(storedUser);
+          setReady(true);
+        }
+      
+        return;
+      }
+    
+      const refreshed = await refreshAccessToken();
+    
+      if (cancelled) {
+        return;
+      }
+    
+      if (refreshed) {
+        setToken(refreshed.token);
+        setUser(refreshed.user);
+        setError('');
+      
+        window.localStorage.setItem(TOKEN_KEY, refreshed.token);
+        window.localStorage.setItem(USER_KEY, JSON.stringify(refreshed.user));
+        window.localStorage.setItem(EXP_KEY, String(refreshed.expiresAt));
+      } else {
+        window.localStorage.removeItem(TOKEN_KEY);
+        window.localStorage.removeItem(USER_KEY);
+        window.localStorage.removeItem(EXP_KEY);
+      
+        setToken('');
+        setUser(null);
+      }
+    
+      setReady(true);
+    };
+  
+    initializeAuth();
+  
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const persist = useCallback((resp: AuthResponse) => {
@@ -115,10 +171,20 @@ export function useAuth() {
     persist(payload as AuthResponse);
   }, [persist]);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
+    } catch {
+      // ignore
+    }
+  
     setToken('');
     setUser(null);
     setError('');
+  
     window.localStorage.removeItem(TOKEN_KEY);
     window.localStorage.removeItem(USER_KEY);
     window.localStorage.removeItem(EXP_KEY);

@@ -3,6 +3,8 @@ import { Pool } from 'pg';
 
 export type UserRole = 'admin' | 'user';
 
+const REFRESH_TOKEN_COOKIE_NAME = 'vss.refresh.token';
+
 type StoredUser = {
   username: string;
   passwordHash: string;
@@ -48,6 +50,84 @@ export async function getAuthenticatedUserFromAuthHeader(
     role: user.role,
   };
 }
+
+export function getRefreshTokenTtlSec(): number {
+  return parseDurationSeconds(
+    process.env.UI_AUTH_REFRESH_TOKEN_TTL_SEC,
+    7 * 24 * 60 * 60,
+  );
+}
+
+export function createRefreshToken(): string {
+  return crypto.randomBytes(48).toString('base64url');
+}
+
+export function hashRefreshToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+export function getCookieValue(
+  cookieHeader: string | undefined,
+  name: string,
+): string | null {
+  const raw = cookieHeader || '';
+  const parts = raw.split(';').map((part) => part.trim());
+
+  for (const part of parts) {
+    const index = part.indexOf('=');
+
+    if (index === -1) continue;
+
+    const key = part.slice(0, index);
+    const value = part.slice(index + 1);
+
+    if (key === name) {
+      return decodeURIComponent(value);
+    }
+  }
+
+  return null;
+}
+
+export function getRefreshTokenFromCookie(
+  cookieHeader: string | undefined,
+): string | null {
+  return getCookieValue(cookieHeader, REFRESH_TOKEN_COOKIE_NAME);
+}
+
+export function buildRefreshTokenCookie(
+    refreshToken: string,
+    maxAgeSec = getRefreshTokenTtlSec(),
+  ): string {
+    const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+
+    return [
+    `${REFRESH_TOKEN_COOKIE_NAME}=${encodeURIComponent(refreshToken)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${maxAgeSec}`,
+    secure,
+  ]
+    .filter(Boolean)
+    .join('; ');
+}
+
+export function buildClearRefreshTokenCookie(): string {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+
+  return [
+    `${REFRESH_TOKEN_COOKIE_NAME}=`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=0',
+    secure,
+  ]
+    .filter(Boolean)
+    .join('; ');
+}
+
 
 export async function requireAdminFromAuthHeader(
   rawHeader: string | string[] | undefined,
@@ -144,6 +224,91 @@ async function ensureBootstrapAdminUser(): Promise<void> {
   console.info(`[auth/bootstrap] admin user is ready: ${username}`);
 }
 
+export async function storeRefreshToken(
+  username: string,
+  refreshToken: string,
+): Promise<void> {
+  await ensureUiAuthSchema();
+
+  const id = crypto.randomUUID();
+  const tokenHash = hashRefreshToken(refreshToken);
+
+  await getPool().query(
+    `
+      INSERT INTO ui_auth_refresh_tokens (
+        id,
+        username,
+        token_hash,
+        expires_at,
+        created_at
+      )
+      VALUES (
+        $1,
+        $2,
+        $3,
+        NOW() + ($4 || ' seconds')::interval,
+        NOW()
+      )
+    `,
+    [
+      id,
+      username,
+      tokenHash,
+      String(Number(process.env.UI_AUTH_REFRESH_TOKEN_TTL_SEC || 604800)),
+    ],
+  );
+}
+
+export async function findUserByRefreshToken(refreshToken: string) {
+  await ensureUiAuthSchema();
+
+  const tokenHash = hashRefreshToken(refreshToken);
+
+  const result = await getPool().query(
+    `
+      SELECT u.username, u.role, u.is_active
+      FROM ui_auth_refresh_tokens rt
+      JOIN ui_auth_users u ON u.username = rt.username
+      WHERE rt.token_hash = $1
+        AND rt.revoked_at IS NULL
+        AND rt.expires_at > NOW()
+      LIMIT 1
+    `,
+    [tokenHash],
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  const row = result.rows[0];
+
+  if (!row.is_active) {
+    return null;
+  }
+
+  return {
+    username: row.username,
+    role: row.role,
+  };
+}
+
+export async function revokeRefreshToken(refreshToken: string): Promise<void> {
+  await ensureUiAuthSchema();
+
+  const tokenHash = hashRefreshToken(refreshToken);
+
+  await getPool().query(
+    `
+      UPDATE ui_auth_refresh_tokens
+      SET revoked_at = NOW()
+      WHERE token_hash = $1
+        AND revoked_at IS NULL
+    `,
+    [tokenHash],
+  );
+}
+
 export async function ensureUiAuthSchema(): Promise<void> {
   if (!dbInitPromise) {
     dbInitPromise = (async () => {
@@ -172,18 +337,20 @@ export async function ensureUiAuthSchema(): Promise<void> {
         ALTER TABLE ui_auth_users
           ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
-        DO $$
-        BEGIN
-          IF NOT EXISTS (
-            SELECT 1
-            FROM pg_constraint
-            WHERE conname = 'ui_auth_users_role_check'
-          ) THEN
-            ALTER TABLE ui_auth_users
-              ADD CONSTRAINT ui_auth_users_role_check
-              CHECK (role IN ('admin', 'user'));
-          END IF;
-        END $$;
+        CREATE TABLE IF NOT EXISTS ui_auth_refresh_tokens (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL REFERENCES ui_auth_users(username) ON DELETE CASCADE,
+          token_hash TEXT NOT NULL UNIQUE,
+          expires_at TIMESTAMPTZ NOT NULL,
+          revoked_at TIMESTAMPTZ NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ui_auth_refresh_tokens_username
+          ON ui_auth_refresh_tokens(username);
+
+        CREATE INDEX IF NOT EXISTS idx_ui_auth_refresh_tokens_expires_at
+          ON ui_auth_refresh_tokens(expires_at);
 
         CREATE TABLE IF NOT EXISTS ui_user_chat_state (
           username TEXT NOT NULL REFERENCES ui_auth_users(username) ON DELETE CASCADE,
@@ -354,17 +521,21 @@ export function validateCredentials(username: string, password: string): string 
 }
 
 export function issueJwt(
-    username: string,
-    role: UserRole = 'user',
-  ): { token: string; exp: number } {
+  username: string,
+  role: UserRole = 'user',
+): { token: string; exp: number } {
   const secret = process.env.JWT_SECRET || 'dev-jwt-secret-change-me';
   const algorithm = (process.env.JWT_ALGORITHM || 'HS256').toUpperCase();
+
   if (algorithm !== 'HS256') {
     throw new Error('Only HS256 is supported by this UI auth endpoint');
   }
 
   const now = Math.floor(Date.now() / 1000);
-  const ttl = parseDurationSeconds(process.env.UI_AUTH_TOKEN_TTL_SEC, 12 * 60 * 60);
+  const ttl = parseDurationSeconds(
+    process.env.UI_AUTH_TOKEN_TTL_SEC,
+    12 * 60 * 60,
+  );
   const exp = now + ttl;
 
   const header = { alg: 'HS256', typ: 'JWT' };
@@ -381,7 +552,10 @@ export function issueJwt(
   const sig = crypto.createHmac('sha256', secret).update(signingInput).digest();
   const encodedSig = base64url(sig);
 
-  return { token: `${signingInput}.${encodedSig}`, exp };
+  return {
+    token: `${signingInput}.${encodedSig}`,
+    exp,
+  };
 }
 
 export type { StoredUser };
