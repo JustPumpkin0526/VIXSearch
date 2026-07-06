@@ -3,9 +3,9 @@ import { Pool } from 'pg';
 
 export type UserRole = 'admin' | 'user';
 
-const REFRESH_TOKEN_COOKIE_NAME = 'vss.refresh.token';
+export const REFRESH_TOKEN_COOKIE_NAME = 'vss.refresh.token';
 
-type StoredUser = {
+export type StoredUser = {
   username: string;
   passwordHash: string;
   salt: string;
@@ -26,29 +26,85 @@ type JwtVerification = {
   reason?: string;
 };
 
+export type RefreshAuthResponse = {
+  user: AuthUser;
+  token: string;
+  expiresAt: number;
+  refreshToken: string;
+};
+
 const DATABASE_URL = String(process.env.UI_AUTH_DATABASE_URL || '').trim();
+
 let pool: Pool | null = null;
 let dbInitPromise: Promise<void> | null = null;
 
-export async function getAuthenticatedUserFromAuthHeader(
-  rawHeader: string | string[] | undefined,
-): Promise<AuthUser | null> {
-  const username = getUsernameFromAuthHeader(rawHeader);
+function base64url(input: Buffer | string): string {
+  const buffer = typeof input === 'string'
+    ? Buffer.from(input, 'utf8')
+    : input;
 
-  if (!username) {
-    return null;
+  return buffer
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+function parseDurationSeconds(raw: string | undefined, fallbackSec: number): number {
+  if (!raw) {
+    return fallbackSec;
   }
 
-  const user = await findUserByUsername(username);
+  const n = Number(raw);
 
-  if (!user || !user.isActive) {
-    return null;
+  if (!Number.isFinite(n) || n <= 0) {
+    return fallbackSec;
   }
 
-  return {
-    username: user.username,
-    role: user.role,
-  };
+  return Math.floor(n);
+}
+
+function getPool(): Pool {
+  if (!pool) {
+    if (DATABASE_URL) {
+      pool = new Pool({ connectionString: DATABASE_URL });
+    } else {
+      const host = String(
+        process.env.UI_AUTH_DB_HOST ||
+          process.env.POSTGRES_HOST ||
+          'localhost',
+      );
+      const port = String(
+        process.env.UI_AUTH_DB_PORT ||
+          process.env.AUTH_DB_PORT ||
+          process.env.POSTGRES_PORT ||
+          '5432',
+      );
+      const user = String(
+        process.env.UI_AUTH_DB_USER ||
+          process.env.POSTGRES_USER ||
+          'vss',
+      );
+      const password = String(
+        process.env.UI_AUTH_DB_PASSWORD ||
+          process.env.POSTGRES_PASSWORD ||
+          '',
+      );
+      const database = String(
+        process.env.UI_AUTH_DB_NAME ||
+          process.env.POSTGRES_DB ||
+          'vss_ui_auth',
+      );
+
+      const conn = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(
+        password,
+      )}@${host}:${port}/${encodeURIComponent(database)}`;
+
+      pool = new Pool({ connectionString: conn });
+    }
+  }
+
+  return pool;
 }
 
 export function getRefreshTokenTtlSec(): number {
@@ -59,7 +115,7 @@ export function getRefreshTokenTtlSec(): number {
 }
 
 export function createRefreshToken(): string {
-  return crypto.randomBytes(48).toString('base64url');
+  return base64url(crypto.randomBytes(48));
 }
 
 export function hashRefreshToken(token: string): string {
@@ -67,22 +123,31 @@ export function hashRefreshToken(token: string): string {
 }
 
 export function getCookieValue(
-  cookieHeader: string | undefined,
+  cookieHeader: string | string[] | undefined,
   name: string,
 ): string | null {
-  const raw = cookieHeader || '';
+  const raw = Array.isArray(cookieHeader)
+    ? cookieHeader.join('; ')
+    : String(cookieHeader || '');
+
   const parts = raw.split(';').map((part) => part.trim());
 
   for (const part of parts) {
     const index = part.indexOf('=');
 
-    if (index === -1) continue;
+    if (index === -1) {
+      continue;
+    }
 
     const key = part.slice(0, index);
     const value = part.slice(index + 1);
 
     if (key === name) {
-      return decodeURIComponent(value);
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        return value;
+      }
     }
   }
 
@@ -90,18 +155,19 @@ export function getCookieValue(
 }
 
 export function getRefreshTokenFromCookie(
-  cookieHeader: string | undefined,
+  cookieHeader: string | string[] | undefined,
 ): string | null {
-  return getCookieValue(cookieHeader, REFRESH_TOKEN_COOKIE_NAME);
+  const token = getCookieValue(cookieHeader, REFRESH_TOKEN_COOKIE_NAME);
+  return token && token.trim() ? token.trim() : null;
 }
 
 export function buildRefreshTokenCookie(
-    refreshToken: string,
-    maxAgeSec = getRefreshTokenTtlSec(),
-  ): string {
-    const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  refreshToken: string,
+  maxAgeSec = getRefreshTokenTtlSec(),
+): string {
+  const secure = process.env.NODE_ENV === 'production' ? 'Secure' : '';
 
-    return [
+  return [
     `${REFRESH_TOKEN_COOKIE_NAME}=${encodeURIComponent(refreshToken)}`,
     'Path=/',
     'HttpOnly',
@@ -114,7 +180,7 @@ export function buildRefreshTokenCookie(
 }
 
 export function buildClearRefreshTokenCookie(): string {
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  const secure = process.env.NODE_ENV === 'production' ? 'Secure' : '';
 
   return [
     `${REFRESH_TOKEN_COOKIE_NAME}=`,
@@ -128,191 +194,20 @@ export function buildClearRefreshTokenCookie(): string {
     .join('; ');
 }
 
-
-export async function requireAdminFromAuthHeader(
-  rawHeader: string | string[] | undefined,
-): Promise<AuthUser | null> {
-  const user = await getAuthenticatedUserFromAuthHeader(rawHeader);
-
-  if (!user || user.role !== 'admin') {
-    return null;
-  }
-
-  return user;
-}
-
-function base64url(input: Buffer | string): string {
-  return Buffer.from(input)
-    .toString('base64')
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
-}
-
-function parseDurationSeconds(raw: string | undefined, fallbackSec: number): number {
-  if (!raw) return fallbackSec;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return fallbackSec;
-  return Math.floor(n);
-}
-
-function getPool(): Pool {
-  if (!pool) {
-    if (DATABASE_URL) {
-      pool = new Pool({ connectionString: DATABASE_URL });
-    } else {
-      // Fallback: build connection string from common env vars when UI_AUTH_DATABASE_URL is not provided
-      const host = String(process.env.UI_AUTH_DB_HOST || process.env.POSTGRES_HOST || 'localhost');
-      const port = String(process.env.UI_AUTH_DB_PORT || process.env.AUTH_DB_PORT || process.env.POSTGRES_PORT || '5432');
-      const user = String(process.env.UI_AUTH_DB_USER || process.env.POSTGRES_USER || 'vss');
-      const password = String(process.env.UI_AUTH_DB_PASSWORD || process.env.POSTGRES_PASSWORD || '');
-      const database = String(process.env.UI_AUTH_DB_NAME || process.env.POSTGRES_DB || 'vss_ui_auth');
-      const conn = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
-      pool = new Pool({ connectionString: conn });
-    }
-  }
-  return pool;
-}
-
-async function ensureBootstrapAdminUser(): Promise<void> {
-  const username = sanitizeUsername(
-    String(process.env.UI_AUTH_BOOTSTRAP_ADMIN_USERNAME || 'admin'),
-  );
-  const password = String(process.env.UI_AUTH_BOOTSTRAP_ADMIN_PASSWORD || '');
-
-  if (!password) {
-    return;
-  }
-
-  const existingAdmin = await getPool().query(
-    `SELECT username FROM ui_auth_users WHERE role = 'admin' LIMIT 1`,
-  );
-
-  if ((existingAdmin.rowCount ?? 0) > 0) {
-    return;
-  }
-
-  const validationError = validateCredentials(username, password);
-  if (validationError) {
-    console.warn(`[auth/bootstrap] invalid bootstrap admin: ${validationError}`);
-    return;
-  }
-
-  const { hash, salt } = hashPassword(password);
-
-  await getPool().query(
-    `
-      INSERT INTO ui_auth_users (
-        username,
-        password_hash,
-        salt,
-        role,
-        is_active,
-        created_by,
-        created_at,
-        updated_at
-      )
-      VALUES ($1, $2, $3, 'admin', TRUE, 'bootstrap', NOW(), NOW())
-      ON CONFLICT (username) DO UPDATE
-      SET role = 'admin',
-          is_active = TRUE,
-          updated_at = NOW()
-    `,
-    [username, hash, salt],
-  );
-
-  console.info(`[auth/bootstrap] admin user is ready: ${username}`);
-}
-
-export async function storeRefreshToken(
-  username: string,
-  refreshToken: string,
-): Promise<void> {
-  await ensureUiAuthSchema();
-
-  const id = crypto.randomUUID();
-  const tokenHash = hashRefreshToken(refreshToken);
-
-  await getPool().query(
-    `
-      INSERT INTO ui_auth_refresh_tokens (
-        id,
-        username,
-        token_hash,
-        expires_at,
-        created_at
-      )
-      VALUES (
-        $1,
-        $2,
-        $3,
-        NOW() + ($4 || ' seconds')::interval,
-        NOW()
-      )
-    `,
-    [
-      id,
-      username,
-      tokenHash,
-      String(Number(process.env.UI_AUTH_REFRESH_TOKEN_TTL_SEC || 604800)),
-    ],
-  );
-}
-
-export async function findUserByRefreshToken(refreshToken: string) {
-  await ensureUiAuthSchema();
-
-  const tokenHash = hashRefreshToken(refreshToken);
-
-  const result = await getPool().query(
-    `
-      SELECT u.username, u.role, u.is_active
-      FROM ui_auth_refresh_tokens rt
-      JOIN ui_auth_users u ON u.username = rt.username
-      WHERE rt.token_hash = $1
-        AND rt.revoked_at IS NULL
-        AND rt.expires_at > NOW()
-      LIMIT 1
-    `,
-    [tokenHash],
-  );
-
-  if (result.rowCount === 0) {
-    return null;
-  }
-
-  const row = result.rows[0];
-
-  if (!row.is_active) {
-    return null;
-  }
-
-  return {
-    username: row.username,
-    role: row.role,
-  };
-}
-
-export async function revokeRefreshToken(refreshToken: string): Promise<void> {
-  await ensureUiAuthSchema();
-
-  const tokenHash = hashRefreshToken(refreshToken);
-
-  await getPool().query(
-    `
-      UPDATE ui_auth_refresh_tokens
-      SET revoked_at = NOW()
-      WHERE token_hash = $1
-        AND revoked_at IS NULL
-    `,
-    [tokenHash],
-  );
-}
-
 export async function ensureUiAuthSchema(): Promise<void> {
   if (!dbInitPromise) {
     dbInitPromise = (async () => {
       await getPool().query(`
+        CREATE TABLE IF NOT EXISTS ui_auth_users (
+          username TEXT PRIMARY KEY,
+          password_hash TEXT NOT NULL,
+          salt TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'user',
+          is_active BOOLEAN NOT NULL DEFAULT TRUE,
+          created_by TEXT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
 
         ALTER TABLE ui_auth_users
           ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
@@ -326,6 +221,20 @@ export async function ensureUiAuthSchema(): Promise<void> {
         ALTER TABLE ui_auth_users
           ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'ui_auth_users_role_check'
+          ) THEN
+            ALTER TABLE ui_auth_users
+              ADD CONSTRAINT ui_auth_users_role_check
+              CHECK (role IN ('admin', 'user'));
+          END IF;
+        END
+        $$;
+
         CREATE TABLE IF NOT EXISTS ui_auth_refresh_tokens (
           token_hash TEXT PRIMARY KEY,
           username TEXT NOT NULL REFERENCES ui_auth_users(username) ON DELETE CASCADE,
@@ -335,22 +244,10 @@ export async function ensureUiAuthSchema(): Promise<void> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_ui_auth_refresh_tokens_username
-        ON ui_auth_refresh_tokens (username);
+          ON ui_auth_refresh_tokens (username);
 
         CREATE INDEX IF NOT EXISTS idx_ui_auth_refresh_tokens_expires_at
-        ON ui_auth_refresh_tokens (expires_at);
-        
-        CREATE TABLE IF NOT EXISTS ui_auth_users (
-          username TEXT PRIMARY KEY,
-          password_hash TEXT NOT NULL,
-          salt TEXT NOT NULL,
-          role TEXT NOT NULL DEFAULT 'user'
-            CHECK (role IN ('admin', 'user')),
-          is_active BOOLEAN NOT NULL DEFAULT TRUE,
-          created_by TEXT NULL,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
+          ON ui_auth_refresh_tokens (expires_at);
 
         CREATE TABLE IF NOT EXISTS ui_user_chat_state (
           username TEXT NOT NULL REFERENCES ui_auth_users(username) ON DELETE CASCADE,
@@ -384,51 +281,55 @@ export async function ensureUiAuthSchema(): Promise<void> {
   await dbInitPromise;
 }
 
-export function verifyJwt(token: string): JwtVerification {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) {
-      return { valid: false, reason: 'Malformed JWT' };
-    }
+async function ensureBootstrapAdminUser(): Promise<void> {
+  const username = sanitizeUsername(
+    String(process.env.UI_AUTH_BOOTSTRAP_ADMIN_USERNAME || 'admin'),
+  );
+  const password = String(process.env.UI_AUTH_BOOTSTRAP_ADMIN_PASSWORD || '');
 
-    const [headerB64, payloadB64, sigB64] = parts;
-    const signingInput = `${headerB64}.${payloadB64}`;
-    const secret = process.env.JWT_SECRET || 'dev-jwt-secret-change-me';
-    const expectedSig = crypto.createHmac('sha256', secret).update(signingInput).digest();
-    const expectedSigB64 = base64url(expectedSig);
-
-    if (!crypto.timingSafeEqual(Buffer.from(sigB64), Buffer.from(expectedSigB64))) {
-      return { valid: false, reason: 'Invalid signature' };
-    }
-
-    const payloadJson = Buffer.from(payloadB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString();
-    const payload = JSON.parse(payloadJson) as Record<string, unknown>;
-    const now = Math.floor(Date.now() / 1000);
-    const exp = typeof payload.exp === 'number' ? payload.exp : 0;
-    if (exp && exp < now) {
-      return { valid: false, reason: 'Token expired' };
-    }
-
-    return { valid: true, payload };
-  } catch (error: any) {
-    return { valid: false, reason: String(error?.message || error) };
-  }
-}
-
-export function getUsernameFromAuthHeader(rawHeader: string | string[] | undefined): string | null {
-  const authHeader = Array.isArray(rawHeader) ? rawHeader[0] : String(rawHeader || '');
-  if (!authHeader.startsWith('Bearer ')) {
-    return null;
+  if (!password) {
+    return;
   }
 
-  const token = authHeader.slice('Bearer '.length).trim();
-  const verification = verifyJwt(token);
-  if (!verification.valid) {
-    return null;
+  const existingAdmin = await getPool().query(
+    `SELECT username FROM ui_auth_users WHERE role = 'admin' LIMIT 1`,
+  );
+
+  if ((existingAdmin.rowCount ?? 0) > 0) {
+    return;
   }
 
-  const subject = verification.payload?.sub;
-  return typeof subject === 'string' && subject.trim() ? subject.trim().toLowerCase() : null;
+  const validationError = validateCredentials(username, password);
+
+  if (validationError) {
+    console.warn(`[auth/bootstrap] invalid bootstrap admin: ${validationError}`);
+    return;
+  }
+
+  const { hash, salt } = hashPassword(password);
+
+  await getPool().query(
+    `
+      INSERT INTO ui_auth_users (
+        username,
+        password_hash,
+        salt,
+        role,
+        is_active,
+        created_by,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, 'admin', TRUE, 'bootstrap', NOW(), NOW())
+      ON CONFLICT (username) DO UPDATE
+      SET role = 'admin',
+          is_active = TRUE,
+          updated_at = NOW()
+    `,
+    [username, hash, salt],
+  );
+
+  console.info(`[auth/bootstrap] admin user is ready: ${username}`);
 }
 
 export async function getUiAuthPool(): Promise<Pool> {
@@ -436,7 +337,9 @@ export async function getUiAuthPool(): Promise<Pool> {
   return getPool();
 }
 
-export async function findUserByUsername(username: string): Promise<StoredUser | null> {
+export async function findUserByUsername(
+  username: string,
+): Promise<StoredUser | null> {
   await ensureUiAuthSchema();
 
   const result = await getPool().query(
@@ -455,7 +358,9 @@ export async function findUserByUsername(username: string): Promise<StoredUser |
     [username],
   );
 
-  if (result.rowCount === 0) return null;
+  if (result.rowCount === 0) {
+    return null;
+  }
 
   const row = result.rows[0] as {
     username: string;
@@ -480,26 +385,65 @@ export async function findUserByUsername(username: string): Promise<StoredUser |
 
 export async function insertUser(user: StoredUser): Promise<boolean> {
   await ensureUiAuthSchema();
-  const insertSql = `INSERT INTO ui_auth_users (username, password_hash, salt, created_at)\n     VALUES ($1, $2, $3, $4)\n     ON CONFLICT (username) DO NOTHING`;
-  // Avoid logging password hash/salt to reduce risk of leakage in logs
+
   const result = await getPool().query(
-    insertSql,
-    [user.username, user.passwordHash, user.salt, user.createdAt]
+    `
+      INSERT INTO ui_auth_users (
+        username,
+        password_hash,
+        salt,
+        role,
+        is_active,
+        created_by,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      ON CONFLICT (username) DO NOTHING
+    `,
+    [
+      user.username,
+      user.passwordHash,
+      user.salt,
+      user.role || 'user',
+      user.isActive ?? true,
+      user.createdBy || null,
+      user.createdAt,
+    ],
   );
-  return result.rowCount > 0;
+
+  return (result.rowCount ?? 0) > 0;
 }
 
-export function hashPassword(password: string, salt?: string): { hash: string; salt: string } {
+export function hashPassword(
+  password: string,
+  salt?: string,
+): { hash: string; salt: string } {
   const s = salt || crypto.randomBytes(16).toString('hex');
-  const hash = crypto.pbkdf2Sync(password, s, 100000, 64, 'sha512').toString('hex');
-  return { hash, salt: s };
+  const hash = crypto
+    .pbkdf2Sync(password, s, 100000, 64, 'sha512')
+    .toString('hex');
+
+  return {
+    hash,
+    salt: s,
+  };
 }
 
-export function verifyPassword(password: string, salt: string, passwordHash: string): boolean {
+export function verifyPassword(
+  password: string,
+  salt: string,
+  passwordHash: string,
+): boolean {
   const { hash } = hashPassword(password, salt);
-  const a = Buffer.from(hash, 'hex');
-  const b = Buffer.from(passwordHash, 'hex');
-  if (a.length !== b.length) return false;
+
+  const a = Uint8Array.from(Buffer.from(hash, 'hex'));
+  const b = Uint8Array.from(Buffer.from(passwordHash, 'hex'));
+
+  if (a.length !== b.length) {
+    return false;
+  }
+
   return crypto.timingSafeEqual(a, b);
 }
 
@@ -507,16 +451,22 @@ export function sanitizeUsername(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
-export function validateCredentials(username: string, password: string): string | null {
+export function validateCredentials(
+  username: string,
+  password: string,
+): string | null {
   if (!username || username.length < 3 || username.length > 64) {
     return 'username must be between 3 and 64 characters';
   }
+
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(username)) {
     return 'username must use lowercase letters, numbers, dot, underscore, or hyphen';
   }
+
   if (!password || password.length < 8 || password.length > 128) {
     return 'password must be between 8 and 128 characters';
   }
+
   return null;
 }
 
@@ -524,7 +474,6 @@ export function issueJwt(
   username: string,
   role: UserRole = 'user',
 ): { token: string; exp: number } {
-  
   const secret = process.env.JWT_SECRET || 'dev-jwt-secret-change-me';
   const algorithm = (process.env.JWT_ALGORITHM || 'HS256').toUpperCase();
 
@@ -539,7 +488,11 @@ export function issueJwt(
   );
   const exp = now + ttl;
 
-  const header = { alg: 'HS256', typ: 'JWT' };
+  const header = {
+    alg: 'HS256',
+    typ: 'JWT',
+  };
+
   const payload = {
     sub: username,
     role,
@@ -559,169 +512,179 @@ export function issueJwt(
   };
 }
 
-export const REFRESH_TOKEN_COOKIE_NAME = 'vss.refresh.token';
+export function verifyJwt(token: string): JwtVerification {
+  try {
+    const parts = token.split('.');
 
-export type RefreshAuthResponse = {
-  user: AuthUser;
-  token: string;
-  expiresAt: number;
-  refreshToken: string;
-  refreshExpiresAt: number;
-};
+    if (parts.length !== 3) {
+      return {
+        valid: false,
+        reason: 'Malformed JWT',
+      };
+    }
 
-function hashRefreshToken(token: string): string {
-  return crypto.createHash('sha256').update(token).digest('hex');
-}
+    const [headerB64, payloadB64, sigB64] = parts;
+    const signingInput = `${headerB64}.${payloadB64}`;
+    const secret = process.env.JWT_SECRET || 'dev-jwt-secret-change-me';
 
-function parseCookies(rawCookieHeader: string | string[] | undefined): Record<string, string> {
-  const raw = Array.isArray(rawCookieHeader)
-    ? rawCookieHeader.join('; ')
-    : String(rawCookieHeader || '');
+    const expectedSig = crypto
+      .createHmac('sha256', secret)
+      .update(signingInput)
+      .digest();
 
-  return raw
-    .split(';')
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .reduce<Record<string, string>>((acc, part) => {
-      const eq = part.indexOf('=');
-      if (eq <= 0) {
-        return acc;
-      }
+    const expectedSigB64 = base64url(expectedSig);
+    const actual = Uint8Array.from(Buffer.from(sigB64));
+    const expected = Uint8Array.from(Buffer.from(expectedSigB64));
+      
+    if (actual.length !== expected.length) {
+      return {
+        valid: false,
+        reason: 'Invalid signature',
+      };
+    }
+    
+    if (!crypto.timingSafeEqual(actual, expected)) {
+      return {
+        valid: false,
+        reason: 'Invalid signature',
+      };
+    }
 
-      const key = part.slice(0, eq).trim();
-      const value = part.slice(eq + 1).trim();
+    const payloadJson = Buffer.from(
+      payloadB64.replace(/-/g, '+').replace(/_/g, '/'),
+      'base64',
+    ).toString();
 
-      try {
-        acc[key] = decodeURIComponent(value);
-      } catch {
-        acc[key] = value;
-      }
+    const payload = JSON.parse(payloadJson) as Record<string, unknown>;
 
-      return acc;
-    }, {});
-}
+    const now = Math.floor(Date.now() / 1000);
+    const exp = typeof payload.exp === 'number' ? payload.exp : 0;
 
-export function getRefreshTokenFromCookie(
-  rawCookieHeader: string | string[] | undefined,
-): string | null {
-  const cookies = parseCookies(rawCookieHeader);
-  const token = cookies[REFRESH_TOKEN_COOKIE_NAME];
-  return typeof token === 'string' && token.trim() ? token.trim() : null;
-}
+    if (exp && exp < now) {
+      return {
+        valid: false,
+        reason: 'Token expired',
+      };
+    }
 
-export function buildSetRefreshTokenCookie(
-  token: string,
-  expiresAt: number,
-): string {
-  const now = Math.floor(Date.now() / 1000);
-  const maxAge = Math.max(0, expiresAt - now);
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-
-  return [
-    `${REFRESH_TOKEN_COOKIE_NAME}=${encodeURIComponent(token)}`,
-    'HttpOnly',
-    'Path=/',
-    'SameSite=Lax',
-    `Max-Age=${maxAge}`,
-    secure.replace(/^; /, ''),
-  ]
-    .filter(Boolean)
-    .join('; ');
-}
-
-export function buildClearRefreshTokenCookie(): string {
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-
-  return [
-    `${REFRESH_TOKEN_COOKIE_NAME}=`,
-    'HttpOnly',
-    'Path=/',
-    'SameSite=Lax',
-    'Max-Age=0',
-    secure.replace(/^; /, ''),
-  ]
-    .filter(Boolean)
-    .join('; ');
-}
-
-export async function issueRefreshToken(
-  username: string,
-): Promise<{ token: string; expiresAt: number }> {
-  await ensureUiAuthSchema();
-
-  const ttl = parseDurationSeconds(
-    process.env.UI_AUTH_REFRESH_TOKEN_TTL_SEC,
-    30 * 24 * 60 * 60,
-  );
-
-  const now = Math.floor(Date.now() / 1000);
-  const expiresAt = now + ttl;
-  const token = base64url(crypto.randomBytes(32));
-  const tokenHash = hashRefreshToken(token);
-
-  await getPool().query(
-    `
-    INSERT INTO ui_auth_refresh_tokens (
-      token_hash,
-      username,
-      expires_at,
-      created_at
-    )
-    VALUES ($1, $2, to_timestamp($3), NOW())
-    `,
-    [tokenHash, username, expiresAt],
-  );
-
-  return {
-    token,
-    expiresAt,
-  };
-}
-
-export async function revokeRefreshToken(token: string): Promise<void> {
-  if (!token) {
-    return;
+    return {
+      valid: true,
+      payload,
+    };
+  } catch (error: any) {
+    return {
+      valid: false,
+      reason: String(error?.message || error),
+    };
   }
-
-  await ensureUiAuthSchema();
-
-  const tokenHash = hashRefreshToken(token);
-
-  await getPool().query(
-    `
-    UPDATE ui_auth_refresh_tokens
-    SET revoked_at = NOW()
-    WHERE token_hash = $1
-      AND revoked_at IS NULL
-    `,
-    [tokenHash],
-  );
 }
 
-export async function rotateRefreshToken(
-  token: string,
-): Promise<RefreshAuthResponse | null> {
-  if (!token) {
+export function getUsernameFromAuthHeader(
+  rawHeader: string | string[] | undefined,
+): string | null {
+  const authHeader = Array.isArray(rawHeader)
+    ? rawHeader[0]
+    : String(rawHeader || '');
+
+  if (!authHeader.startsWith('Bearer ')) {
     return null;
   }
 
+  const token = authHeader.slice('Bearer '.length).trim();
+  const verification = verifyJwt(token);
+
+  if (!verification.valid) {
+    return null;
+  }
+
+  const subject = verification.payload?.sub;
+
+  return typeof subject === 'string' && subject.trim()
+    ? subject.trim().toLowerCase()
+    : null;
+}
+
+export async function getAuthenticatedUserFromAuthHeader(
+  rawHeader: string | string[] | undefined,
+): Promise<AuthUser | null> {
+  const username = getUsernameFromAuthHeader(rawHeader);
+
+  if (!username) {
+    return null;
+  }
+
+  const user = await findUserByUsername(username);
+
+  if (!user || !user.isActive) {
+    return null;
+  }
+
+  return {
+    username: user.username,
+    role: user.role,
+  };
+}
+
+export async function requireAdminFromAuthHeader(
+  rawHeader: string | string[] | undefined,
+): Promise<AuthUser | null> {
+  const user = await getAuthenticatedUserFromAuthHeader(rawHeader);
+
+  if (!user || user.role !== 'admin') {
+    return null;
+  }
+
+  return user;
+}
+
+export async function storeRefreshToken(
+  username: string,
+  refreshToken: string,
+): Promise<void> {
   await ensureUiAuthSchema();
 
-  const tokenHash = hashRefreshToken(token);
+  const tokenHash = hashRefreshToken(refreshToken);
+  const ttlSec = getRefreshTokenTtlSec();
+
+  await getPool().query(
+    `
+      INSERT INTO ui_auth_refresh_tokens (
+        token_hash,
+        username,
+        expires_at,
+        created_at
+      )
+      VALUES (
+        $1,
+        $2,
+        NOW() + ($3 || ' seconds')::interval,
+        NOW()
+      )
+    `,
+    [tokenHash, username, String(ttlSec)],
+  );
+}
+
+export async function findUserByRefreshToken(
+  refreshToken: string,
+): Promise<AuthUser | null> {
+  await ensureUiAuthSchema();
+
+  const tokenHash = hashRefreshToken(refreshToken);
 
   const result = await getPool().query(
     `
-    SELECT
-      rt.username,
-      u.role,
-      u.is_active
-    FROM ui_auth_refresh_tokens rt
-    JOIN ui_auth_users u
-      ON u.username = rt.username
-    WHERE rt.token_hash = $1
-      AND rt.revoked_at IS NULL
-      AND rt.expires_at > NOW()
-    LIMIT 1
+      SELECT
+        u.username,
+        u.role,
+        u.is_active
+      FROM ui_auth_refresh_tokens rt
+      JOIN ui_auth_users u
+        ON u.username = rt.username
+      WHERE rt.token_hash = $1
+        AND rt.revoked_at IS NULL
+        AND rt.expires_at > NOW()
+      LIMIT 1
     `,
     [tokenHash],
   );
@@ -737,25 +700,59 @@ export async function rotateRefreshToken(
   };
 
   if (!row.is_active) {
-    await revokeRefreshToken(token);
     return null;
   }
 
-  await revokeRefreshToken(token);
-
-  const { token: accessToken, exp } = issueJwt(row.username, row.role);
-  const refresh = await issueRefreshToken(row.username);
-
   return {
-    user: {
-      username: row.username,
-      role: row.role,
-    },
-    token: accessToken,
-    expiresAt: exp,
-    refreshToken: refresh.token,
-    refreshExpiresAt: refresh.expiresAt,
+    username: row.username,
+    role: row.role,
   };
 }
 
-export type { StoredUser };
+export async function revokeRefreshToken(refreshToken: string): Promise<void> {
+  if (!refreshToken) {
+    return;
+  }
+
+  await ensureUiAuthSchema();
+
+  const tokenHash = hashRefreshToken(refreshToken);
+
+  await getPool().query(
+    `
+      UPDATE ui_auth_refresh_tokens
+      SET revoked_at = NOW()
+      WHERE token_hash = $1
+        AND revoked_at IS NULL
+    `,
+    [tokenHash],
+  );
+}
+
+export async function rotateRefreshToken(
+  refreshToken: string,
+): Promise<RefreshAuthResponse | null> {
+  if (!refreshToken) {
+    return null;
+  }
+
+  const user = await findUserByRefreshToken(refreshToken);
+
+  if (!user) {
+    return null;
+  }
+
+  await revokeRefreshToken(refreshToken);
+
+  const { token, exp } = issueJwt(user.username, user.role);
+  const nextRefreshToken = createRefreshToken();
+
+  await storeRefreshToken(user.username, nextRefreshToken);
+
+  return {
+    user,
+    token,
+    expiresAt: exp,
+    refreshToken: nextRefreshToken,
+  };
+}

@@ -1,10 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
-  buildSetRefreshTokenCookie,
+  buildRefreshTokenCookie,
+  createRefreshToken,
   findUserByUsername,
   issueJwt,
-  issueRefreshToken,
   sanitizeUsername,
+  storeRefreshToken,
   verifyPassword,
 } from './_lib';
 
@@ -40,11 +41,13 @@ export default async function handler(
     }
 
     const { token, exp } = issueJwt(user.username, user.role);
-    const refresh = await issueRefreshToken(user.username);
+
+    const refreshToken = createRefreshToken();
+    await storeRefreshToken(user.username, refreshToken);
       
     res.setHeader(
       'Set-Cookie',
-      buildSetRefreshTokenCookie(refresh.token, refresh.expiresAt),
+      buildRefreshTokenCookie(refreshToken),
     );
     
     return res.status(200).json({
