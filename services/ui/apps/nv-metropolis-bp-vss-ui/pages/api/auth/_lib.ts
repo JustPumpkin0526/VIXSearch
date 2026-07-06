@@ -313,17 +313,6 @@ export async function ensureUiAuthSchema(): Promise<void> {
   if (!dbInitPromise) {
     dbInitPromise = (async () => {
       await getPool().query(`
-        CREATE TABLE IF NOT EXISTS ui_auth_users (
-          username TEXT PRIMARY KEY,
-          password_hash TEXT NOT NULL,
-          salt TEXT NOT NULL,
-          role TEXT NOT NULL DEFAULT 'user'
-            CHECK (role IN ('admin', 'user')),
-          is_active BOOLEAN NOT NULL DEFAULT TRUE,
-          created_by TEXT NULL,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
 
         ALTER TABLE ui_auth_users
           ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
@@ -338,19 +327,30 @@ export async function ensureUiAuthSchema(): Promise<void> {
           ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
         CREATE TABLE IF NOT EXISTS ui_auth_refresh_tokens (
-          id TEXT PRIMARY KEY,
+          token_hash TEXT PRIMARY KEY,
           username TEXT NOT NULL REFERENCES ui_auth_users(username) ON DELETE CASCADE,
-          token_hash TEXT NOT NULL UNIQUE,
           expires_at TIMESTAMPTZ NOT NULL,
           revoked_at TIMESTAMPTZ NULL,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
 
         CREATE INDEX IF NOT EXISTS idx_ui_auth_refresh_tokens_username
-          ON ui_auth_refresh_tokens(username);
+        ON ui_auth_refresh_tokens (username);
 
         CREATE INDEX IF NOT EXISTS idx_ui_auth_refresh_tokens_expires_at
-          ON ui_auth_refresh_tokens(expires_at);
+        ON ui_auth_refresh_tokens (expires_at);
+        
+        CREATE TABLE IF NOT EXISTS ui_auth_users (
+          username TEXT PRIMARY KEY,
+          password_hash TEXT NOT NULL,
+          salt TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'user'
+            CHECK (role IN ('admin', 'user')),
+          is_active BOOLEAN NOT NULL DEFAULT TRUE,
+          created_by TEXT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
 
         CREATE TABLE IF NOT EXISTS ui_user_chat_state (
           username TEXT NOT NULL REFERENCES ui_auth_users(username) ON DELETE CASCADE,
@@ -524,6 +524,7 @@ export function issueJwt(
   username: string,
   role: UserRole = 'user',
 ): { token: string; exp: number } {
+  
   const secret = process.env.JWT_SECRET || 'dev-jwt-secret-change-me';
   const algorithm = (process.env.JWT_ALGORITHM || 'HS256').toUpperCase();
 
@@ -555,6 +556,205 @@ export function issueJwt(
   return {
     token: `${signingInput}.${encodedSig}`,
     exp,
+  };
+}
+
+export const REFRESH_TOKEN_COOKIE_NAME = 'vss.refresh.token';
+
+export type RefreshAuthResponse = {
+  user: AuthUser;
+  token: string;
+  expiresAt: number;
+  refreshToken: string;
+  refreshExpiresAt: number;
+};
+
+function hashRefreshToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function parseCookies(rawCookieHeader: string | string[] | undefined): Record<string, string> {
+  const raw = Array.isArray(rawCookieHeader)
+    ? rawCookieHeader.join('; ')
+    : String(rawCookieHeader || '');
+
+  return raw
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce<Record<string, string>>((acc, part) => {
+      const eq = part.indexOf('=');
+      if (eq <= 0) {
+        return acc;
+      }
+
+      const key = part.slice(0, eq).trim();
+      const value = part.slice(eq + 1).trim();
+
+      try {
+        acc[key] = decodeURIComponent(value);
+      } catch {
+        acc[key] = value;
+      }
+
+      return acc;
+    }, {});
+}
+
+export function getRefreshTokenFromCookie(
+  rawCookieHeader: string | string[] | undefined,
+): string | null {
+  const cookies = parseCookies(rawCookieHeader);
+  const token = cookies[REFRESH_TOKEN_COOKIE_NAME];
+  return typeof token === 'string' && token.trim() ? token.trim() : null;
+}
+
+export function buildSetRefreshTokenCookie(
+  token: string,
+  expiresAt: number,
+): string {
+  const now = Math.floor(Date.now() / 1000);
+  const maxAge = Math.max(0, expiresAt - now);
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+
+  return [
+    `${REFRESH_TOKEN_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    `Max-Age=${maxAge}`,
+    secure.replace(/^; /, ''),
+  ]
+    .filter(Boolean)
+    .join('; ');
+}
+
+export function buildClearRefreshTokenCookie(): string {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+
+  return [
+    `${REFRESH_TOKEN_COOKIE_NAME}=`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    'Max-Age=0',
+    secure.replace(/^; /, ''),
+  ]
+    .filter(Boolean)
+    .join('; ');
+}
+
+export async function issueRefreshToken(
+  username: string,
+): Promise<{ token: string; expiresAt: number }> {
+  await ensureUiAuthSchema();
+
+  const ttl = parseDurationSeconds(
+    process.env.UI_AUTH_REFRESH_TOKEN_TTL_SEC,
+    30 * 24 * 60 * 60,
+  );
+
+  const now = Math.floor(Date.now() / 1000);
+  const expiresAt = now + ttl;
+  const token = base64url(crypto.randomBytes(32));
+  const tokenHash = hashRefreshToken(token);
+
+  await getPool().query(
+    `
+    INSERT INTO ui_auth_refresh_tokens (
+      token_hash,
+      username,
+      expires_at,
+      created_at
+    )
+    VALUES ($1, $2, to_timestamp($3), NOW())
+    `,
+    [tokenHash, username, expiresAt],
+  );
+
+  return {
+    token,
+    expiresAt,
+  };
+}
+
+export async function revokeRefreshToken(token: string): Promise<void> {
+  if (!token) {
+    return;
+  }
+
+  await ensureUiAuthSchema();
+
+  const tokenHash = hashRefreshToken(token);
+
+  await getPool().query(
+    `
+    UPDATE ui_auth_refresh_tokens
+    SET revoked_at = NOW()
+    WHERE token_hash = $1
+      AND revoked_at IS NULL
+    `,
+    [tokenHash],
+  );
+}
+
+export async function rotateRefreshToken(
+  token: string,
+): Promise<RefreshAuthResponse | null> {
+  if (!token) {
+    return null;
+  }
+
+  await ensureUiAuthSchema();
+
+  const tokenHash = hashRefreshToken(token);
+
+  const result = await getPool().query(
+    `
+    SELECT
+      rt.username,
+      u.role,
+      u.is_active
+    FROM ui_auth_refresh_tokens rt
+    JOIN ui_auth_users u
+      ON u.username = rt.username
+    WHERE rt.token_hash = $1
+      AND rt.revoked_at IS NULL
+      AND rt.expires_at > NOW()
+    LIMIT 1
+    `,
+    [tokenHash],
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  const row = result.rows[0] as {
+    username: string;
+    role: UserRole;
+    is_active: boolean;
+  };
+
+  if (!row.is_active) {
+    await revokeRefreshToken(token);
+    return null;
+  }
+
+  await revokeRefreshToken(token);
+
+  const { token: accessToken, exp } = issueJwt(row.username, row.role);
+  const refresh = await issueRefreshToken(row.username);
+
+  return {
+    user: {
+      username: row.username,
+      role: row.role,
+    },
+    token: accessToken,
+    expiresAt: exp,
+    refreshToken: refresh.token,
+    refreshExpiresAt: refresh.expiresAt,
   };
 }
 

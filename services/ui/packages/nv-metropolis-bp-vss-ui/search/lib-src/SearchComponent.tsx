@@ -17,7 +17,7 @@ import { VideoModalTooltip } from '@aiqtoolkit-ui/common';
 import { SearchComponentProps, SearchData } from './types';
 
 // Hooks
-import { useSearch } from './hooks/useSearch';
+import { useSearch, fetchOwnedVideoLookup } from './hooks/useSearch';
 import { useSearchByImage } from './hooks/useSearchByImage';
 import { extractSearchResultsFromAgentResponse } from './utils/agentResponseParser';
 
@@ -58,6 +58,25 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
   chatSidebarBusy = false,
   addChatQueryContext,
 }) => {
+
+  const showFilenameBySensorIdRef = React.useRef<Map<string, string>>(new Map());
+
+  const refreshShowFilenameLookup = React.useCallback(async () => {
+    try {
+      const lookup = await fetchOwnedVideoLookup();
+      showFilenameBySensorIdRef.current =
+        lookup?.showFilenameBySensorId ?? new Map<string, string>();
+    } catch (error) {
+      console.warn('[SearchComponent] Failed to load show filename lookup:', error);
+      showFilenameBySensorIdRef.current = new Map<string, string>();
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (isActive) {
+      refreshShowFilenameLookup();
+    }
+  }, [isActive, refreshShowFilenameLookup]);
   const isDark = theme === 'dark';
   const [agentSearchResults, setAgentSearchResults] = React.useState<SearchData[] | null>(null);
 
@@ -198,10 +217,30 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
   const deliverAgentAnswerRef = React.useRef<(answer: string) => boolean>(() => false);
   deliverAgentAnswerRef.current = (answer: string) => {
     const results = extractSearchResultsFromAgentResponse(answer);
+    
     if (results !== null) {
-      setAgentSearchResults(results);
+      const showFilenameBySensorId = showFilenameBySensorIdRef.current;
+    
+      const displayResults = results.map((result) => {
+        const sensorId =
+          typeof result.sensor_id === 'string'
+            ? result.sensor_id.trim()
+            : '';
+      
+        const showFilename = sensorId
+          ? showFilenameBySensorId.get(sensorId)
+          : '';
+      
+        return {
+          ...result,
+          video_name: showFilename || result.video_name,
+        };
+      });
+    
+      setAgentSearchResults(displayResults);
       return true;
     }
+  
     return false;
   };
   const forwardAgentAnswer = React.useCallback((answer: string) => {

@@ -37,7 +37,12 @@ function buildRequestBody(searchParams: SearchParams): Record<string, unknown> {
   };
 }
 
-async function fetchOwnedVideoIds(): Promise<string[] | null> {
+export type OwnedVideoLookup = {
+  ownedVideoIds: string[];
+  showFilenameBySensorId: Map<string, string>;
+};
+
+export async function fetchOwnedVideoLookup(): Promise<OwnedVideoLookup | null> {
   if (typeof window === 'undefined') {
     return null;
   }
@@ -45,7 +50,10 @@ async function fetchOwnedVideoIds(): Promise<string[] | null> {
   const token = window.localStorage.getItem('vss.auth.token');
 
   if (!token) {
-    return [];
+    return {
+      ownedVideoIds: [],
+      showFilenameBySensorId: new Map(),
+    };
   }
 
   const response = await fetch('/api/videos/list', {
@@ -56,23 +64,52 @@ async function fetchOwnedVideoIds(): Promise<string[] | null> {
   });
 
   if (!response.ok) {
-    return [];
+    return {
+      ownedVideoIds: [],
+      showFilenameBySensorId: new Map(),
+    };
   }
 
   const payload = await response.json();
   const videos = Array.isArray(payload?.videos) ? payload.videos : [];
 
-  return Array.from(
-    new Set(
-      videos
-        .map((video: any) =>
-          typeof video?.sensor_id === 'string'
-            ? video.sensor_id.trim()
-            : '',
-        )
-        .filter(Boolean),
-    ),
-  );
+  const showFilenameBySensorId = new Map<string, string>();
+  const ownedVideoIdSet = new Set<string>();
+
+  videos.forEach((video: any) => {
+    const sensorId =
+      typeof video?.sensor_id === 'string'
+        ? video.sensor_id.trim()
+        : '';
+
+    if (!sensorId) {
+      return;
+    }
+
+    const showFilename =
+      typeof video?.show_filename === 'string'
+        ? video.show_filename.trim()
+        : '';
+
+    const filename =
+      typeof video?.filename === 'string'
+        ? video.filename.trim()
+        : '';
+
+    ownedVideoIdSet.add(sensorId);
+
+    showFilenameBySensorId.set(
+      sensorId,
+      showFilename || filename || sensorId,
+    );
+  });
+
+  const ownedVideoIds = Array.from(ownedVideoIdSet);
+
+  return {
+    ownedVideoIds,
+    showFilenameBySensorId,
+  };
 }
 
 async function getHttpErrorMessage(response: Response): Promise<string> {
@@ -137,9 +174,11 @@ export const useSearch = ({ agentApiUrl, params = {} }: UseSearchOptions) => {
       setError(null);
       setSearchResults([]);
 
-      const ownedVideoIds = await fetchOwnedVideoIds();
-          
-      if (ownedVideoIds !== null) {
+      const ownedVideoLookup = await fetchOwnedVideoLookup();
+
+      if (ownedVideoLookup !== null) {
+        const { ownedVideoIds } = ownedVideoLookup;
+      
         if (ownedVideoIds.length === 0) {
           setSearchResults([]);
           setLoading(false);
@@ -171,17 +210,32 @@ export const useSearch = ({ agentApiUrl, params = {} }: UseSearchOptions) => {
       const data = await response.json();
       
       // Transform API response to SearchData format
-      const transformedSearchResults: SearchData[] = (data.data || []).map((searchResult: any) => ({
-        video_name: searchResult.video_name || '',
-        similarity: Number(searchResult.similarity) || 0,
-        screenshot_url: searchResult.screenshot_url || '',
-        description: searchResult.description || '',
-        start_time: searchResult.start_time || '',
-        end_time: searchResult.end_time || '',
-        sensor_id: searchResult.sensor_id || '',
-        object_ids: searchResult.object_ids || [],
-        critic_result: searchResult.critic_result || undefined,
-      }));
+      const showFilenameBySensorId = ownedVideoLookup?.showFilenameBySensorId ?? new Map<string, string>();
+
+      const transformedSearchResults: SearchData[] = (data.data || []).map(
+        (searchResult: any) => {
+          const sensorId =
+            typeof searchResult.sensor_id === 'string'
+              ? searchResult.sensor_id.trim()
+              : '';
+        
+          const showFilename = sensorId
+            ? showFilenameBySensorId.get(sensorId)
+            : '';
+        
+          return {
+            video_name: showFilename || searchResult.video_name || '',
+            similarity: Number(searchResult.similarity) || 0,
+            screenshot_url: searchResult.screenshot_url || '',
+            description: searchResult.description || '',
+            start_time: searchResult.start_time || '',
+            end_time: searchResult.end_time || '',
+            sensor_id: sensorId,
+            object_ids: searchResult.object_ids || [],
+            critic_result: searchResult.critic_result || undefined,
+          };
+        },
+      );
       
       setSearchResults(transformedSearchResults);
     } catch (err) {
