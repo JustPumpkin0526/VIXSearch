@@ -70,7 +70,7 @@ class ServiceConfig:
         rtvi_embed_base_url: str = "",
         rtvi_vlm_base_url: str = "",
         rtvi_embed_model: str = "cosmos-embed1-448p",
-        rtvi_embed_chunk_duration: int = 5,
+        rtvi_embed_chunk_duration: int = 10,
         delete_vst_storage_on_stream_remove: bool = True,
         enable_audio: bool = False,
     ):
@@ -104,7 +104,7 @@ def _resolve_service_config(config: Any) -> ServiceConfig:
         rtvi_embed_base_url=getattr(streaming_config, "rtvi_embed_base_url", "") or "",
         rtvi_vlm_base_url=getattr(streaming_config, "rtvi_vlm_base_url", "") or "",
         rtvi_embed_model=getattr(streaming_config, "rtvi_embed_model", "cosmos-embed1-448p"),
-        rtvi_embed_chunk_duration=getattr(streaming_config, "rtvi_embed_chunk_duration", 5),
+        rtvi_embed_chunk_duration=getattr(streaming_config, "rtvi_embed_chunk_duration", 10),
         delete_vst_storage_on_stream_remove=bool(
             getattr(streaming_config, "delete_vst_storage_on_stream_remove", True)
         ),

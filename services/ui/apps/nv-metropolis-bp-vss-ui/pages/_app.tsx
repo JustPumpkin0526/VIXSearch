@@ -34,6 +34,18 @@ function App({ Component, pageProps }: AppProps<{}>) {
       }
     };
   
+    const saveAuth = (refreshed: any) => {
+      window.localStorage.setItem('vss.auth.token', refreshed.token);
+      window.localStorage.setItem(
+        'vss.auth.user',
+        JSON.stringify(refreshed.user),
+      );
+      window.localStorage.setItem(
+        'vss.auth.exp',
+        String(refreshed.expiresAt),
+      );
+    };
+  
     const refreshToken = async () => {
       if (!refreshPromise) {
         refreshPromise = originalFetch('/api/auth/refresh', {
@@ -55,31 +67,123 @@ function App({ Component, pageProps }: AppProps<{}>) {
       return refreshPromise;
     };
   
+    const getTarget = (input: RequestInfo | URL): string => {
+      if (typeof input === 'string') {
+        return input;
+      }
+    
+      if (input instanceof URL) {
+        return input.toString();
+      }
+    
+      return input.url;
+    };
+  
+    const getMethod = (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): string => {
+      return (
+        init?.method ||
+        (input instanceof Request ? input.method : 'GET')
+      ).toUpperCase();
+    };
+  
+    const isAuthEndpoint = (target: string) => {
+      return (
+        target.includes('/api/auth/login') ||
+        target.includes('/api/auth/register') ||
+        target.includes('/api/auth/refresh') ||
+        target.includes('/api/auth/logout')
+      );
+    };
+  
+    const shouldAttachAuth = (target: string) => {
+      return (
+        target.startsWith('/api/') ||
+        target.includes('/api/v1/') ||
+        target.includes(':8000') ||
+        target.includes(':30888')
+      );
+    };
+  
+    const isSafeRetryMethod = (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const method = getMethod(input, init);
+    
+      return method === 'GET' || method === 'HEAD';
+    };
+  
+    const isNonRetryableRequest = (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const method = getMethod(input, init);
+      const target = getTarget(input);
+    
+      const isUploadComplete =
+        method === 'POST' &&
+        /\/api\/v1\/videos\/[^/]+\/complete/.test(target);
+    
+      const isVstChunkUpload =
+        method === 'POST' &&
+        target.includes('/vst/api/v1/storage/file');
+    
+      const isDeleteRequest = method === 'DELETE';
+    
+      if (isUploadComplete || isVstChunkUpload || isDeleteRequest) {
+        return true;
+      }
+    
+      return !isSafeRetryMethod(input, init);
+    };
+  
+    const isTokenExpiringSoon = () => {
+      const expRaw = window.localStorage.getItem('vss.auth.exp');
+    
+      if (!expRaw) {
+        return false;
+      }
+    
+      const exp = Number(expRaw);
+    
+      if (!Number.isFinite(exp)) {
+        return false;
+      }
+    
+      // expiresAt이 초 단위인지 ms 단위인지 모두 대응
+      const expMs = exp < 10_000_000_000 ? exp * 1000 : exp;
+    
+      // 만료 60초 전이면 미리 refresh
+      return expMs <= Date.now() + 60_000;
+    };
+  
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const target = getTarget(input);
+    
+      if (!shouldAttachAuth(target) || isAuthEndpoint(target)) {
+        return originalFetch(input, init);
+      }
+    
       try {
-        const token = window.localStorage.getItem('vss.auth.token');
+        let token = window.localStorage.getItem('vss.auth.token');
       
-        const target =
-          typeof input === 'string'
-            ? input
-            : input instanceof URL
-              ? input.toString()
-              : input.url;
-      
-        const shouldAttachAuth =
-          target.startsWith('/api/') ||
-          target.includes('/api/v1/') ||
-          target.includes(':8000') ||
-          target.includes(':30888');
-      
-        const isAuthEndpoint =
-          target.includes('/api/auth/login') ||
-          target.includes('/api/auth/register') ||
-          target.includes('/api/auth/refresh') ||
-          target.includes('/api/auth/logout');
-      
-        if (!shouldAttachAuth || isAuthEndpoint) {
-          return originalFetch(input, init);
+        /*
+         * 중요:
+         * POST /complete 같은 비멱등 요청을 보낸 뒤 401 retry를 하지 않도록,
+         * 요청을 보내기 전에 토큰이 곧 만료될 것 같으면 먼저 refresh합니다.
+         */
+        if (token && isTokenExpiringSoon()) {
+          const refreshed = await refreshToken();
+        
+          if (refreshed?.token) {
+            saveAuth(refreshed);
+            token = refreshed.token;
+          } else {
+            clearAuthAndRedirect();
+          }
         }
       
         const headers = new Headers(
@@ -108,15 +212,23 @@ function App({ Component, pageProps }: AppProps<{}>) {
           return response;
         }
       
-        window.localStorage.setItem('vss.auth.token', refreshed.token);
-        window.localStorage.setItem(
-          'vss.auth.user',
-          JSON.stringify(refreshed.user),
-        );
-        window.localStorage.setItem(
-          'vss.auth.exp',
-          String(refreshed.expiresAt),
-        );
+        saveAuth(refreshed);
+      
+        /*
+         * 핵심 수정:
+         * 토큰은 갱신하되, POST/PUT/PATCH/DELETE 요청은 자동 retry하지 않습니다.
+         * 특히 POST /api/v1/videos/{sensor_id}/complete 자동 retry를 막아야
+         * vss-rt-embed ResourceInUse를 방지할 수 있습니다.
+         */
+        if (isNonRetryableRequest(input, init)) {
+          console.warn(
+            '[auth] Token refreshed, but original request was not retried because it is non-retryable:',
+            getMethod(input, init),
+            target,
+          );
+        
+          return response;
+        }
       
         const retryHeaders = new Headers(
           init?.headers || (input instanceof Request ? input.headers : undefined),
@@ -130,8 +242,14 @@ function App({ Component, pageProps }: AppProps<{}>) {
         };
       
         return originalFetch(input, retryInit);
-      } catch {
-        return originalFetch(input, init);
+      } catch (error) {
+        /*
+         * 기존 코드의 `return originalFetch(input, init)`는 위험합니다.
+         * 이미 한 번 전송된 POST 요청이 네트워크 오류 등으로 다시 실행될 수 있습니다.
+         * 따라서 여기서는 원요청을 재실행하지 않고 에러를 그대로 올립니다.
+         */
+        console.error('[auth] fetch wrapper failed:', error);
+        throw error;
       }
     };
   

@@ -26,7 +26,7 @@ general:
       delete_vst_storage_on_stream_remove: false
       rtvi_embed_base_url: ${RTVI_EMBED_BASE_URL}
       rtvi_embed_model: {{ .Values.rtviEmbedModel | default "cosmos-embed1-448p-anomaly-detection" }}
-      rtvi_embed_chunk_duration: 5
+      rtvi_embed_chunk_duration: 10
       rtvi_cv_base_url: ${RTVI_CV_BASE_URL}
       elasticsearch_url: ${ELASTIC_SEARCH_ENDPOINT}
       rtvi_embed_es_index: ${ELASTIC_SEARCH_INDEX}

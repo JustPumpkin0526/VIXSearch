@@ -61,7 +61,7 @@ class TestRegisterVideoSearchIngestRoutes:
             rtvi_embed_base_url="http://rtvi-embed:8017",
             rtvi_cv_base_url="",
             rtvi_embed_model="cosmos-embed1-448p",
-            rtvi_embed_chunk_duration=5,
+            rtvi_embed_chunk_duration=10,
         )
 
         register_video_search_ingest_routes(app, config)

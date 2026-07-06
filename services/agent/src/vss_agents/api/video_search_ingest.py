@@ -65,7 +65,7 @@ def create_video_search_ingest_router(
     rtvi_embed_base_url: str,
     rtvi_cv_base_url: str = "",
     rtvi_embed_model: str = "cosmos-embed1-448p",
-    rtvi_embed_chunk_duration: int = 5,
+    rtvi_embed_chunk_duration: int = 10,
     disable_audio: bool = True,
     vst_upload_timeout_seconds: float = DEFAULT_VST_UPLOAD_TIMEOUT_SECONDS,
     rtvi_cv_timeout_seconds: float = DEFAULT_RTVI_CV_TIMEOUT_SECONDS,

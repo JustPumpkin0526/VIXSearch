@@ -34,7 +34,6 @@ export async function chunkedUpload(options: ChunkedUploadOptions): Promise<File
  * and RTVI ``camera_name``); the rest is ignored. ``formData`` is sent as
  * top-level ``custom_params`` for per-upload params from the dialog template.
  */
-const inFlightCompleteRequests = new Set<string>();
 
 export async function notifyUploadComplete(
   agentApiUrl: string,
@@ -43,20 +42,22 @@ export async function notifyUploadComplete(
   formData?: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<void> {
+  const uploadCompleteRequests = new Map<string, Promise<void>>();
   const sensorId = (videoUploadApiResponse as unknown as { sensorId?: string }).sensorId;
 
   if (!sensorId) {
     throw new Error('notifyUploadComplete: VST upload response missing sensorId');
   }
 
-  if (inFlightCompleteRequests.has(sensorId)) {
-    console.warn(`notifyUploadComplete skipped: already processing ${sensorId}`);
-    return;
+  const existing = uploadCompleteRequests.get(sensorId);
+  if (existing) {
+    console.warn(
+      `[VideoManagement] /complete already in flight for sensorId=${sensorId}; reusing existing request`,
+    );
+    return existing;
   }
 
-  inFlightCompleteRequests.add(sensorId);
-
-  try {
+  const requestPromise = (async () => {
     const url = `${agentApiUrl.replace(/\/$/, '')}/videos/${encodeURIComponent(sensorId)}/complete`;
 
     const body: Record<string, unknown> = {
@@ -72,8 +73,12 @@ export async function notifyUploadComplete(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // 자동 토큰 재발급 wrapper에서 이 헤더를 보고 retry 제외 가능
+
+        // _app.tsx의 fetch wrapper에서 이 요청은 자동 retry하지 않도록 표시
         'X-Skip-Auth-Retry': 'true',
+
+        // 백엔드에서 추후 idempotency key로 활용 가능
+        'Idempotency-Key': `video-complete-${sensorId}`,
       },
       body: JSON.stringify(body),
       signal,
@@ -91,12 +96,20 @@ export async function notifyUploadComplete(
               : JSON.stringify(errorData.detail);
         }
       } catch {
-        // use default
+        // keep default message
       }
 
       throw new Error(message);
     }
+  })();
+
+  uploadCompleteRequests.set(sensorId, requestPromise);
+
+  try {
+    return await requestPromise;
   } finally {
-    inFlightCompleteRequests.delete(sensorId);
+    if (uploadCompleteRequests.get(sensorId) === requestPromise) {
+      uploadCompleteRequests.delete(sensorId);
+    }
   }
 }

@@ -619,7 +619,7 @@ class TestResolveVideoUploadConfig:
             rtvi_embed_base_url="http://rtvi-embed:8017",
             rtvi_cv_base_url="http://rtvi-cv:9000",
             rtvi_embed_model="cosmos-embed1-448p",
-            rtvi_embed_chunk_duration=5,
+            rtvi_embed_chunk_duration=10,
         )
         config = SimpleNamespace(general=SimpleNamespace(front_end=SimpleNamespace(streaming_ingest=cfg)))
 
@@ -640,7 +640,7 @@ class TestResolveVideoUploadConfig:
             rtvi_embed_base_url="",
             rtvi_cv_base_url="",
             rtvi_embed_model="cosmos-embed1-448p",
-            rtvi_embed_chunk_duration=5,
+            rtvi_embed_chunk_duration=10,
             vst_upload_timeout_seconds="301.5",
             vst_storage_timeout_seconds=61,
             rtvi_cv_timeout_seconds="62",
@@ -670,7 +670,7 @@ class TestResolveVideoUploadConfig:
             rtvi_embed_base_url="",
             rtvi_cv_base_url="",
             rtvi_embed_model="cosmos-embed1-448p",
-            rtvi_embed_chunk_duration=5,
+            rtvi_embed_chunk_duration=10,
         )
         config = SimpleNamespace(general=SimpleNamespace(front_end=SimpleNamespace(streaming_ingest=cfg)))
 
@@ -729,7 +729,7 @@ class TestResolveVideoUploadConfig:
             rtvi_embed_base_url="",
             rtvi_cv_base_url="",
             rtvi_embed_model="cosmos-embed1-448p",
-            rtvi_embed_chunk_duration=5,
+            rtvi_embed_chunk_duration=10,
             enable_audio=True,
         )
         config = SimpleNamespace(general=SimpleNamespace(front_end=SimpleNamespace(streaming_ingest=cfg)))
@@ -747,7 +747,7 @@ class TestResolveVideoUploadConfig:
             rtvi_embed_base_url="",
             rtvi_cv_base_url="",
             rtvi_embed_model="cosmos-embed1-448p",
-            rtvi_embed_chunk_duration=5,
+            rtvi_embed_chunk_duration=10,
         )
         config = SimpleNamespace(general=SimpleNamespace(front_end=SimpleNamespace(streaming_ingest=cfg)))
 
@@ -793,7 +793,7 @@ class TestRegisterVideoUpload:
             rtvi_embed_base_url="",
             rtvi_cv_base_url="",
             rtvi_embed_model="cosmos-embed1-448p",
-            rtvi_embed_chunk_duration=5,
+            rtvi_embed_chunk_duration=10,
         )
 
         register_video_upload(app, config)
@@ -823,7 +823,7 @@ class TestRegisterVideoUploadComplete:
             rtvi_embed_base_url="http://rtvi-embed:8017",
             rtvi_cv_base_url="",
             rtvi_embed_model="cosmos-embed1-448p",
-            rtvi_embed_chunk_duration=5,
+            rtvi_embed_chunk_duration=10,
         )
 
         register_video_upload_complete(app, config)
