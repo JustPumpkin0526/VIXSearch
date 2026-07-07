@@ -1604,6 +1604,61 @@ function state_up() {
         echo "[INFO] RT-DETR model downloaded and installed to ${data_directory}/models"
       fi
     fi
+    # Install Grounding DINO model for Search profile when GDINO detector is enabled.
+    # Required by ds-start.sh:
+    # /opt/storage/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx
+    local _model_name_2d
+    _model_name_2d="$(get_env_value "${_generated_env}" "MODEL_NAME_2D")"
+
+    if [[ "${_model_name_2d}" == "GDINO" ]]; then
+      echo "[INFO] Preparing Grounding DINO model for Search profile..."
+
+      local _gdino_target_model
+      _gdino_target_model="${data_directory}/models/gdino/mgdino_mask_head_pruned_dynamic_batch.onnx"
+
+      if [[ "${dry_run}" == "true" ]]; then
+        echo "[DRY-RUN] mkdir -p ${data_directory}/models/gdino"
+        echo "[DRY-RUN] mkdir -p ${deployment_directory}/engines/gdino"
+        echo "[DRY-RUN] chmod -R 777 ${deployment_directory}/engines"
+        echo "[DRY-RUN] NGC_CLI_API_KEY=<ngc-cli-api-key> ngc registry model download-version nvidia/tao/mask_grounding_dino:mask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm"
+        echo "[DRY-RUN] mv mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm/mgdino_mask_head_pruned_dynamic_batch.onnx ${_gdino_target_model}"
+        echo "[DRY-RUN] rm -rf mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm"
+        echo "[DRY-RUN] chmod -R 777 ${data_directory}/models"
+      else
+        mkdir -p "${data_directory}/models/gdino"
+        mkdir -p "${deployment_directory}/engines/gdino"
+        chmod -R 777 "${deployment_directory}/engines"
+
+        if [[ -f "${_gdino_target_model}" ]]; then
+          echo "[INFO] Grounding DINO model already exists: ${_gdino_target_model}"
+        else
+          echo "[INFO] Grounding DINO model not found. Downloading from NGC..."
+
+          rm -rf mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm
+
+          run_required_step "Failed to download grounding DINO model from NGC" \
+            env NGC_CLI_API_KEY="${ngc_cli_api_key}" ngc \
+            registry \
+            model \
+            download-version \
+            nvidia/tao/mask_grounding_dino:mask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm
+
+          require_downloaded_model_file \
+            "mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm/mgdino_mask_head_pruned_dynamic_batch.onnx" \
+            "grounding DINO ONNX artifact"
+
+          run_required_step "Failed to install grounding DINO model for Search profile" \
+            mv mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm/mgdino_mask_head_pruned_dynamic_batch.onnx \
+            "${_gdino_target_model}"
+
+          rm -rf mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm
+
+          echo "[INFO] Grounding DINO model installed to ${_gdino_target_model}"
+        fi
+
+        chmod -R 777 "${data_directory}/models"
+      fi
+    fi
   fi
 
   # Set permissions on data_log directory

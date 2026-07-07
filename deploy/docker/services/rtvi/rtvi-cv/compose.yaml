@@ -45,6 +45,7 @@ services:
         source: ./ds-start.sh
         target: /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/ds-start.sh
         read_only: true
+      - ${VSS_APPS_DIR}/engines:/opt/engines
     environment:
       DS_MODEL_FAMILY: ${DS_MODEL_FAMILY:-rtdetr-warehouse}
       DS_MODE_FLAG: ${DS_MODE_FLAG:-1}
