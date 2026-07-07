@@ -109,6 +109,8 @@ services:
         # Config file mounts (read-only staging; ds-search-start.sh copies to the writable app dir)
       - $VSS_APPS_DIR/developer-profiles/dev-profile-search/video-analytics-2d-app/deepstream/configs/:/opt/ds-configs-ro:ro
 
+      - ./deepstream/engines:/opt/engines
+
       # Search-profile wrapper script (patches configs, then calls ds-start.sh)
       - $VSS_APPS_DIR/developer-profiles/dev-profile-search/video-analytics-2d-app/deepstream/scripts/ds-search-start.sh:/opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/ds-search-start.sh:ro
 
