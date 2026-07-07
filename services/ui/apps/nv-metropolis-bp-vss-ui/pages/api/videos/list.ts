@@ -30,7 +30,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const client = await getVideosPool().connect();
     try {
-      const q = `SELECT sensor_id, filename, show_filename, storage_filename, timestamp, video_url, username, uploaded_at, group_id  FROM uploaded_videos WHERE username = $1 ORDER BY uploaded_at DESC`;
+      const q = `
+        SELECT
+          sensor_id,
+          filename,
+          show_filename,
+          storage_filename,
+          timestamp,
+          video_url,
+          username,
+          uploaded_at,
+          group_id
+        FROM uploaded_videos
+        WHERE username = $1
+        ORDER BY uploaded_at DESC
+      `;
       const result = await client.query(q, [username]);
       return res.status(200).json({ videos: result.rows });
     } finally {

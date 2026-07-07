@@ -17,7 +17,11 @@ import { VideoModalTooltip } from '@aiqtoolkit-ui/common';
 import { SearchComponentProps, SearchData } from './types';
 
 // Hooks
-import { useSearch, fetchOwnedVideoLookup } from './hooks/useSearch';
+import {
+  useSearch,
+  fetchOwnedVideoLookup,
+  OwnedVideoLookup,
+} from './hooks/useSearch';
 import { useSearchByImage } from './hooks/useSearchByImage';
 import { extractSearchResultsFromAgentResponse } from './utils/agentResponseParser';
 
@@ -58,17 +62,43 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
   chatSidebarBusy = false,
   addChatQueryContext,
 }) => {
+  const isDark = theme === 'dark';
+  const [agentSearchResults, setAgentSearchResults] = React.useState<SearchData[] | null>(null);
 
-  const showFilenameBySensorIdRef = React.useRef<Map<string, string>>(new Map());
+  const showFilenameLookupRef = React.useRef<OwnedVideoLookup | null>(null);
+
+  const resolveAgentDisplayVideoName = React.useCallback(
+    (item: SearchData): string => {
+      const lookup = showFilenameLookupRef.current;
+      const rawVideoName =
+        typeof item.video_name === 'string'
+          ? item.video_name.trim()
+          : '';
+      const sensorId =
+        typeof item.sensor_id === 'string'
+          ? item.sensor_id.trim()
+          : '';
+
+      if (!lookup) {
+        return rawVideoName;
+      }
+
+      return (
+        (sensorId && lookup.showFilenameBySensorId.get(sensorId)) ||
+        (rawVideoName && lookup.showFilenameByStorageFilename.get(rawVideoName)) ||
+        (rawVideoName && lookup.showFilenameByFilename.get(rawVideoName)) ||
+        rawVideoName
+      );
+    },
+    [],
+  );
 
   const refreshShowFilenameLookup = React.useCallback(async () => {
     try {
-      const lookup = await fetchOwnedVideoLookup();
-      showFilenameBySensorIdRef.current =
-        lookup?.showFilenameBySensorId ?? new Map<string, string>();
+      showFilenameLookupRef.current = await fetchOwnedVideoLookup();
     } catch (error) {
-      console.warn('[SearchComponent] Failed to load show filename lookup:', error);
-      showFilenameBySensorIdRef.current = new Map<string, string>();
+      console.warn('[SearchComponent] Failed to load video filename lookup:', error);
+      showFilenameLookupRef.current = null;
     }
   }, []);
 
@@ -77,8 +107,6 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
       refreshShowFilenameLookup();
     }
   }, [isActive, refreshShowFilenameLookup]);
-  const isDark = theme === 'dark';
-  const [agentSearchResults, setAgentSearchResults] = React.useState<SearchData[] | null>(null);
 
   React.useEffect(() => {
     loadSearchByImageOverlay()
@@ -219,23 +247,10 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
     const results = extractSearchResultsFromAgentResponse(answer);
     
     if (results !== null) {
-      const showFilenameBySensorId = showFilenameBySensorIdRef.current;
-    
-      const displayResults = results.map((result) => {
-        const sensorId =
-          typeof result.sensor_id === 'string'
-            ? result.sensor_id.trim()
-            : '';
-      
-        const showFilename = sensorId
-          ? showFilenameBySensorId.get(sensorId)
-          : '';
-      
-        return {
-          ...result,
-          video_name: showFilename || result.video_name,
-        };
-      });
+      const displayResults = results.map((item) => ({
+        ...item,
+        video_name: resolveAgentDisplayVideoName(item),
+      }));
     
       setAgentSearchResults(displayResults);
       return true;

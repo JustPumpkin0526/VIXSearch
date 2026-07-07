@@ -1,8 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
-  findUserByRefreshToken,
+  buildClearRefreshTokenCookie,
+  buildRefreshTokenCookie,
   getRefreshTokenFromCookie,
-  issueJwt,
+  rotateRefreshToken,
 } from './_lib';
 
 export default async function handler(
@@ -18,26 +19,32 @@ export default async function handler(
     const refreshToken = getRefreshTokenFromCookie(req.headers.cookie);
 
     if (!refreshToken) {
+      res.setHeader('Set-Cookie', buildClearRefreshTokenCookie());
       return res.status(401).json({ error: 'refresh token required' });
     }
 
-    const user = await findUserByRefreshToken(refreshToken);
+    const rotated = await rotateRefreshToken(refreshToken);
 
-    if (!user) {
+    if (!rotated) {
+      res.setHeader('Set-Cookie', buildClearRefreshTokenCookie());
       return res.status(401).json({
         error: 'refresh token expired or invalid',
       });
     }
 
-    const { token, exp } = issueJwt(user.username, user.role);
+    res.setHeader(
+      'Set-Cookie',
+      buildRefreshTokenCookie(rotated.refreshToken),
+    );
 
     return res.status(200).json({
-      user,
-      token,
-      expiresAt: exp,
+      user: rotated.user,
+      token: rotated.token,
+      expiresAt: rotated.expiresAt,
     });
   } catch (error) {
     console.error('[auth/refresh] failed:', error);
+    res.setHeader('Set-Cookie', buildClearRefreshTokenCookie());
     return res.status(500).json({ error: 'Internal Server Error' });
   }
 }

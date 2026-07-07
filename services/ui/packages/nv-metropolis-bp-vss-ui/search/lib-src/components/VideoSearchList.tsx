@@ -44,8 +44,9 @@ type ContextMenuState =
 
 const AddContextButton: React.FC<{
   item: SearchData;
+  displayVideoName: string;
   onAddContext?: (ctx: QueryDataContext) => void;
-}> = ({ item, onAddContext }) => {
+}> = ({ item, displayVideoName, onAddContext }) => {
   const [addedState, setAddedState] = useState<'idle' | 'success'>('idle');
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -66,17 +67,17 @@ const AddContextButton: React.FC<{
     }
 
     const ctx: QueryDataContext = {
-      id: `${item.video_name}-${item.start_time}-${item.end_time}`,
-      label: item.video_name,
+      id: `${displayVideoName}-${item.start_time}-${item.end_time}`,
+      label: displayVideoName,
       contextType: 'media/video',
       data: {
-        sensorName: item.video_name,
+        sensorName: displayVideoName,
         startTime: item.start_time,
         endTime: item.end_time,
         mediaType: 'sensor-clip',
       },
     };
-
+    
     onAddContext(ctx);
     setAddedState('success');
 
@@ -89,7 +90,7 @@ const AddContextButton: React.FC<{
       timeoutRef.current = null;
     }, 2000);
   },
-  [item.video_name, item.start_time, item.end_time, onAddContext],
+  [displayVideoName, item.start_time, item.end_time, onAddContext],
 );
 
   return (
@@ -138,6 +139,94 @@ function getAuthHeaders(): HeadersInit {
   }
 
   return headers;
+}
+
+type VideoFilenameLookup = {
+  showFilenameBySensorId: Map<string, string>;
+  showFilenameByStorageFilename: Map<string, string>;
+  showFilenameByFilename: Map<string, string>;
+};
+
+function createEmptyVideoFilenameLookup(): VideoFilenameLookup {
+  return {
+    showFilenameBySensorId: new Map<string, string>(),
+    showFilenameByStorageFilename: new Map<string, string>(),
+    showFilenameByFilename: new Map<string, string>(),
+  };
+}
+
+function normalizeLookupKey(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+async function fetchVideoFilenameLookup(): Promise<VideoFilenameLookup> {
+  const lookup = createEmptyVideoFilenameLookup();
+
+  if (typeof window === 'undefined') {
+    return lookup;
+  }
+
+  const response = await fetch('/api/videos/list', {
+    method: 'GET',
+    headers: getAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    return lookup;
+  }
+
+  const payload = await response.json();
+  const videos = Array.isArray(payload?.videos) ? payload.videos : [];
+
+  videos.forEach((video: any) => {
+    const sensorId = normalizeLookupKey(video?.sensor_id);
+    const filename = normalizeLookupKey(video?.filename);
+    const showFilename = normalizeLookupKey(video?.show_filename);
+    const storageFilename = normalizeLookupKey(video?.storage_filename);
+
+    const displayName =
+      showFilename ||
+      filename ||
+      storageFilename ||
+      sensorId;
+
+    if (!displayName) {
+      return;
+    }
+
+    if (sensorId) {
+      lookup.showFilenameBySensorId.set(sensorId, displayName);
+    }
+
+    if (storageFilename) {
+      lookup.showFilenameByStorageFilename.set(storageFilename, displayName);
+    }
+
+    if (filename) {
+      lookup.showFilenameByFilename.set(filename, displayName);
+    }
+  });
+
+  return lookup;
+}
+
+function resolveDisplayVideoName(
+  item: SearchData,
+  lookup: VideoFilenameLookup | null,
+): string {
+  const rawVideoName = normalizeLookupKey(item.video_name);
+  const sensorId = normalizeLookupKey(item.sensor_id);
+
+  if (!lookup) {
+    return rawVideoName;
+  }
+
+  return (
+    (sensorId && lookup.showFilenameBySensorId.get(sensorId)) ||
+    (rawVideoName && lookup.showFilenameByStorageFilename.get(rawVideoName)) ||
+    (rawVideoName && lookup.showFilenameByFilename.get(rawVideoName)) ||
+    rawVideoName
+  );
 }
 
 function getDisplayDescription(description?: string | null): string | null {
@@ -391,12 +480,12 @@ interface VideoCardProps {
   index: number;
   isDark: boolean;
   showObjectsBbox: boolean;
+  displayVideoName: string;
   selected: boolean;
   onToggleSelection: (item: SearchData) => void;
   onContextMenu: (event: React.MouseEvent, item: SearchData) => void;
   onPlayVideo: (data: SearchData, showObjectsBbox: boolean) => void;
   onAddContext?: (ctx: QueryDataContext) => void;
-  
 }
 
 const VideoCard: React.FC<VideoCardProps> = ({
@@ -404,6 +493,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
   index,
   isDark,
   showObjectsBbox,
+  displayVideoName,
   onPlayVideo,
   onAddContext,
   selected,
@@ -437,12 +527,14 @@ const VideoCard: React.FC<VideoCardProps> = ({
   
   const displayDescription = getDisplayDescription(item.description);
 
+  const videoTitle = displayVideoName || item.video_name || '';
+
   return (
     <div
       onClick={() => onToggleSelection(item)}
       onContextMenu={(event) => onContextMenu(event, item)}
       data-testid="search-result-card"
-      key={`${item.video_name}-${index}`}
+      key={`${videoTitle}-${index}`}
       className={`rounded-lg overflow-hidden bg-white shadow-sm dark:bg-neutral-900 w-[280px] min-w-[280px] max-w-[280px] box-border border ${
         selected ? 'ring-2 ring-green-500 ring-offset-2 dark:ring-offset-neutral-950 ' : ''
       }${
@@ -460,15 +552,19 @@ const VideoCard: React.FC<VideoCardProps> = ({
           <Whisper
             placement="top"
             trigger="hover"
-            speaker={<Tooltip>{item.video_name}</Tooltip>}
+            speaker={<Tooltip>{videoTitle}</Tooltip>}
           >
             <h3 className="font-medium text-sm truncate cursor-default flex-1 min-w-0">
-              {item.video_name}
+              {videoTitle}
             </h3>
           </Whisper>
 
           {onAddContext ? (
-            <AddContextButton item={item} onAddContext={onAddContext} />
+            <AddContextButton
+              item={item}
+              displayVideoName={videoTitle}
+              onAddContext={onAddContext}
+            />
           ) : null}
         </div>
 
@@ -476,7 +572,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
           <div className="rounded-lg absolute inset-0 bg-gradient-to-br from-gray-700 to-gray-900">
             <img
               src={item.screenshot_url}
-              alt={item.video_name}
+              alt={videoTitle}
               className="rounded-lg w-full h-full object-cover"
             />
           </div>
@@ -492,7 +588,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
               handleOpenVideo();
             }}
             disabled={isOpeningVideo}
-            aria-label={`Play ${item.video_name}`}
+            aria-label={`Play ${videoTitle}`}
           >
             <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg bg-[#76b900]/50 flex items-center justify-center shadow-lg transition-transform hover:scale-110 border border-white/30">
               {isOpeningVideo ? (
@@ -622,6 +718,41 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [existingReports, setExistingReports] = useState<GeneratedReportItem[]>([]);
   const [loadingReports, setLoadingReports] = useState(false);
+  const [filenameLookup, setFilenameLookup] = useState<VideoFilenameLookup | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadFilenameLookup() {
+      try {
+        const lookup = await fetchVideoFilenameLookup();
+
+        if (!cancelled) {
+          setFilenameLookup(lookup);
+        }
+      } catch (error) {
+        console.warn('[VideoSearchList] Failed to fetch video filename lookup:', error);
+
+        if (!cancelled) {
+          setFilenameLookup(createEmptyVideoFilenameLookup());
+        }
+      }
+    }
+
+    loadFilenameLookup();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
+
+  const toDisplaySearchItem = useCallback(
+    (item: SearchData): SearchData => ({
+      ...item,
+      video_name: resolveDisplayVideoName(item, filenameLookup),
+    }),
+    [filenameLookup],
+  );
 
   const sortedData = useMemo(() => {
     const hasCritic = data.some((item) => item.critic_result);
@@ -783,7 +914,7 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
     setCreatingReport(true);
 
     try {
-      await createNewReportFromItems(targetItems);
+      await createNewReportFromItems(targetItems.map(toDisplaySearchItem));
     } catch (error) {
       console.error('Failed to create report:', error);
       if (typeof window !== 'undefined') {
@@ -811,7 +942,7 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
       setCreatingReport(true);
 
       try {
-        await appendItemsToExistingReport(report, targetItems);
+        await appendItemsToExistingReport(report, targetItems.map(toDisplaySearchItem));
       } catch (error) {
         console.error('Failed to append report:', error);
         if (typeof window !== 'undefined') {
@@ -822,7 +953,7 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
         setContextMenu(null);
       }
     },
-    [creatingReport, getContextTargetItems],
+    [creatingReport, getContextTargetItems, toDisplaySearchItem],
   );
 
   if (loading) {
@@ -886,6 +1017,7 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
                 index={index}
                 isDark={isDark}
                 showObjectsBbox={showObjectsBbox}
+                displayVideoName={resolveDisplayVideoName(item, filenameLookup)}
                 selected={selected}
                 onToggleSelection={toggleSelection}
                 onContextMenu={handleContextMenu}

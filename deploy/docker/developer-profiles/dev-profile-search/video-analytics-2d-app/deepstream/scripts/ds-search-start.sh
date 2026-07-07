@@ -75,6 +75,18 @@ cp -a "${CONFIGS_RO}/." "${CONFIGS_DIR}/"
 echo "##### Staged config files from ${CONFIGS_RO} -> ${CONFIGS_DIR} #####"
 
 # ---------------------------------------------------------------------------
+# Provide mounted-configs path expected by ds-start.sh GDINO branch.
+#
+# Search profile mounts configs at /opt/ds-configs-ro, while the shared
+# ds-start.sh rtdetr-gdino branch expects files under:
+# ${DS_APP_DIR}/mounted-configs
+# ---------------------------------------------------------------------------
+MOUNTED_CONFIGS_DIR="${DS_APP_DIR}/mounted-configs"
+mkdir -p "${MOUNTED_CONFIGS_DIR}"
+cp -a "${CONFIGS_RO}/." "${MOUNTED_CONFIGS_DIR}/"
+echo "##### Staged config files from ${CONFIGS_RO} -> ${MOUNTED_CONFIGS_DIR} #####"
+
+# ---------------------------------------------------------------------------
 # Patch ds-main-*.txt config files with vision encoder paths.
 # ---------------------------------------------------------------------------
 for cfg in "${DS_APP_DIR}/configs/ds-main-config.txt" \

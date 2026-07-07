@@ -161,11 +161,15 @@ export function getRefreshTokenFromCookie(
   return token && token.trim() ? token.trim() : null;
 }
 
+function shouldUseSecureCookie(): boolean {
+  return process.env.UI_AUTH_COOKIE_SECURE === 'true';
+}
+
 export function buildRefreshTokenCookie(
   refreshToken: string,
   maxAgeSec = getRefreshTokenTtlSec(),
 ): string {
-  const secure = process.env.NODE_ENV === 'production' ? 'Secure' : '';
+  const secure = shouldUseSecureCookie() ? 'Secure' : '';
 
   return [
     `${REFRESH_TOKEN_COOKIE_NAME}=${encodeURIComponent(refreshToken)}`,
@@ -180,7 +184,7 @@ export function buildRefreshTokenCookie(
 }
 
 export function buildClearRefreshTokenCookie(): string {
-  const secure = process.env.NODE_ENV === 'production' ? 'Secure' : '';
+  const secure = shouldUseSecureCookie() ? 'Secure' : '';
 
   return [
     `${REFRESH_TOKEN_COOKIE_NAME}=`,
@@ -535,14 +539,14 @@ export function verifyJwt(token: string): JwtVerification {
     const expectedSigB64 = base64url(expectedSig);
     const actual = Uint8Array.from(Buffer.from(sigB64));
     const expected = Uint8Array.from(Buffer.from(expectedSigB64));
-      
+
     if (actual.length !== expected.length) {
       return {
         valid: false,
         reason: 'Invalid signature',
       };
     }
-    
+
     if (!crypto.timingSafeEqual(actual, expected)) {
       return {
         valid: false,
@@ -742,12 +746,53 @@ export async function rotateRefreshToken(
     return null;
   }
 
-  await revokeRefreshToken(refreshToken);
+  const oldTokenHash = hashRefreshToken(refreshToken);
 
   const { token, exp } = issueJwt(user.username, user.role);
   const nextRefreshToken = createRefreshToken();
+  const nextTokenHash = hashRefreshToken(nextRefreshToken);
 
-  await storeRefreshToken(user.username, nextRefreshToken);
+  await getPool().query('BEGIN');
+
+  try {
+    await getPool().query(
+      `
+        UPDATE ui_auth_refresh_tokens
+        SET revoked_at = NOW(),
+            replaced_by_token_hash = $2
+        WHERE token_hash = $1
+          AND revoked_at IS NULL
+      `,
+      [oldTokenHash, nextTokenHash],
+    );
+
+    await getPool().query(
+      `
+        INSERT INTO ui_auth_refresh_tokens (
+          token_hash,
+          username,
+          expires_at,
+          created_at
+        )
+        VALUES (
+          $1,
+          $2,
+          NOW() + ($3 || ' seconds')::interval,
+          NOW()
+        )
+      `,
+      [
+        nextTokenHash,
+        user.username,
+        String(getRefreshTokenTtlSec()),
+      ],
+    );
+
+    await getPool().query('COMMIT');
+  } catch (error) {
+    await getPool().query('ROLLBACK');
+    throw error;
+  }
 
   return {
     user,

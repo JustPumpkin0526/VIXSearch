@@ -37,9 +37,15 @@ function buildRequestBody(searchParams: SearchParams): Record<string, unknown> {
   };
 }
 
+function normalizeLookupKey(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 export type OwnedVideoLookup = {
   ownedVideoIds: string[];
   showFilenameBySensorId: Map<string, string>;
+  showFilenameByStorageFilename: Map<string, string>;
+  showFilenameByFilename: Map<string, string>;
 };
 
 export async function fetchOwnedVideoLookup(): Promise<OwnedVideoLookup | null> {
@@ -47,13 +53,17 @@ export async function fetchOwnedVideoLookup(): Promise<OwnedVideoLookup | null> 
     return null;
   }
 
+  const emptyLookup: OwnedVideoLookup = {
+    ownedVideoIds: [],
+    showFilenameBySensorId: new Map<string, string>(),
+    showFilenameByStorageFilename: new Map<string, string>(),
+    showFilenameByFilename: new Map<string, string>(),
+  };
+
   const token = window.localStorage.getItem('vss.auth.token');
 
   if (!token) {
-    return {
-      ownedVideoIds: [],
-      showFilenameBySensorId: new Map(),
-    };
+    return emptyLookup;
   }
 
   const response = await fetch('/api/videos/list', {
@@ -64,52 +74,68 @@ export async function fetchOwnedVideoLookup(): Promise<OwnedVideoLookup | null> 
   });
 
   if (!response.ok) {
-    return {
-      ownedVideoIds: [],
-      showFilenameBySensorId: new Map(),
-    };
+    return emptyLookup;
   }
 
   const payload = await response.json();
   const videos = Array.isArray(payload?.videos) ? payload.videos : [];
 
-  const showFilenameBySensorId = new Map<string, string>();
   const ownedVideoIdSet = new Set<string>();
+  const showFilenameBySensorId = new Map<string, string>();
+  const showFilenameByStorageFilename = new Map<string, string>();
+  const showFilenameByFilename = new Map<string, string>();
 
   videos.forEach((video: any) => {
-    const sensorId =
-      typeof video?.sensor_id === 'string'
-        ? video.sensor_id.trim()
-        : '';
+    const sensorId = normalizeLookupKey(video?.sensor_id);
+    const filename = normalizeLookupKey(video?.filename);
+    const showFilename = normalizeLookupKey(video?.show_filename);
+    const storageFilename = normalizeLookupKey(video?.storage_filename);
 
-    if (!sensorId) {
-      return;
+    const displayName =
+      showFilename ||
+      filename ||
+      storageFilename ||
+      sensorId;
+
+    if (sensorId) {
+      ownedVideoIdSet.add(sensorId);
+      showFilenameBySensorId.set(sensorId, displayName);
     }
 
-    const showFilename =
-      typeof video?.show_filename === 'string'
-        ? video.show_filename.trim()
-        : '';
+    if (storageFilename) {
+      showFilenameByStorageFilename.set(storageFilename, displayName);
+    }
 
-    const filename =
-      typeof video?.filename === 'string'
-        ? video.filename.trim()
-        : '';
-
-    ownedVideoIdSet.add(sensorId);
-
-    showFilenameBySensorId.set(
-      sensorId,
-      showFilename || filename || sensorId,
-    );
+    if (filename) {
+      showFilenameByFilename.set(filename, displayName);
+    }
   });
 
-  const ownedVideoIds = Array.from(ownedVideoIdSet);
-
   return {
-    ownedVideoIds,
+    ownedVideoIds: Array.from(ownedVideoIdSet),
     showFilenameBySensorId,
+    showFilenameByStorageFilename,
+    showFilenameByFilename,
   };
+}
+
+function resolveDisplayVideoName(
+  searchResult: any,
+  lookup: OwnedVideoLookup | null,
+): string {
+  const rawVideoName = normalizeLookupKey(searchResult?.video_name);
+  const sensorId = normalizeLookupKey(searchResult?.sensor_id);
+
+  if (!lookup) {
+    return rawVideoName;
+  }
+
+  return (
+    (sensorId && lookup.showFilenameBySensorId.get(sensorId)) ||
+    (rawVideoName && lookup.showFilenameByStorageFilename.get(rawVideoName)) ||
+    (rawVideoName && lookup.showFilenameByFilename.get(rawVideoName)) ||
+    rawVideoName
+  );
 }
 
 async function getHttpErrorMessage(response: Response): Promise<string> {
@@ -210,28 +236,21 @@ export const useSearch = ({ agentApiUrl, params = {} }: UseSearchOptions) => {
       const data = await response.json();
       
       // Transform API response to SearchData format
-      const showFilenameBySensorId = ownedVideoLookup?.showFilenameBySensorId ?? new Map<string, string>();
-
       const transformedSearchResults: SearchData[] = (data.data || []).map(
         (searchResult: any) => {
-          const sensorId =
-            typeof searchResult.sensor_id === 'string'
-              ? searchResult.sensor_id.trim()
-              : '';
-        
-          const showFilename = sensorId
-            ? showFilenameBySensorId.get(sensorId)
-            : '';
+          const sensorId = normalizeLookupKey(searchResult?.sensor_id);
         
           return {
-            video_name: showFilename || searchResult.video_name || '',
+            video_name: resolveDisplayVideoName(searchResult, ownedVideoLookup),
             similarity: Number(searchResult.similarity) || 0,
             screenshot_url: searchResult.screenshot_url || '',
             description: searchResult.description || '',
             start_time: searchResult.start_time || '',
             end_time: searchResult.end_time || '',
             sensor_id: sensorId,
-            object_ids: searchResult.object_ids || [],
+            object_ids: Array.isArray(searchResult.object_ids)
+              ? searchResult.object_ids
+              : [],
             critic_result: searchResult.critic_result || undefined,
           };
         },

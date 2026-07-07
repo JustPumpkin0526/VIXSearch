@@ -123,7 +123,7 @@ services:
       TRANSFORMERS_OFFLINE: 0
       HF_HUB_OFFLINE: 0
       DS_MODE_FLAG: "1"
-      DS_MODEL_FAMILY: rtdetr-warehouse
+      DS_MODEL_FAMILY: rtdetr-gdino
       DS_TRACKER_REID: "true"
       DS_SHOW_SENSOR_ID: "false"
       VISION_ENCODER_MODEL: ${VISION_ENCODER_MODEL:-siglip_v2}

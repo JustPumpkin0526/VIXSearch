@@ -190,6 +190,46 @@ export function useAuth() {
     window.localStorage.removeItem(EXP_KEY);
   }, []);
 
+  useEffect(() => {
+    if (!ready || !token || !user) {
+      return;
+    }
+  
+    const timer = window.setInterval(async () => {
+      const expRaw = window.localStorage.getItem(EXP_KEY);
+      const exp = expRaw ? Number(expRaw) : 0;
+      const now = Math.floor(Date.now() / 1000);
+    
+      if (!exp || exp > now + 120) {
+        return;
+      }
+    
+      const refreshed = await refreshAccessToken();
+    
+      if (refreshed) {
+        setToken(refreshed.token);
+        setUser(refreshed.user);
+        setError('');
+      
+        window.localStorage.setItem(TOKEN_KEY, refreshed.token);
+        window.localStorage.setItem(USER_KEY, JSON.stringify(refreshed.user));
+        window.localStorage.setItem(EXP_KEY, String(refreshed.expiresAt));
+      } else {
+        setToken('');
+        setUser(null);
+        setError('Session expired. Please log in again.');
+      
+        window.localStorage.removeItem(TOKEN_KEY);
+        window.localStorage.removeItem(USER_KEY);
+        window.localStorage.removeItem(EXP_KEY);
+      }
+    }, 60 * 1000);
+  
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [ready, token, user]);
+
   const isAuthenticated = useMemo(() => !!token && !!user, [token, user]);
 
   return {
