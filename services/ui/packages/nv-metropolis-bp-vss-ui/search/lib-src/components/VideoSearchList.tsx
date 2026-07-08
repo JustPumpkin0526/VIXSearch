@@ -117,6 +117,37 @@ const AddContextButton: React.FC<{
   );
 };
 
+const MIN_VISIBLE_CLIP_DURATION_SECONDS = 1;
+
+function getSearchClipDurationSeconds(item: SearchData): number | null {
+  const startDate = parseDateAsLocal(item.start_time);
+  const endDate = parseDateAsLocal(item.end_time);
+
+  if (!startDate || !endDate) {
+    return null;
+  }
+
+  const startMs = startDate.getTime();
+  const endMs = endDate.getTime();
+
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+    return null;
+  }
+
+  return (endMs - startMs) / 1000;
+}
+
+function shouldDisplaySearchClip(item: SearchData): boolean {
+  const durationSeconds = getSearchClipDurationSeconds(item);
+
+  // 시간 파싱 실패 시에는 기존 동작을 유지하기 위해 숨기지 않음
+  if (durationSeconds === null) {
+    return true;
+  }
+
+  return durationSeconds >= MIN_VISIBLE_CLIP_DURATION_SECONDS;
+}
+
 function getResultKey(item: SearchData): string {
   return [
     item.sensor_id ?? '',
@@ -754,14 +785,19 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
     [filenameLookup],
   );
 
+  const visibleData = useMemo(
+    () => data.filter(shouldDisplaySearchClip),
+    [data],
+  );
+
   const sortedData = useMemo(() => {
-    const hasCritic = data.some((item) => item.critic_result);
+    const hasCritic = visibleData.some((item) => item.critic_result);
 
     if (!hasCritic) {
-      return data;
+      return visibleData;
     }
 
-    return [...data].sort((a, b) => {
+    return [...visibleData].sort((a, b) => {
       const rankDiff = getCriticSortRank(a) - getCriticSortRank(b);
 
       if (rankDiff !== 0) {
@@ -770,7 +806,7 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
 
       return (Number(b.similarity) || 0) - (Number(a.similarity) || 0);
     });
-  }, [data]);
+  }, [visibleData]);
 
   useEffect(() => {
     if (!contextMenu) {
@@ -830,14 +866,11 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
 
   useEffect(() => {
     setSelectedKeys((prev) => {
-      const validKeys = new Set(data.map((item) => getResultKey(item)));
-      const next = new Set(
-        Array.from(prev).filter((key) => validKeys.has(key)),
-      );
-
+      const validKeys = new Set(visibleData.map((item) => getResultKey(item)));
+      const next = new Set(Array.from(prev).filter((key) => validKeys.has(key)));
       return next.size === prev.size ? prev : next;
     });
-  }, [data]);
+  }, [visibleData]);
 
   const handleContextMenu = useCallback(
     (event: React.MouseEvent, item: SearchData) => {
@@ -964,7 +997,7 @@ export const VideoSearchList: React.FC<VideoSearchListProps> = ({
     return <ErrorState error={error} isDark={isDark} onRefresh={onRefresh} />;
   }
 
-  if (data.length === 0) {
+  if (visibleData.length === 0) {
     return <EmptyState isDark={isDark} />;
   }
 
