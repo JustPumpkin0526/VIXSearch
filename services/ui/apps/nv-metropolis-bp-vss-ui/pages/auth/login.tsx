@@ -1,22 +1,13 @@
-"use client";
+'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { useAuth } from '../../hooks/useAuth';
+import React, { useState } from 'react';
+import { useRouter } from 'next/router';
+import { useAuthContext } from '../../contexts/AuthContext';
 
 export default function LoginPage() {
-  const routerRef = useRef<any>(null);
-  useEffect(() => {
-    (async () => {
-      try {
-        const mod = await import('next/router');
-        routerRef.current = mod && mod.default ? mod.default : null;
-      } catch {
-        routerRef.current = null;
-      }
-    })();
-  }, []);
+  const router = useRouter();
+  const { ready, login, error } = useAuthContext();
 
-  const { ready, login, error } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -25,15 +16,17 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!isFilled || loading) {
+      return;
+    }
+
     setLoading(true);
-      try {
-        await login(username, password);
-        if (routerRef.current && routerRef.current.router && typeof routerRef.current.replace === 'function') {
-          routerRef.current.replace('/');
-        } else {
-          window.location.replace('/');
-        }
-    } catch (e) {
+
+    try {
+      await login(username, password);
+      await router.replace('/');
+    } catch {
       // login hook sets error; remain on page
     } finally {
       setLoading(false);
