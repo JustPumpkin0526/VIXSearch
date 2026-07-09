@@ -2,10 +2,10 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { IconUser } from '@tabler/icons-react';
-import { useAuth } from '../hooks/useAuth';
+import { useAuthContext } from '../contexts/AuthContext';
 
 export default function HeaderLogin() {
-  const { ready, isAuthenticated, user, login, logout } = useAuth();
+  const { ready, isAuthenticated, user, logout } = useAuthContext();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 

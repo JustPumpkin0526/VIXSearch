@@ -6,7 +6,7 @@ import {
   issueJwt,
   sanitizeUsername,
   storeRefreshToken,
-  verifyPassword,
+  verifyPasswordAsync,
 } from './_lib';
 
 export default async function handler(
@@ -19,6 +19,11 @@ export default async function handler(
       return res.status(405).json({ error: 'Method not allowed' });
     }
 
+    const startedAt = Date.now();
+    const mark = (name: string) => {
+      console.info(`[auth/login] ${name}: ${Date.now() - startedAt}ms`);
+    };
+
     const username = sanitizeUsername(String(req.body?.username || ''));
     const password = String(req.body?.password || '');
 
@@ -29,21 +34,26 @@ export default async function handler(
     }
 
     const user = await findUserByUsername(username);
+    mark('findUserByUsername');
 
     if (!user || !user.isActive) {
       return res.status(401).json({ error: 'invalid credentials' });
     }
 
-    const ok = verifyPassword(password, user.salt, user.passwordHash);
+    const ok = await verifyPasswordAsync(password, user.salt, user.passwordHash);
+    mark('verifyPasswordAsync');
+
 
     if (!ok) {
       return res.status(401).json({ error: 'invalid credentials' });
     }
 
     const { token, exp } = issueJwt(user.username, user.role);
+    mark('issueJwt');
 
     const refreshToken = createRefreshToken();
     await storeRefreshToken(user.username, refreshToken);
+    mark('storeRefreshToken');
       
     res.setHeader(
       'Set-Cookie',

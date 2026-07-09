@@ -109,6 +109,41 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const uploadAbortControllerRef = useRef<AbortController | null>(null);
   const pendingFilesQueueRef = useRef<Array<{ id: string; file: File }>>([]);
 
+  function pickNonEmptyString(...values: unknown[]): string | null {
+    for (const value of values) {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed) return trimmed;
+      }
+
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return String(value);
+      }
+    }
+
+    return null;
+  }
+
+  function getUploadVideoId(uploadResponse: any): string | null {
+    // VST 응답에서 stream/video ID로 쓰일 수 있는 값
+    return pickNonEmptyString(
+      uploadResponse?.streamId,
+      uploadResponse?.stream_id,
+      uploadResponse?.video_id,
+      uploadResponse?.videoId,
+      uploadResponse?.id,
+    );
+  }
+
+  function getUploadSensorId(uploadResponse: any): string | null {
+    // VST 응답에서 sensor ID/name으로 쓰일 수 있는 값
+    return pickNonEmptyString(
+      uploadResponse?.sensorId,
+      uploadResponse?.sensor_id,
+      uploadResponse?.sensor,
+    );
+  }
+
   useEffect(() => {
     isUploadingRef.current = isUploading;
   }, [isUploading]);
@@ -365,7 +400,10 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
             const originalFilename = file.name || '';
             const normalizedFilename =
               originalFilename.replace(/\.[^.]+$/, '') || originalFilename;
-          
+                      
+            const uploadVideoId = getUploadVideoId(videoUploadApiResponse);
+            const uploadSensorId = getUploadSensorId(videoUploadApiResponse);
+
             const response = await fetch('/api/videos/complete', {
               method: 'POST',
               headers: {
@@ -373,18 +411,11 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
                 Authorization: `Bearer ${token}`,
               },
               body: JSON.stringify({
-                video_id:
-                  (videoUploadApiResponse as any).sensorId ??
-                  (videoUploadApiResponse as any).id ??
-                  null,
-                sensor_id:
-                  (videoUploadApiResponse as any).sensorId ??
-                  (videoUploadApiResponse as any).id ??
-                  null,
+                video_id: uploadVideoId,
+                sensor_id: uploadSensorId,
+              
                 filename: normalizedFilename,
-                storage_filename:
-                  (videoUploadApiResponse as any).filename ??
-                  originalFilename,
+                storage_filename: (videoUploadApiResponse as any).filename ?? originalFilename,
                 video_url:
                   (videoUploadApiResponse as any).filePath ??
                   (videoUploadApiResponse as any).url ??
@@ -392,10 +423,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
                   null,
                 uploaded_at: new Date().toISOString(),
                 timestamp: new Date().toISOString(),
-                bytes:
-                  (videoUploadApiResponse as any).bytes ??
-                  file.size ??
-                  null,
+                bytes: (videoUploadApiResponse as any).bytes ?? file.size ?? null,
               }),
               signal: abortController.signal,
             });
@@ -793,9 +821,12 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        video_id: stream.sensorId,
+        video_id: stream.streamId || stream.sensorId,
+        videoId: stream.streamId || stream.sensorId,
+            
         sensor_id: stream.sensorId,
         sensorId: stream.sensorId,
+            
         filename: stream.name,
         video_url: stream.vodUrl ?? stream.url ?? null,
         filePath: stream.vodUrl ?? stream.url ?? null,
@@ -824,17 +855,24 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
 
     const selectedStreamIds = Array.from(selectedStreams);
 
-    const sensorToStreams = new Map<string, StreamInfo[]>();
-    for (const streamId of selectedStreamIds) {
-      const stream = streams.find(s => s.streamId === streamId);
-      if (stream) {
-        const existing = sensorToStreams.get(stream.sensorId) || [];
-        existing.push(stream);
-        sensorToStreams.set(stream.sensorId, existing);
-      }
+    const videoIdToStreams = new Map<string, StreamInfo[]>();
+
+    for (const selectedStreamId of selectedStreamIds) {
+      const stream = streams.find((s) => s.streamId === selectedStreamId);
+      if (!stream) continue;
+    
+      const deleteId = isRtspStream(stream)
+        ? stream.sensorId
+        : stream.streamId || stream.sensorId;
+    
+      if (!deleteId) continue;
+    
+      const existing = videoIdToStreams.get(deleteId) || [];
+      existing.push(stream);
+      videoIdToStreams.set(deleteId, existing);
     }
 
-    const uniqueSensorIds = Array.from(sensorToStreams.keys());
+    const uniqueVideoIds = Array.from(videoIdToStreams.keys());
     setIsDeleting(true);
 
     try {
@@ -865,35 +903,37 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         }
       }
 
-      const deletePromises = uniqueSensorIds.map(async (sensorId) => {
-        const sensorStreams = sensorToStreams.get(sensorId) || [];
-        const firstStream = sensorStreams[0];
+      const deletePromises = uniqueVideoIds.map(async (videoId) => {
+        const videoStreams = videoIdToStreams.get(videoId) || [];
+        const firstStream = videoStreams[0];
 
-        // Check if this is an RTSP stream - must use agent API (by sensor name)
         if (firstStream && isRtspStream(firstStream)) {
           if (!agentApiUrl) {
             throw new Error('Agent API URL not configured for RTSP stream deletion');
           }
+        
           await deleteRtspStream(agentApiUrl, firstStream.name);
-          return sensorId;
+          return videoId;
         }
-
-        // Uploaded videos: use agent delete video API only (same as RTSP - no VST fallback)
+      
         if (!agentApiUrl) {
           throw new Error('Agent API URL not configured for video deletion');
         }
-        await deleteVideo(agentApiUrl, sensorId);
+      
+        // 핵심 수정: uploaded video 삭제는 streamId/videoId 기준
+        await deleteVideo(agentApiUrl, videoId);
+      
         if (firstStream) {
           await deleteUploadedVideoOwnershipRecord(firstStream);
         }
-        return sensorId;
+      
+        return videoId;
       });
 
       const results = await Promise.allSettled(deletePromises);
       results.forEach((r, idx) => {
         if (r.status === 'rejected') {
-          // eslint-disable-next-line no-console
-          console.error('[VideoManagement] delete failed for sensor', uniqueSensorIds[idx], r.reason);
+          console.error('[VideoManagement] delete failed for video', uniqueVideoIds[idx], r.reason);
         }
       });
       setSelectedStreams(new Set());

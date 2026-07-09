@@ -1,5 +1,8 @@
 import crypto from 'crypto';
+import { promisify } from 'util';
 import { Pool } from 'pg';
+
+const pbkdf2Async = promisify(crypto.pbkdf2);
 
 export type UserRole = 'admin' | 'user';
 
@@ -34,6 +37,8 @@ export type RefreshAuthResponse = {
 };
 
 const DATABASE_URL = String(process.env.UI_AUTH_DATABASE_URL || '').trim();
+
+const SKIP_AUTH_SCHEMA_ENSURE = String(process.env.UI_AUTH_SKIP_SCHEMA_ENSURE || '').toLowerCase() === 'true';
 
 let pool: Pool | null = null;
 let dbInitPromise: Promise<void> | null = null;
@@ -199,6 +204,11 @@ export function buildClearRefreshTokenCookie(): string {
 }
 
 export async function ensureUiAuthSchema(): Promise<void> {
+
+  if (SKIP_AUTH_SCHEMA_ENSURE) {
+    return;
+  }
+
   if (!dbInitPromise) {
     dbInitPromise = (async () => {
       await getPool().query(`
@@ -417,6 +427,43 @@ export async function insertUser(user: StoredUser): Promise<boolean> {
   );
 
   return (result.rowCount ?? 0) > 0;
+}
+
+export async function hashPasswordAsync(
+  password: string,
+  salt?: string,
+): Promise<{ hash: string; salt: string }> {
+  const s = salt || crypto.randomBytes(16).toString('hex');
+
+  const key = await pbkdf2Async(
+    password,
+    s,
+    100000,
+    64,
+    'sha512',
+  );
+
+  return {
+    hash: key.toString('hex'),
+    salt: s,
+  };
+}
+
+export async function verifyPasswordAsync(
+  password: string,
+  salt: string,
+  passwordHash: string,
+): Promise<boolean> {
+  const { hash } = await hashPasswordAsync(password, salt);
+
+  const a = Uint8Array.from(Buffer.from(hash, 'hex'));
+  const b = Uint8Array.from(Buffer.from(passwordHash, 'hex'));
+
+  if (a.length !== b.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(a, b);
 }
 
 export function hashPassword(

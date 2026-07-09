@@ -8,14 +8,32 @@ import Head from 'next/head';
 import { useEffect } from 'react';
 
 import { APPLICATION_TITLE } from '../constants/constants';
-import { useAuth } from '../hooks/useAuth';
+import { AuthProvider, useAuthContext } from '../contexts/AuthContext';
 
 import '../styles/globals.css';
 import 'rsuite/dist/rsuite.min.css';
 import '../styles/rsuite-custom.css';
 
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const { ready, isAuthenticated } = useAuthContext();
+
+  useEffect(() => {
+    if (!ready) return;
+
+    const path = typeof window !== 'undefined' ? window.location.pathname : '';
+    const isAuthPath = path.startsWith('/auth');
+
+    if (!isAuthenticated && !isAuthPath) {
+      window.location.replace('/auth/login');
+    }
+  }, [ready, isAuthenticated]);
+
+  return <>{children}</>;
+}
+
+const queryClient = new QueryClient();
+
 function App({ Component, pageProps }: AppProps<{}>) {
-  const queryClient = new QueryClient();
 
   useEffect(() => {
     const originalFetch = window.fetch.bind(window);
@@ -258,35 +276,6 @@ function App({ Component, pageProps }: AppProps<{}>) {
     };
   }, []);
 
-  const { ready, isAuthenticated } = useAuth();
-
-  useEffect(() => {
-    if (!ready) return;
-
-    const path = typeof window !== 'undefined' ? window.location.pathname : '';
-    const isAuthPath = path.startsWith('/auth');
-
-    if (!isAuthenticated && !isAuthPath) {
-      (async () => {
-        try {
-          const mod = await import('next/router');
-          if (
-            mod &&
-            mod.default &&
-            typeof mod.default.replace === 'function'
-          ) {
-            mod.default.replace('/auth/login');
-            return;
-          }
-        } catch {
-          // fall through to hard redirect
-        }
-
-        window.location.replace('/auth/login');
-      })();
-    }
-  }, [ready, isAuthenticated]);
-
   return (
     <>
       <Head>
@@ -294,7 +283,11 @@ function App({ Component, pageProps }: AppProps<{}>) {
       </Head>
 
       <QueryClientProvider client={queryClient}>
-        <Component {...pageProps} />
+        <AuthProvider>
+          <AuthGate>
+            <Component {...pageProps} />
+          </AuthGate>
+        </AuthProvider>
       </QueryClientProvider>
 
       <Toaster position="top-right" />

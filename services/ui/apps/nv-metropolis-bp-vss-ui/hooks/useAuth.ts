@@ -30,23 +30,34 @@ function safeJsonParse<T>(raw: string | null): T | null {
   }
 }
 
+let sharedRefreshPromise: Promise<AuthResponse | null> | null = null;
 async function refreshAccessToken(): Promise<AuthResponse | null> {
-  try {
-    const response = await fetch('/api/auth/refresh', {
-      method: 'POST',
-      credentials: 'include',
-    });
-
-    const payload = await parseApiPayload(response);
-
-    if (!response.ok) {
-      return null;
-    }
-
-    return payload as AuthResponse;
-  } catch {
-    return null;
+  if (sharedRefreshPromise) {
+    return sharedRefreshPromise;
   }
+
+  sharedRefreshPromise = (async () => {
+    try {
+      const response = await fetch('/api/auth/refresh', {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      const payload = await parseApiPayload(response);
+
+      if (!response.ok) {
+        return null;
+      }
+
+      return payload as AuthResponse;
+    } catch {
+      return null;
+    } finally {
+      sharedRefreshPromise = null;
+    }
+  })();
+
+  return sharedRefreshPromise;
 }
 
 async function parseApiPayload(response: Response): Promise<AuthResponse | ErrorPayload | null> {

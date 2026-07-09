@@ -53,28 +53,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const uploadedConditions: string[] = [];
       const uploadedParams: any[] = [username];
       let idx = 2;
-
+          
       if (video_id) {
         uploadedConditions.push(`video_id = $${idx}`);
         uploadedParams.push(video_id);
         idx++;
       }
-
+      
       if (sensorId) {
         uploadedConditions.push(`sensor_id = $${idx}`);
         uploadedParams.push(sensorId);
         idx++;
       }
-
+      
       if (filePath) {
         if (uploadedHasFilePath) {
           uploadedConditions.push(`file_path = $${idx}`);
           uploadedParams.push(filePath);
           idx++;
         }
-        // always also check video_url as a fallback
+      
         uploadedConditions.push(`video_url = $${idx}`);
         uploadedParams.push(filePath);
+        idx++;
+      }
+      
+      // filename은 video_id/sensor_id/filePath가 아무것도 없을 때만 fallback으로 사용
+      if (uploadedConditions.length === 0 && filename) {
+        uploadedConditions.push(`filename = $${idx}`);
+        uploadedParams.push(filename);
         idx++;
       }
 

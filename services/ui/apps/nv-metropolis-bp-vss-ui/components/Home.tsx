@@ -21,7 +21,7 @@ import {
   getChatSidebarEnabled,
 } from '../utils/tabChatSidebarConfig';
 
-import { useAuth } from '../hooks/useAuth';
+import { useAuthContext } from '../contexts/AuthContext';
 import { useTheme } from '../hooks/useTheme';
 import { useAppChatSidebar } from '../hooks/useAppChatSidebar';
 import { useChatSidebarMainTabBridge } from '../hooks/useChatSidebarMainTabBridge';
@@ -260,7 +260,7 @@ const SidebarNemoAgentToolkitApp = dynamicComponents.NemoAgentToolkitApp;
 
 export default function Home({ alertsData, searchData, dashboardData, mapData, videoManagementData, serverRenderTime }: HomeProps) {
   
-  const { ready: authReady, user } = useAuth();
+  const { ready: authReady, user } = useAuthContext();
   const isAdmin = user?.role === 'admin';
   // Get deployment configuration from environment variables - memoize to prevent recreation
   const deploymentConfig = useMemo(() => {
