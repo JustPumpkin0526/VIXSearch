@@ -54,6 +54,9 @@ export interface FileUploadResponse {
   filename: string;
   id: string;
   sensorId: string;
+  streamId: string;
+  stream_id?: string;
+  sensor_id?: string;
 }
 
 export interface FileUploadError {

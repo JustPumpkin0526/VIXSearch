@@ -44,8 +44,10 @@ export async function deleteVideo(
 
   const result: DeleteVideoResult = await response.json();
 
-  if (result.status === 'failure') {
-    throw new Error(result.message || `Failed to delete video: ${result.video_id}`);
+  if (result.status !== 'success') {
+    throw new Error(
+      result.message || `Failed to fully delete video: ${result.video_id}`,
+    );
   }
 
   return result;

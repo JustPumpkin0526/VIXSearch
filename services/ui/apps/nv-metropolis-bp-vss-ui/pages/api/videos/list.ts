@@ -32,6 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       const q = `
         SELECT
+          video_id,
           sensor_id,
           filename,
           show_filename,

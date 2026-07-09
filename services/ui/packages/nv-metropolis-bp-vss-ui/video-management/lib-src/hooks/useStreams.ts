@@ -54,8 +54,24 @@ async function fetchUserVideos(): Promise<UserVideoRecord[]> {
 function findMatchingUserVideo(
   stream: StreamInfo,
   videosBySensorId: Map<string, UserVideoRecord>,
+  videosByVideoId: Map<string, UserVideoRecord>,
   userVideos: UserVideoRecord[],
 ): UserVideoRecord | null {
+
+  if (stream.streamId) {
+    const matchedByVideoId = videosByVideoId.get(stream.streamId);
+    if (matchedByVideoId) {
+      return matchedByVideoId;
+    }
+  }
+
+  if (stream.sensorId) {
+    const matchedBySensorId = videosBySensorId.get(stream.sensorId);
+    if (matchedBySensorId) {
+      return matchedBySensorId;
+    }
+  }
+
   if (stream.sensorId) {
     const matched = videosBySensorId.get(stream.sensorId);
     if (matched) {
@@ -120,14 +136,22 @@ export function useStreams({
 
       const userVideos = await fetchUserVideos();
 
-      const videosBySensorId = new Map<string, UserVideoRecord>(
+      const videosBySensorId = new Map(
         userVideos
           .filter(
             (video): video is UserVideoRecord & { sensor_id: string } =>
-              typeof video.sensor_id === 'string' &&
-              video.sensor_id.trim().length > 0,
+              typeof video.sensor_id === 'string' && video.sensor_id.trim().length > 0,
           )
           .map((video) => [video.sensor_id.trim(), video]),
+      );
+
+      const videosByVideoId = new Map(
+        userVideos
+          .filter(
+            (video): video is UserVideoRecord & { video_id: string } =>
+              typeof video.video_id === 'string' && video.video_id.trim().length > 0,
+          )
+          .map((video) => [video.video_id.trim(), video]),
       );
 
       const filteredStreams = parsedStreams
@@ -141,6 +165,7 @@ export function useStreams({
           const matchedVideo = findMatchingUserVideo(
             stream,
             videosBySensorId,
+            videosByVideoId,
             userVideos,
           );
 

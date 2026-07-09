@@ -10,20 +10,31 @@ import { APPLICATION_TITLE } from '../constants/constants';
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   try {
-    const { getNemoAgentToolkitSSProps } = await import('@nemo-agent-toolkit/ui/server');
+    const { getNemoAgentToolkitSSProps } = await import(
+      '../../../packages/nemo-agent-toolkit-ui/lib-src/server'
+    );
 
-    const nemoProps = await getNemoAgentToolkitSSProps(context);
+    const { fetchVideoManagementData } = await import(
+      '../../../packages/nv-metropolis-bp-vss-ui/video-management/lib-src/server'
+    );
+
+    const [nemoProps, videoManagementData] = await Promise.all([
+      getNemoAgentToolkitSSProps(context),
+      fetchVideoManagementData(),
+    ]);
 
     return {
       props: {
         ...nemoProps.props,
 
-        // 로그인 직후에는 전체 탭 데이터를 미리 가져오지 않음
+        // 로그인 속도 개선을 위해 무거운 탭 데이터는 SSR에서 제외
         alertsData: null,
         searchData: null,
         dashboardData: null,
         mapData: null,
-        videoManagementData: null,
+
+        // 업로드/삭제에 필요한 VST/Agent URL은 반드시 유지
+        videoManagementData,
 
         serverRenderTime: new Date().toISOString(),
       },
@@ -34,9 +45,9 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     return {
       props: {
         alertsData: null,
+        searchData: null,
         dashboardData: null,
         mapData: null,
-        searchData: null,
         videoManagementData: null,
         serverRenderTime: new Date().toISOString(),
       },
