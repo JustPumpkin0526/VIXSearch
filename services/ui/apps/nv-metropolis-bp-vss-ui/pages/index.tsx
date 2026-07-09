@@ -11,11 +11,11 @@ import { APPLICATION_TITLE } from '../constants/constants';
 export const getServerSideProps: GetServerSideProps = async (context) => {
   try {
     const { getNemoAgentToolkitSSProps } = await import(
-      '../../../packages/nemo-agent-toolkit-ui/lib-src/server'
+      '@nemo-agent-toolkit/ui/server'
     );
 
     const { fetchVideoManagementData } = await import(
-      '../../../packages/nv-metropolis-bp-vss-ui/video-management/lib-src/server'
+      '@nv-metropolis-bp-vss-ui/all/server'
     );
 
     const [nemoProps, videoManagementData] = await Promise.all([
