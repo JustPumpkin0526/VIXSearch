@@ -730,96 +730,174 @@ async def fusion_search_rerank(
     return final_results
 
 
-_SIMILARITY_RATIO_THRESHOLD = 0.9
+_MERGE_GAP_TOLERANCE_SECONDS = 1.0
+_MIN_RESULT_CLIP_SECONDS = 0.0
 
 
-def _merge_consecutive_results(results: list["SearchResult"]) -> list["SearchResult"]:
-    """Merge consecutive/overlapping SearchResult chunks from the same sensor.
+def _get_result_duration_seconds(result: "SearchResult") -> float | None:
+    """Return SearchResult duration in seconds. Return None if timestamp is invalid."""
+    try:
+        start_dt = iso8601_to_datetime(result.start_time)
+        end_dt = iso8601_to_datetime(result.end_time)
+        return (end_dt - start_dt).total_seconds()
+    except Exception as e:
+        logger.warning(
+            "Failed to calculate result duration. sensor_id=%s, start=%s, end=%s, error=%s",
+            getattr(result, "sensor_id", None),
+            getattr(result, "start_time", None),
+            getattr(result, "end_time", None),
+            e,
+        )
+        return None
 
-    Merging rules:
-    - video_name, sensor_id, description, screenshot_url: taken from the first chunk
-    - start_time / end_time: span of the merged window
-    - similarity: mean across merged chunks
-    - object_ids: concatenated (preserving order, deduplicating)
-    - critic_result: always None (merge runs before the critic)
+
+def _filter_short_results(
+    results: list["SearchResult"],
+    min_duration_seconds: float,
+) -> list["SearchResult"]:
+    """Drop clips shorter than min_duration_seconds.
+
+    This must run after consecutive-clip merging.
+    Otherwise a valid merged clip can be removed while still split.
+    """
+    if min_duration_seconds <= 0:
+        return results
+
+    filtered: list[SearchResult] = []
+
+    for result in results:
+        duration = _get_result_duration_seconds(result)
+
+        # Keep malformed timestamp results instead of silently removing them.
+        # They cannot be safely duration-filtered here.
+        if duration is None:
+            filtered.append(result)
+            continue
+
+        if duration >= min_duration_seconds:
+            filtered.append(result)
+        else:
+            logger.info(
+                "Filtered short search result clip. sensor_id=%s, start=%s, end=%s, "
+                "duration=%.3fs, min_duration=%.3fs",
+                result.sensor_id,
+                result.start_time,
+                result.end_time,
+                duration,
+                min_duration_seconds,
+            )
+
+    return filtered
+
+
+def _merge_consecutive_results(
+    results: list["SearchResult"],
+    merge_gap_tolerance_seconds: float = _MERGE_GAP_TOLERANCE_SECONDS,
+) -> list["SearchResult"]:
+    """Merge consecutive/overlapping SearchResult chunks from the same video.
+
+    Important:
+    - Merge is based on time continuity, not similarity score.
+    - A small gap tolerance is allowed to absorb timestamp rounding drift.
+    - Invalid negative-duration clips are dropped.
+    - 0-second clips are not expanded here. They are removed later by duration filtering.
     """
     if not results:
         return results
 
-    # Results without timestamps (or with malformed ones) cannot be time-merged; pass them through as-is
-    timestamped: list[SearchResult] = []
+    parsed_results: list[tuple[SearchResult, datetime, datetime]] = []
     no_timestamp: list[SearchResult] = []
-    for r in results:
-        if not r.start_time or not r.end_time:
-            no_timestamp.append(r)
+
+    for result in results:
+        if not result.start_time or not result.end_time:
+            no_timestamp.append(result)
             continue
+
         try:
-            iso8601_to_datetime(r.start_time)
-            iso8601_to_datetime(r.end_time)
-            timestamped.append(r)
+            start_dt = iso8601_to_datetime(result.start_time)
+            end_dt = iso8601_to_datetime(result.end_time)
+
+            if end_dt < start_dt:
+                logger.warning(
+                    "Dropping invalid search result with negative duration. "
+                    "sensor_id=%s, start=%s, end=%s",
+                    result.sensor_id,
+                    result.start_time,
+                    result.end_time,
+                )
+                continue
+
+            parsed_results.append((result, start_dt, end_dt))
         except (ValueError, TypeError) as e:
-            logger.warning(f"Skipping merge for result with malformed timestamp (sensor={r.sensor_id}): {e}")
-            no_timestamp.append(r)
+            logger.warning(
+                "Skipping merge for result with malformed timestamp. sensor_id=%s, error=%s",
+                result.sensor_id,
+                e,
+            )
+            no_timestamp.append(result)
 
     merged: list[SearchResult] = list(no_timestamp)
 
-    if not timestamped:
+    if not parsed_results:
         merged.sort(key=lambda r: r.similarity, reverse=True)
         return merged
 
-    # Group by sensor_id
-    by_sensor: dict[str, list[SearchResult]] = {}
-    for result in timestamped:
-        by_sensor.setdefault(result.sensor_id, []).append(result)
+    # Group by both sensor_id and video_name.
+    # This prevents accidental cross-video merge when sensor_id handling changes.
+    by_video: dict[tuple[str, str], list[tuple[SearchResult, datetime, datetime]]] = {}
 
-    for sensor_id, sensor_results in by_sensor.items():
-        # Sort by start_time within each sensor group
-        sorted_results = sorted(sensor_results, key=lambda r: r.start_time)
+    for item in parsed_results:
+        result, _, _ = item
+        by_video.setdefault((result.sensor_id, result.video_name), []).append(item)
 
-        # Build contiguous groups of overlapping/adjacent chunks
-        groups: list[list[SearchResult]] = []
-        group_chunks: list[SearchResult] = [sorted_results[0]]
-        group_end_dt = iso8601_to_datetime(sorted_results[0].end_time)
+    gap_tolerance = timedelta(seconds=max(0.0, merge_gap_tolerance_seconds))
 
-        for result in sorted_results[1:]:
-            result_start_dt = iso8601_to_datetime(result.start_time)
-            group_avg_sim = sum(c.similarity for c in group_chunks) / len(group_chunks)
-            pair_max = max(group_avg_sim, result.similarity)
-            pair_min = min(group_avg_sim, result.similarity)
-            sim_compatible = pair_max == 0 or (pair_min / pair_max) >= _SIMILARITY_RATIO_THRESHOLD
+    for (sensor_id, video_name), video_results in by_video.items():
+        sorted_results = sorted(video_results, key=lambda item: item[1])
 
-            if result_start_dt <= group_end_dt and sim_compatible:
-                # Overlapping or adjacent with compatible similarity — extend the current group
-                result_end_dt = iso8601_to_datetime(result.end_time)
-                if result_end_dt > group_end_dt:
-                    group_end_dt = result_end_dt
-                group_chunks.append(result)
+        groups: list[list[tuple[SearchResult, datetime, datetime]]] = []
+        current_group: list[tuple[SearchResult, datetime, datetime]] = [sorted_results[0]]
+        current_end_dt = sorted_results[0][2]
+
+        for item in sorted_results[1:]:
+            result, start_dt, end_dt = item
+
+            # Previous logic also required similarity compatibility.
+            # That caused adjacent chunks to remain split when scores differed.
+            if start_dt <= current_end_dt + gap_tolerance:
+                current_group.append(item)
+                if end_dt > current_end_dt:
+                    current_end_dt = end_dt
             else:
-                groups.append(group_chunks)
-                group_chunks = [result]
-                group_end_dt = iso8601_to_datetime(result.end_time)
-        groups.append(group_chunks)
+                groups.append(current_group)
+                current_group = [item]
+                current_end_dt = end_dt
 
-        # Collapse each group into a single SearchResult
+        groups.append(current_group)
+
         for group in groups:
-            first = group[0]
-            end_dt = max(iso8601_to_datetime(g.end_time) for g in group)
-            similarity = sum(g.similarity for g in group) / len(group)
+            group_results = [item[0] for item in group]
+            first = group_results[0]
+
+            merged_start_dt = min(item[1] for item in group)
+            merged_end_dt = max(item[2] for item in group)
+            similarity = sum(result.similarity for result in group_results) / len(group_results)
 
             seen_ids: set[str] = set()
             merged_object_ids: list[str] = []
-            for g in group:
-                for oid in g.object_ids:
+
+            for result in group_results:
+                for oid in result.object_ids:
                     if oid not in seen_ids:
                         merged_object_ids.append(oid)
                         seen_ids.add(oid)
 
             merged.append(
                 SearchResult(
-                    video_name=first.video_name,
+                    video_name=video_name or first.video_name,
                     description=first.description,
-                    start_time=first.start_time,
-                    end_time=datetime_to_iso8601(end_dt),
+                    start_time=datetime_to_iso8601(merged_start_dt),
+                    end_time=datetime_to_iso8601(merged_end_dt),
                     sensor_id=sensor_id,
                     screenshot_url=first.screenshot_url,
                     similarity=similarity,
@@ -828,7 +906,6 @@ def _merge_consecutive_results(results: list["SearchResult"]) -> list["SearchRes
                 )
             )
 
-    # Sort by descending similarity so best matches come first
     merged.sort(key=lambda r: r.similarity, reverse=True)
     return merged
 
@@ -1118,9 +1195,28 @@ async def execute_core_search(
         return
 
     # ===== SETUP COMMON QUERY PARAMETERS (used by all execution paths) =====
-    top_k = search_input.top_k if search_input.top_k is not None else config.default_max_results
-    original_top_k = top_k
-    top_k = top_k * 2
+    final_top_k = search_input.top_k if search_input.top_k is not None else config.default_max_results
+
+    candidate_multiplier = int(getattr(config, "candidate_top_k_multiplier", 10))
+    max_candidate_top_k = int(getattr(config, "max_candidate_top_k", 100))
+
+    # Internal candidate count must be larger than the final output count.
+    # This prevents consecutive-clip merging from shrinking the visible result count.
+    candidate_top_k = final_top_k * candidate_multiplier
+    candidate_top_k = max(final_top_k, candidate_top_k)
+    candidate_top_k = min(candidate_top_k, max_candidate_top_k)
+
+    original_top_k = final_top_k
+    top_k = candidate_top_k
+
+    logger.info(
+        "Search result limits: final_top_k=%s, candidate_top_k=%s, "
+        "candidate_multiplier=%s, max_candidate_top_k=%s",
+        final_top_k,
+        candidate_top_k,
+        candidate_multiplier,
+        max_candidate_top_k,
+    )
 
     # Build query_params for embed_search (used by embed-only and fusion paths)
     query_params: dict[str, str] = {"query": search_input.query}
@@ -1451,8 +1547,43 @@ async def execute_core_search(
                 f"(similarity >= {sim_threshold:.4f}, i.e. {top_pct * 100:.0f}% of max {max_sim:.4f})"
             )
 
-        # Merge consecutive chunks from the same sensor into single results
-        search_results = _merge_consecutive_results(search_results)
+        # Merge consecutive chunks from the same video into single results first.
+        search_results = _merge_consecutive_results(
+            search_results,
+            merge_gap_tolerance_seconds=getattr(
+                config,
+                "merge_gap_tolerance_seconds",
+                _MERGE_GAP_TOLERANCE_SECONDS,
+            ),
+        )
+        
+        # Then drop clips shorter than the configured minimum duration.
+        # This prevents 0-second clips and partially merged short clips from reaching the UI/VST clip renderer.
+        min_result_clip_seconds = float(
+            getattr(config, "min_result_clip_seconds", _MIN_RESULT_CLIP_SECONDS)
+        )
+        
+        before_short_filter = len(search_results)
+        search_results = _filter_short_results(
+            search_results,
+            min_duration_seconds=min_result_clip_seconds,
+        )
+        
+        removed_short_count = before_short_filter - len(search_results)
+        
+        if removed_short_count > 0:
+            logger.info(
+                "Filtered %d search result clip(s) shorter than min_result_clip_seconds=%s",
+                removed_short_count,
+                min_result_clip_seconds,
+            )
+            yield AgentMessageChunk(
+                type=AgentMessageChunkType.THOUGHT,
+                content=(
+                    f"Filtered {removed_short_count} short clip(s) below "
+                    f"{min_result_clip_seconds:.1f}s"
+                ),
+            )
 
         # Step 3: If critic enabled and configured, verify results with VLM
         if (
@@ -1558,17 +1689,18 @@ async def execute_core_search(
                     content=msg,
                 )
 
-    # Yield final results summary
+    # Final output limit must be applied only after all post-processing:
+    # similarity filter -> owner filter -> top-percent filter -> merge -> short-clip filter -> critic
+    if original_top_k is not None:
+        search_results = search_results[:original_top_k]
+    
     result_count = len(search_results)
+    
     yield AgentMessageChunk(
         type=AgentMessageChunkType.THOUGHT,
         content=f"Found {result_count} result{'s' if result_count != 1 else ''}",
     )
-
-    # Yield final result, truncated to original top_k to undo any critic-loop inflation
-    if original_top_k is not None:
-        search_results = search_results[:original_top_k]
-
+    
     yield SearchOutput(data=search_results, search_messages=search_messages)
 
 
@@ -1716,6 +1848,42 @@ class SearchConfig(FunctionBaseConfig, name="search"):
     behavior_index: str = Field(
         default=DEFAULT_BEHAVIOR_INDEX,
         description="Behavior index name for object embedding lookup.",
+    )
+
+    merge_gap_tolerance_seconds: float = Field(
+        default=1.0,
+        ge=0.0,
+        description=(
+            "Maximum allowed gap in seconds when merging consecutive search result clips. "
+            "Use this to absorb timestamp rounding drift."
+        ),
+    )
+
+    min_result_clip_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Minimum duration in seconds for final search result clips after merging. "
+            "Set this to the embedding chunk duration to suppress 0-second or too-short clips."
+        ),
+    )
+
+    candidate_top_k_multiplier: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Multiplier for internal candidate retrieval before merging/filtering. "
+            "Final output is still limited by top_k, but internal search fetches more "
+            "candidates so merged consecutive clips do not reduce the visible result count."
+        ),
+    )
+
+    max_candidate_top_k: int = Field(
+        default=100,
+        ge=1,
+        description=(
+            "Maximum number of internal search candidates to fetch before merging/filtering."
+        ),
     )
 
 

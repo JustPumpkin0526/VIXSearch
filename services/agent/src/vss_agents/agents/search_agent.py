@@ -256,11 +256,14 @@ def _expand_zero_duration_results(
 
 
 def _candidate_top_k(search_agent_input: SearchAgentInput, default_top_k: int) -> int:
-    """Derive internal search depth from config and the requested final count."""
+    """Return the final requested result count.
+
+    Internal candidate expansion is handled by execute_core_search().
+    """
     max_results = _explicit_max_results(search_agent_input)
     if max_results is None:
         return default_top_k
-    return max(default_top_k, max_results)
+    return max(0, max_results)
 
 
 class SearchAgentConfig(FunctionBaseConfig, name="search_agent"):
@@ -366,6 +369,43 @@ class SearchAgentConfig(FunctionBaseConfig, name="search_agent"):
     class_only_search_default: bool = Field(
         default=False,
         description="If True, bypass embed/fusion and run attribute-search-only by default.",
+    )
+
+    merge_gap_tolerance_seconds: float = Field(
+        default=1.0,
+        ge=0.0,
+        description=(
+            "Maximum allowed gap in seconds when merging consecutive search result clips. "
+            "Use this to absorb timestamp rounding drift."
+        ),
+    )
+
+    min_result_clip_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Minimum duration in seconds for final search result clips after merging. "
+            "Set this to the embedding chunk duration to suppress 0-second or too-short clips."
+        ),
+    )
+
+    candidate_top_k_multiplier: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Multiplier for internal candidate retrieval before merging/filtering. "
+            "Final output is still limited by max_results/top_k, but internal search "
+            "fetches more candidates so merged consecutive clips do not reduce the "
+            "visible result count."
+        ),
+    )
+
+    max_candidate_top_k: int = Field(
+        default=100,
+        ge=1,
+        description=(
+            "Maximum number of internal search candidates to fetch before merging/filtering."
+        ),
     )
 
 
