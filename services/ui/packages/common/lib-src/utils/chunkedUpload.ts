@@ -66,6 +66,10 @@ async function sleep(ms: number): Promise<void> {
  * Upload a single chunk of a file with nvstreamer-* headers.
  * Resolves with the parsed JSON response from the receiver.
  */
+
+const DEFAULT_CHUNK_TIMEOUT_MS = 5 * 60 * 1000;
+const FINAL_CHUNK_TIMEOUT_MS = 60 * 60 * 1000;
+
 async function uploadChunk(
   chunk: Blob,
   url: string,
@@ -75,9 +79,16 @@ async function uploadChunk(
   totalChunks: number,
   onChunkProgress?: (loaded: number) => void,
   abortSignal?: AbortSignal,
+  timeoutMs?: number,
 ): Promise<ChunkedUploadResponse> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+
+    xhr.timeout = timeoutMs ?? DEFAULT_CHUNK_TIMEOUT_MS;
+
+    xhr.addEventListener('timeout', () => {
+      reject(new Error(`Upload request timed out after ${xhr.timeout}ms`));
+    });
 
     if (abortSignal) {
       if (abortSignal.aborted) {
@@ -175,10 +186,15 @@ export async function chunkedUpload(options: ChunkedUploadOptions): Promise<Chun
     const end = Math.min(start + chunkSize, file.size);
     const chunk = file.slice(start, end);
     const chunkNumber = i + 1;
-
+    const isLastChunk = chunkNumber === totalChunks;
+      
+    // 마지막 청크는 VST 내부에서 파일 병합/transcode/finalize를 수행하므로
+    // 실패 응답이 오더라도 동일 identifier로 즉시 재시도하면 업로드 세션이 꼬일 수 있음
+    const retryLimit = isLastChunk ? 0 : maxRetries;
+      
     let lastError: Error | null = null;
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      
+    for (let attempt = 0; attempt <= retryLimit; attempt++) {
       if (abortSignal?.aborted) {
         throw new Error('Upload was cancelled');
       }
@@ -190,6 +206,9 @@ export async function chunkedUpload(options: ChunkedUploadOptions): Promise<Chun
       }
 
       try {
+        const isLastChunk = chunkNumber === totalChunks;
+        const timeoutMs = isLastChunk ? FINAL_CHUNK_TIMEOUT_MS : DEFAULT_CHUNK_TIMEOUT_MS;
+              
         lastResponse = await uploadChunk(
           chunk,
           uploadUrl,
@@ -205,14 +224,22 @@ export async function chunkedUpload(options: ChunkedUploadOptions): Promise<Chun
             }
           },
           abortSignal,
+          timeoutMs,
         );
         lastError = null;
         break;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        // Don't retry abort/cancel errors
+
         if (lastError.message === 'Upload was cancelled') {
           throw lastError;
+        }
+      
+        if (isLastChunk) {
+          throw new Error(
+            `Final chunk was submitted but did not complete successfully: ${lastError.message}. ` +
+            `The server may still be transcoding/finalizing the video. Do not retry with the same identifier.`
+          );
         }
       }
     }
