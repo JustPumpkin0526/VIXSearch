@@ -881,7 +881,7 @@ def _merge_consecutive_results(
 
             merged_start_dt = min(item[1] for item in group)
             merged_end_dt = max(item[2] for item in group)
-            similarity = sum(result.similarity for result in group_results) / len(group_results)
+            similarity = max(result.similarity for result in group_results)
 
             seen_ids: set[str] = set()
             merged_object_ids: list[str] = []
