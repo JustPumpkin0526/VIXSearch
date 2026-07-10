@@ -158,6 +158,173 @@ function parsePossiblyConcatenatedJson(payload: string): any[] {
 //   console.debug(`[stream][${label}] payload preview:`, preview);
 // };
 
+type ImageSearchApiResult = {
+  video_name?: string;
+  description?: string;
+  start_time?: string;
+  end_time?: string;
+  sensor_id?: string;
+  screenshot_url?: string;
+  similarity_score?: number;
+};
+
+type ImageSearchApiResponse = {
+  results?: ImageSearchApiResult[];
+  data?: ImageSearchApiResult[];
+  total?: number;
+  search_type?: string;
+};
+
+function getImageAttachmentContent(
+  message: Message,
+): string | null {
+  const attachment = message.attachment as
+    | {
+      content?: unknown;
+      type?: unknown;
+      mimeType?: unknown;
+      contentType?: unknown;
+      name?: unknown;
+    }
+    | undefined;
+
+  if (
+    !attachment ||
+    typeof attachment.content !== 'string' ||
+    !attachment.content.trim()
+  ) {
+    return null;
+  }
+
+  const contentType =
+    typeof attachment.contentType === 'string'
+      ? attachment.contentType
+      : typeof attachment.mimeType === 'string'
+        ? attachment.mimeType
+        : typeof attachment.type === 'string'
+          ? attachment.type
+          : '';
+
+  const content = attachment.content.trim();
+
+  const isImage =
+    content.startsWith('data:image/') ||
+    contentType.startsWith('image/');
+
+  return isImage ? content : null;
+}
+
+function getAttachmentContentType(
+  message: Message,
+  imageContent: string,
+): string {
+  const attachment = message.attachment as
+    | {
+      type?: unknown;
+      mimeType?: unknown;
+      contentType?: unknown;
+    }
+    | undefined;
+
+  const configuredType =
+    typeof attachment?.contentType === 'string'
+      ? attachment.contentType
+      : typeof attachment?.mimeType === 'string'
+        ? attachment.mimeType
+        : typeof attachment?.type === 'string'
+          ? attachment.type
+          : '';
+
+  if (configuredType.startsWith('image/')) {
+    return configuredType;
+  }
+
+  const dataUriMatch = imageContent.match(
+    /^data:(image\/[a-zA-Z0-9.+-]+);base64,/,
+  );
+
+  return dataUriMatch?.[1] || 'image/jpeg';
+}
+
+function stripImageDataUriPrefix(
+  imageContent: string,
+): string {
+  const commaIndex = imageContent.indexOf(',');
+
+  if (
+    imageContent.startsWith('data:image/') &&
+    commaIndex >= 0
+  ) {
+    return imageContent.slice(commaIndex + 1);
+  }
+
+  return imageContent;
+}
+
+function normalizeImageSearchResponse(
+  payload: ImageSearchApiResponse,
+): {
+  data: Array<{
+    video_name: string;
+    description: string;
+    start_time: string;
+    end_time: string;
+    sensor_id: string;
+    screenshot_url: string;
+    similarity_score: number;
+    search_type: 'image_similarity';
+  }>;
+  total: number;
+  search_type: 'image_similarity';
+} {
+  const sourceResults = Array.isArray(payload.results)
+    ? payload.results
+    : Array.isArray(payload.data)
+      ? payload.data
+      : [];
+
+  const data = sourceResults.map((result) => ({
+    video_name:
+      typeof result.video_name === 'string'
+        ? result.video_name
+        : '',
+    description:
+      typeof result.description === 'string'
+        ? result.description
+        : '',
+    start_time:
+      typeof result.start_time === 'string'
+        ? result.start_time
+        : '',
+    end_time:
+      typeof result.end_time === 'string'
+        ? result.end_time
+        : '',
+    sensor_id:
+      typeof result.sensor_id === 'string'
+        ? result.sensor_id
+        : '',
+    screenshot_url:
+      typeof result.screenshot_url === 'string'
+        ? result.screenshot_url
+        : '',
+    similarity_score:
+      typeof result.similarity_score === 'number'
+        ? result.similarity_score
+        : 0,
+    search_type: 'image_similarity' as const,
+  }));
+
+  return {
+    data,
+    total:
+      typeof payload.total === 'number'
+        ? payload.total
+        : data.length,
+    search_type: 'image_similarity',
+  };
+}
+
 export const Chat = () => {
   const { t } = useTranslation('chat');
   const {
@@ -349,7 +516,7 @@ export const Chat = () => {
   // Initialize with state value, will be properly set in useEffect after checking sessionStorage
   const webSocketModeRef = useRef<boolean | undefined>(webSocketMode);
   let websocketLoadingToastId: string | null = null;
-  
+
   // Sync webSocketModeRef with sessionStorage and state changes
   // This runs on mount and whenever webSocketMode state changes
   useEffect(() => {
@@ -372,7 +539,7 @@ export const Chat = () => {
 
   // WebSocket message tracking for stop generating functionality
   const activeUserMessageId = useRef<string | null>(null);
-  
+
   // WebSocket throttling for state updates - reduces render cycles while maintaining smooth streaming
   const WS_THROTTLE_MS = 32; // ~30fps update rate
   const wsLastDispatchTime = useRef<number>(0);
@@ -381,10 +548,10 @@ export const Chat = () => {
     messages: Message[];
   } | null>(null);
   const wsFlushTimeout = useRef<NodeJS.Timeout | null>(null);
-  
+
   // Store custom agent params for use in handleSend
   const customAgentParamsRef = useRef<CustomAgentParamsValues | null>(null);
-  
+
   // Ref to store the latest handleSend function for stable callbacks
   // This prevents unnecessary re-renders of memoized chat messages
   const handleSendRef = useRef<(message: Message, deleteCount?: number, retry?: boolean) => Promise<void>>();
@@ -464,7 +631,7 @@ export const Chat = () => {
       conversationsRef.current = conversations;
     }
   }, [conversations, messageIsStreaming]);
-  
+
   // Reset WebSocket state when conversation changes to prevent stale message display
   useEffect(() => {
     if (selectedConversation?.id) {
@@ -550,7 +717,7 @@ export const Chat = () => {
       ws.onopen = () => {
         toast.success(
           'Connected to ' +
-            (sessionStorage.getItem('webSocketURL') || webSocketURL),
+          (sessionStorage.getItem('webSocketURL') || webSocketURL),
           {
             id: 'websocketSuccessToastId',
           }
@@ -763,10 +930,10 @@ export const Chat = () => {
       return messages.map((m, idx) =>
         idx === messages.length - 1
           ? {
-              ...m,
-              errorMessages: [...(m.errorMessages || []), message],
-              timestamp: Date.now(),
-            }
+            ...m,
+            errorMessages: [...(m.errorMessages || []), message],
+            timestamp: Date.now(),
+          }
           : m
       );
     } else {
@@ -857,10 +1024,10 @@ export const Chat = () => {
 
     // End loading indicators as messages arrive
     homeDispatch({ field: 'loading', value: false });
-    
+
     // Check if this is a completion message
     const isComplete = isSystemResponseComplete(message);
-    
+
     if (isComplete) {
       // Flush any pending updates immediately before completing
       if (wsFlushTimeout.current) {
@@ -868,7 +1035,7 @@ export const Chat = () => {
         wsFlushTimeout.current = null;
       }
       flushWsPendingUpdate();
-      
+
       setTimeout(() => {
         homeDispatch({ field: 'messageIsStreaming', value: false });
         // Clear active tracking when response is complete
@@ -929,11 +1096,11 @@ export const Chat = () => {
     // Process message based on type using pure helpers
     // Use pending messages as base if available for same conversation, otherwise use target conversation
     const pending = wsPendingUpdate.current;
-    let baseMessages = 
+    let baseMessages =
       (pending && pending.conversationId === message.conversation_id)
         ? pending.messages
         : targetConversation.messages;
-    
+
     let updatedMessages = baseMessages;
     updatedMessages = processSystemResponseMessage(message, updatedMessages);
     updatedMessages = processIntermediateStepMessage(message, updatedMessages);
@@ -1022,6 +1189,361 @@ export const Chat = () => {
     ],
   );
 
+  const handleImageSearchSend = useCallback(
+    async (
+      message: Message,
+      imageContent: string,
+    ): Promise<void> => {
+      const conversation =
+        selectedConversationRef.current;
+
+      if (!conversation) {
+        toast.error(
+          '이미지 검색을 수행할 대화가 없습니다.',
+        );
+        return;
+      }
+
+      if (!isSearchSidebarContext()) {
+        toast.error(
+          '이미지 유사도 검색은 Search 메뉴에서만 사용할 수 있습니다.',
+        );
+        return;
+      }
+
+      const contentType =
+        getAttachmentContentType(
+          message,
+          imageContent,
+        );
+
+      const allowedContentTypes = new Set([
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+      ]);
+
+      if (!allowedContentTypes.has(contentType)) {
+        toast.error(
+          'JPEG, PNG, WEBP 이미지만 검색할 수 있습니다.',
+        );
+        return;
+      }
+
+      const imageBase64 =
+        stripImageDataUriPrefix(imageContent);
+
+      if (!imageBase64) {
+        toast.error(
+          '첨부된 이미지 데이터가 비어 있습니다.',
+        );
+        return;
+      }
+
+      homeDispatch({
+        field: 'loading',
+        value: true,
+      });
+
+      homeDispatch({
+        field: 'messageIsStreaming',
+        value: true,
+      });
+
+      onMessageSubmitted?.();
+
+      const userMessage: Message = {
+        ...stripUploadConversationScope(message),
+        id: uuidv4(),
+        content:
+          typeof message.content === 'string' &&
+            message.content.trim()
+            ? message.content
+            : '업로드한 이미지와 유사한 장면을 검색해줘',
+      };
+
+      /*
+       * base64 데이터가 sessionStorage에 저장되지 않도록
+       * 대화 기록에는 attachment content를 제거합니다.
+       */
+      if (userMessage.attachment) {
+        userMessage.attachment = {
+          ...userMessage.attachment,
+          content: '',
+        };
+      }
+
+      let pendingConversation: Conversation = {
+        ...conversation,
+        messages: [
+          ...conversation.messages,
+          userMessage,
+        ],
+        isHomepageConversation: undefined,
+      };
+
+      selectedConversationRef.current =
+        pendingConversation;
+
+      homeDispatch({
+        field: 'selectedConversation',
+        value: pendingConversation,
+      });
+
+      try {
+        const ownedVideoIds =
+          await fetchOwnedVideoIdsForSearch();
+
+        /*
+         * /api/image-search는 앞서 추가한
+         * Next.js API route입니다.
+         */
+        const response = await fetch(
+          '/api/image-search',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
+            credentials: 'include',
+            signal:
+              controllerRef.current.signal,
+            body: JSON.stringify({
+              imageBase64,
+              contentType,
+              maxResults: 10,
+              minSimilarity: 0.1,
+              sensorIds: ownedVideoIds,
+            }),
+          },
+        );
+
+        const responseText =
+          await response.text();
+
+        let responsePayload:
+          | ImageSearchApiResponse
+          | {
+            message?: string;
+            detail?: unknown;
+          } = {};
+
+        if (responseText) {
+          try {
+            responsePayload =
+              JSON.parse(responseText);
+          } catch {
+            responsePayload = {
+              message: responseText,
+            };
+          }
+        }
+
+        if (!response.ok) {
+          const errorMessage =
+            'message' in responsePayload &&
+              typeof responsePayload.message ===
+              'string'
+              ? responsePayload.message
+              : `이미지 검색 요청 실패: ${response.status}`;
+
+          throw new Error(errorMessage);
+        }
+
+        const normalizedResult =
+          normalizeImageSearchResponse(
+            responsePayload as ImageSearchApiResponse,
+          );
+
+        /*
+         * 기존 SearchResultsMessage가 JSON 결과를 감지할 수 있도록
+         * 기존 Search API 출력 형식과 같은 마커를 사용합니다.
+         */
+        const assistantContent = [
+          '**Search API result (JSON):**',
+          '```json',
+          JSON.stringify(
+            normalizedResult,
+            null,
+            2,
+          ),
+          '```',
+        ].join('\n');
+
+        const assistantMessage: Message = {
+          id: uuidv4(),
+          role: 'assistant',
+          content: assistantContent,
+        };
+
+        const completedConversation: Conversation = {
+          ...pendingConversation,
+          messages: [
+            ...pendingConversation.messages,
+            assistantMessage,
+          ],
+        };
+
+        const currentConversations =
+          conversationsRef.current || [];
+
+        const conversationExists =
+          currentConversations.some(
+            (item) =>
+              item.id ===
+              completedConversation.id,
+          );
+
+        const updatedConversations =
+          conversationExists
+            ? currentConversations.map(
+              (item) =>
+                item.id ===
+                  completedConversation.id
+                  ? completedConversation
+                  : item,
+            )
+            : [
+              ...currentConversations,
+              completedConversation,
+            ];
+
+        selectedConversationRef.current =
+          completedConversation;
+
+        conversationsRef.current =
+          updatedConversations;
+
+        homeDispatch({
+          field: 'selectedConversation',
+          value: completedConversation,
+        });
+
+        homeDispatch({
+          field: 'conversations',
+          value: updatedConversations,
+        });
+
+        saveConversation(
+          completedConversation,
+          storageKeyPrefix,
+        );
+
+        saveConversations(
+          updatedConversations,
+          storageKeyPrefix,
+        );
+
+        onAnswerComplete?.();
+
+        handleCompletedAnswerWithContent(
+          assistantContent,
+        );
+      } catch (error) {
+        if (
+          (error as { name?: string })
+            ?.name === 'AbortError'
+        ) {
+          return;
+        }
+
+        console.error(
+          'Image similarity search failed:',
+          error,
+        );
+
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : '이미지 유사도 검색 중 오류가 발생했습니다.';
+
+        toast.error(errorMessage);
+
+        const assistantErrorMessage: Message = {
+          id: uuidv4(),
+          role: 'assistant',
+          content:
+            `이미지 유사도 검색에 실패했습니다.\n\n${errorMessage}`,
+        };
+
+        const failedConversation: Conversation = {
+          ...pendingConversation,
+          messages: [
+            ...pendingConversation.messages,
+            assistantErrorMessage,
+          ],
+        };
+
+        const currentConversations =
+          conversationsRef.current || [];
+
+        const updatedConversations =
+          currentConversations.some(
+            (item) =>
+              item.id ===
+              failedConversation.id,
+          )
+            ? currentConversations.map(
+              (item) =>
+                item.id ===
+                  failedConversation.id
+                  ? failedConversation
+                  : item,
+            )
+            : [
+              ...currentConversations,
+              failedConversation,
+            ];
+
+        selectedConversationRef.current =
+          failedConversation;
+
+        conversationsRef.current =
+          updatedConversations;
+
+        homeDispatch({
+          field: 'selectedConversation',
+          value: failedConversation,
+        });
+
+        homeDispatch({
+          field: 'conversations',
+          value: updatedConversations,
+        });
+
+        saveConversation(
+          failedConversation,
+          storageKeyPrefix,
+        );
+
+        saveConversations(
+          updatedConversations,
+          storageKeyPrefix,
+        );
+      } finally {
+        homeDispatch({
+          field: 'loading',
+          value: false,
+        });
+
+        homeDispatch({
+          field: 'messageIsStreaming',
+          value: false,
+        });
+      }
+    },
+    [
+      storageKeyPrefix,
+      homeDispatch,
+      fetchOwnedVideoIdsForSearch,
+      isSearchSidebarContext,
+      onMessageSubmitted,
+      onAnswerComplete,
+      handleCompletedAnswerWithContent,
+    ],
+  );
+
   const handleSend = useCallback(
     async (message: Message, deleteCount = 0, retry = false) => {
       if (
@@ -1104,7 +1626,7 @@ export const Chat = () => {
           const conversationExists = currentConversations.some(
             c => c.id === selectedConversation.id
           );
-          
+
           let updatedConversations: Conversation[];
           if (conversationExists) {
             // Update existing conversation
@@ -1118,10 +1640,10 @@ export const Chat = () => {
             // Add new conversation if it doesn't exist in the array
             updatedConversations = [...currentConversations, updatedConversation];
           }
-          
+
           // Update the ref immediately to prevent race condition with incoming WebSocket messages
           conversationsRef.current = updatedConversations;
-          
+
           homeDispatch({
             field: 'conversations',
             value: updatedConversations,
@@ -1140,15 +1662,15 @@ export const Chat = () => {
                       text: message?.content?.trim() || '',
                     },
                     ...(typeof message?.content === 'object' &&
-                    message?.content &&
-                    'attachments' in message.content &&
-                    (message.content as any).attachments?.length > 0
+                      message?.content &&
+                      'attachments' in message.content &&
+                      (message.content as any).attachments?.length > 0
                       ? (message.content as any).attachments?.map(
-                          (attachment: any) => ({
-                            type: 'image',
-                            image_url: attachment?.content,
-                          })
-                        )
+                        (attachment: any) => ({
+                          type: 'image',
+                          image_url: attachment?.content,
+                        })
+                      )
                       : []),
                   ],
                 };
@@ -1159,7 +1681,7 @@ export const Chat = () => {
           else {
             chatMessages = [
               updatedConversation?.messages[
-                updatedConversation?.messages?.length - 1
+              updatedConversation?.messages?.length - 1
               ],
             ].map(message => {
               return {
@@ -1174,7 +1696,7 @@ export const Chat = () => {
             });
           }
 
-                              const wsMessage = {
+          const wsMessage = {
             // Spread custom params first so fixed fields take precedence
             ...(customAgentParamsRef.current || {}),
             type: webSocketMessageTypes.userMessage,
@@ -1540,7 +2062,7 @@ export const Chat = () => {
             }
 
             console.log(`[STREAMING] HTTP response complete detected at: ${new Date().toISOString()} (${performance.now().toFixed(2)}ms)`);
-            
+
             saveConversation(updatedConversation, storageKeyPrefix);
             const updatedConversations: Conversation[] = conversations.map(
               conversation => {
@@ -1628,6 +2150,7 @@ export const Chat = () => {
       onAnswerComplete,
       handleCompletedAnswerWithContent,
       onMessageSubmitted,
+      isSearchSidebarContext,
     ]
   );
 
@@ -1688,7 +2211,7 @@ export const Chat = () => {
 
     const conversation = selectedConversationRef.current;
     const allConversations = conversationsRef.current;
-    
+
     if (!conversation) return;
 
     const { messages } = conversation;
@@ -1696,7 +2219,7 @@ export const Chat = () => {
 
     // Create a copy of messages to avoid mutating state directly
     const updatedMessages = [...messages];
-    
+
     // If next message is assistant response, delete both
     if (
       messageIndex < updatedMessages.length - 1 &&
@@ -1717,11 +2240,11 @@ export const Chat = () => {
       allConversations || [],
       storageKeyPrefix,
     );
-    
+
     // Update refs immediately to prevent stale state
     selectedConversationRef.current = single;
     conversationsRef.current = all;
-    
+
     homeDispatch({ field: 'selectedConversation', value: single });
     homeDispatch({ field: 'conversations', value: all });
   }, [storageKeyPrefix, homeDispatch]); // Refs for latest state; prefix for correct storage
@@ -1952,36 +2475,58 @@ export const Chat = () => {
           })}
           {loading && <ChatLoader statusUpdateText={`Thinking...`} />}
           <div
-            className={`bg-white dark:bg-black ${
-              (selectedConversation?.messages?.length ?? 0) > 0 || loading
+            className={`bg-white dark:bg-black ${(selectedConversation?.messages?.length ?? 0) > 0 || loading
                 ? 'h-[162px]'
                 : 'h-0'
-            }`}
+              }`}
             ref={messagesEndRef}
           ></div>
         </div>
         <ChatInput
           textareaRef={textareaRef}
           queryContextItems={queryContextItems}
-          onRemoveQueryContext={handleRemoveQueryContext}
+          onRemoveQueryContext={
+            handleRemoveQueryContext
+          }
           chatBlocked={uploadFlowActive}
-          getActiveConversationId={getActiveConversationId}
-          onUploadFlowActiveChange={reportUploadFlowActive}
-          onSend={async (message, customParams) => {
-            const items = queryContextRef.current;
-                    
+          getActiveConversationId={
+            getActiveConversationId
+          }
+          onUploadFlowActiveChange={
+            reportUploadFlowActive
+          }
+          onSend={async (
+            message,
+            customParams,
+          ) => {
+            const imageAttachmentContent =
+              getImageAttachmentContent(message);
+          
+            const items =
+              queryContextRef.current;
+          
             if (items.length > 0) {
-              const contextJson = JSON.stringify(
-                items.map(({ data }) => {
-                  const { contextType: _omitUiContextType, ...payload } = {
-                    ...(data as Record<string, unknown>),
-                  };
-                  return payload;
-                }),
-              );
-            
-              const prefix = `[Context: ${contextJson}]`;
-            
+              const contextJson =
+                JSON.stringify(
+                  items.map(({ data }) => {
+                    const {
+                      contextType:
+                        _omitUiContextType,
+                      ...payload
+                    } = {
+                      ...(data as Record<
+                        string,
+                        unknown
+                      >),
+                    };
+                  
+                    return payload;
+                  }),
+                );
+              
+              const prefix =
+                `[Context: ${contextJson}]`;
+              
               message = {
                 ...message,
                 content: message.content
@@ -1994,32 +2539,82 @@ export const Chat = () => {
           
             setCurrentMessage(message);
           
-            customAgentParamsRef.current = await buildSearchAwareCustomParams(
-              customParams,
-            );
-          
-            handleSend(message, 0);
-          }}
-          onScrollDownClick={handleScrollDown}
-          onRegenerate={async () => {
-            customAgentParamsRef.current = await buildSearchAwareCustomParams(
-              customAgentParamsRef.current,
-            );
-          
-            if (currentMessage && currentMessage?.role === 'user') {
-              handleSend(currentMessage, 0);
-            } else {
-              const lastUserMessage = fetchLastMessage({
-                messages: selectedConversation?.messages || [],
-                role: 'user',
-              });
+            if (
+              imageAttachmentContent &&
+              isSearchSidebarContext()
+            ) {
+              await handleImageSearchSend(
+                message,
+                imageAttachmentContent,
+              );
             
-              lastUserMessage && handleSend(lastUserMessage, 1);
+              return;
+            }
+          
+            customAgentParamsRef.current =
+              await buildSearchAwareCustomParams(
+                customParams,
+              );
+            
+            await handleSend(message, 0);
+          }}
+          onScrollDownClick={
+            handleScrollDown
+          }
+          onRegenerate={async () => {
+            customAgentParamsRef.current =
+              await buildSearchAwareCustomParams(
+                customAgentParamsRef.current,
+              );
+            
+            if (
+              currentMessage &&
+              currentMessage.role === 'user'
+            ) {
+              /*
+               * 이미지 content는 대화 저장 시 제거되므로
+               * 이미지 검색 메시지는 regenerate할 수 없습니다.
+               */
+              const imageContent =
+                getImageAttachmentContent(
+                  currentMessage,
+                );
+              
+              if (imageContent) {
+                toast.error(
+                  '이미지 검색을 다시 실행하려면 이미지를 다시 첨부해주세요.',
+                );
+                return;
+              }
+            
+              await handleSend(
+                currentMessage,
+                0,
+              );
+            } else {
+              const lastUserMessage =
+                fetchLastMessage({
+                  messages:
+                    selectedConversation?.messages ||
+                    [],
+                  role: 'user',
+                });
+              
+              if (lastUserMessage) {
+                await handleSend(
+                  lastUserMessage,
+                  1,
+                );
+              }
             }
           }}
-          showScrollDownButton={showScrollDownButton}
+          showScrollDownButton={
+            showScrollDownButton
+          }
           controller={controllerRef}
-          onStopConversation={handleStopConversation}
+          onStopConversation={
+            handleStopConversation
+          }
         />
         <InteractionModal
           isOpen={modalOpen}

@@ -32,23 +32,31 @@ general:
       rtvi_embed_es_index: ${ELASTIC_SEARCH_INDEX}
       # Nemotron Nano Omni: set ENABLE_AUDIO=true so VST keeps the audio track during upload transcoding.
       enable_audio: ${ENABLE_AUDIO:-false}
-    endpoints:
-    - path: /api/v1/search
-      method: POST
-      description: "Search for a video by query"
-      function_name: search
-    - path: /api/v1/attribute_search
-      method: POST
-      description: "Search for objects by visual attributes"
-      function_name: attribute_search
-    - path: /api/v1/embed_search
-      method: POST
-      description: "Direct embedding search (bypasses agent)"
-      function_name: embed_search
-    - path: /api/v1/critic
-      method: POST
-      description: "Score video clips with critic agent"
-      function_name: critic_agent
+      endpoints:
+      - path: /api/v1/search
+        method: POST
+        description: "Search for a video by query"
+        function_name: search
+
+      - path: /api/v1/attribute_search
+        method: POST
+        description: "Search for objects by visual attributes"
+        function_name: attribute_search
+
+      - path: /api/v1/embed_search
+        method: POST
+        description: "Direct embedding search (bypasses agent)"
+        function_name: embed_search
+
+      - path: /api/v1/image_search
+        method: POST
+        description: "Search for scenes similar to an uploaded image"
+        function_name: image_search
+
+      - path: /api/v1/critic
+        method: POST
+        description: "Score video clips with critic agent"
+        function_name: critic_agent
     cors:
       allow_origins: ['*']
       allow_methods: ['*']
@@ -114,6 +122,24 @@ functions:
     time_format: offset
     # Nemotron Nano Omni: set ENABLE_AUDIO=true so VST passes disableAudio=false on clip URLs.
     enable_audio: ${ENABLE_AUDIO:-false}
+    
+  image_search:
+    _type: image_search
+
+    cosmos_embed_endpoint: ${COSMOS_EMBED_ENDPOINT}
+    es_endpoint: ${ELASTIC_SEARCH_ENDPOINT}
+    es_index: ${ELASTIC_SEARCH_INDEX}
+
+    vst_external_url: ${VST_EXTERNAL_URL}
+    vst_internal_url: ${VST_INTERNAL_URL}
+
+    embedding_field: llm.visionEmbeddings.vector
+    embedding_nested_path: llm.visionEmbeddings
+    embedding_dimensions: 768
+
+    default_max_results: 10
+    default_num_candidates: 100
+    max_image_size_bytes: 10485760
 
   embed_search:
     _type: embed_search

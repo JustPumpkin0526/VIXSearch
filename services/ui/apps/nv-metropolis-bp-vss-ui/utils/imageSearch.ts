@@ -1,0 +1,199 @@
+import type {
+  NextApiRequest,
+  NextApiResponse,
+} from 'next';
+
+type ImageSearchRequest = {
+  imageBase64?: string;
+  contentType?: string;
+  maxResults?: number;
+  minSimilarity?: number;
+  sensorIds?: string[];
+  startTime?: string;
+  endTime?: string;
+};
+
+type AgentImageSearchRequest = {
+  image_base64: string;
+  content_type: string;
+  max_results: number;
+  min_similarity?: number;
+  sensor_ids?: string[];
+  start_time?: string;
+  end_time?: string;
+};
+
+type ErrorResponse = {
+  message: string;
+  detail?: unknown;
+};
+
+const MAX_BASE64_LENGTH = 15 * 1024 * 1024;
+
+function resolveAgentBaseUrl(): string {
+  const value =
+    process.env.VSS_AGENT_URL ||
+    process.env.NEXT_PUBLIC_VSS_AGENT_URL ||
+    process.env.NEXT_PUBLIC_AGENT_URL;
+
+  if (!value) {
+    throw new Error(
+      'VSS Agent URL is not configured. ' +
+        'Set VSS_AGENT_URL in the UI environment.',
+    );
+  }
+
+  return value.replace(/\/+$/, '');
+}
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<unknown | ErrorResponse>,
+): Promise<void> {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+
+    res.status(405).json({
+      message: 'Method not allowed',
+    });
+
+    return;
+  }
+
+  const body = req.body as ImageSearchRequest;
+
+  if (
+    !body.imageBase64 ||
+    typeof body.imageBase64 !== 'string'
+  ) {
+    res.status(400).json({
+      message: 'imageBase64 is required',
+    });
+
+    return;
+  }
+
+  if (body.imageBase64.length > MAX_BASE64_LENGTH) {
+    res.status(413).json({
+      message: 'Uploaded image is too large',
+    });
+
+    return;
+  }
+
+  const contentType =
+    body.contentType || 'image/jpeg';
+
+  const allowedTypes = new Set([
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+  ]);
+
+  if (!allowedTypes.has(contentType)) {
+    res.status(415).json({
+      message:
+        'Only JPEG, PNG and WEBP images are supported',
+    });
+
+    return;
+  }
+
+  const maxResults = Math.min(
+    Math.max(body.maxResults || 10, 1),
+    100,
+  );
+
+  const agentRequest: AgentImageSearchRequest = {
+    image_base64: body.imageBase64,
+    content_type: contentType,
+    max_results: maxResults,
+  };
+
+  if (
+    typeof body.minSimilarity === 'number'
+  ) {
+    agentRequest.min_similarity =
+      body.minSimilarity;
+  }
+
+  if (
+    Array.isArray(body.sensorIds) &&
+    body.sensorIds.length > 0
+  ) {
+    agentRequest.sensor_ids =
+      body.sensorIds.filter(
+        (value): value is string =>
+          typeof value === 'string' &&
+          value.trim().length > 0,
+      );
+  }
+
+  if (body.startTime) {
+    agentRequest.start_time = body.startTime;
+  }
+
+  if (body.endTime) {
+    agentRequest.end_time = body.endTime;
+  }
+
+  try {
+    const agentBaseUrl = resolveAgentBaseUrl();
+
+    const response = await fetch(
+      `${agentBaseUrl}/api/v1/image_search`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(agentRequest),
+      },
+    );
+
+    const responseText = await response.text();
+
+    let responseBody: unknown;
+
+    try {
+      responseBody = responseText
+        ? JSON.parse(responseText)
+        : {};
+    } catch {
+      responseBody = {
+        message: responseText,
+      };
+    }
+
+    if (!response.ok) {
+      res.status(response.status).json({
+        message: 'Image similarity search failed',
+        detail: responseBody,
+      });
+
+      return;
+    }
+
+    res.status(200).json(responseBody);
+  } catch (error) {
+    console.error(
+      'Image search API route failed:',
+      error,
+    );
+
+    res.status(500).json({
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unexpected image search error',
+    });
+  }
+}
+
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '20mb',
+    },
+  },
+};

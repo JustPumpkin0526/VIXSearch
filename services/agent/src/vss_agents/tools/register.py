@@ -1,4 +1,5 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,11 +13,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from . import attribute_search
 from . import chart_generator
 from . import embed_search
 from . import fov_counts_with_chart
 from . import geolocation
+from . import image_search
 from . import incidents
 from . import lvs_config_media
 from . import lvs_stream_understanding
@@ -40,6 +43,7 @@ __all__ = [
     "embed_search",
     "fov_counts_with_chart",
     "geolocation",
+    "image_search",
     "incidents",
     "lvs_config_media",
     "lvs_stream_understanding",

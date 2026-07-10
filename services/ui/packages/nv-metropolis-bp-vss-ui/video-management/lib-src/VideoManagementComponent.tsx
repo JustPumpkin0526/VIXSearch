@@ -357,6 +357,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
 
         // Step 1: Chunked upload directly to the video storage service
         // (bypasses agent, avoids Cloudflare 100s timeout on large files)
+        
         const uploadEndpoints = createApiEndpoints(vstApiUrl);
         const videoUploadApiResponse = await chunkedUpload({
           file,
