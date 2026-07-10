@@ -133,13 +133,27 @@ functions:
     vst_external_url: ${VST_EXTERNAL_URL}
     vst_internal_url: ${VST_INTERNAL_URL}
 
+    # Elasticsearch embedding mapping
     embedding_field: llm.visionEmbeddings.vector
     embedding_nested_path: llm.visionEmbeddings
     embedding_dimensions: 768
 
+    # Elasticsearch metadata fields
+    sensor_filter_field: sensor.id.keyword
+    start_time_field: start
+    end_time_field: end
+
+    # Result and KNN limits
     default_max_results: 10
     default_num_candidates: 100
+    maximum_knn_results: 200
+    maximum_num_candidates: 500
+
+    # Maximum decoded image size: 10 MB
     max_image_size_bytes: 10485760
+
+    # Prevent unrestricted search when user-owned sensor IDs are missing
+    require_sensor_ids: true
 
   embed_search:
     _type: embed_search

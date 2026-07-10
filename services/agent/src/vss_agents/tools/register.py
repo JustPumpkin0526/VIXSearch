@@ -35,6 +35,7 @@ from . import video_caption
 from . import video_report_gen
 from . import video_understanding
 from . import vss_summarize
+from . import image_search
 from .code_executor.python_executor import python_executor
 
 __all__ = [
@@ -60,4 +61,5 @@ __all__ = [
     "video_report_gen",
     "video_understanding",
     "vss_summarize",
+    "image_search",
 ]

@@ -175,75 +175,116 @@ type ImageSearchApiResponse = {
   search_type?: string;
 };
 
+type ImageAttachment = {
+  content?: unknown;
+  type?: unknown;
+  mimeType?: unknown;
+  contentType?: unknown;
+  name?: unknown;
+};
+
+function getImageAttachment(
+  message: Message,
+): ImageAttachment | null {
+  const messageWithAttachments = message as Message & {
+    attachment?: ImageAttachment;
+    attachments?: ImageAttachment[];
+  };
+
+  const singleAttachment =
+    messageWithAttachments.attachment;
+
+  if (
+    singleAttachment &&
+    (
+      singleAttachment.type === 'image' ||
+      (
+        typeof singleAttachment.contentType === 'string' &&
+        singleAttachment.contentType.startsWith('image/')
+      ) ||
+      (
+        typeof singleAttachment.mimeType === 'string' &&
+        singleAttachment.mimeType.startsWith('image/')
+      ) ||
+      (
+        typeof singleAttachment.content === 'string' &&
+        singleAttachment.content.startsWith('data:image/')
+      )
+    )
+  ) {
+    return singleAttachment;
+  }
+
+  const multipleAttachments =
+    Array.isArray(messageWithAttachments.attachments)
+      ? messageWithAttachments.attachments
+      : [];
+
+  return (
+    multipleAttachments.find(
+      attachment =>
+        attachment?.type === 'image' ||
+        (
+          typeof attachment?.contentType === 'string' &&
+          attachment.contentType.startsWith('image/')
+        ) ||
+        (
+          typeof attachment?.mimeType === 'string' &&
+          attachment.mimeType.startsWith('image/')
+        ) ||
+        (
+          typeof attachment?.content === 'string' &&
+          attachment.content.startsWith('data:image/')
+        ),
+    ) || null
+  );
+}
+
 function getImageAttachmentContent(
   message: Message,
 ): string | null {
-  const attachment = message.attachment as
-    | {
-      content?: unknown;
-      type?: unknown;
-      mimeType?: unknown;
-      contentType?: unknown;
-      name?: unknown;
-    }
-    | undefined;
+  const attachment =
+    getImageAttachment(message);
 
   if (
     !attachment ||
-    typeof attachment.content !== 'string' ||
-    !attachment.content.trim()
+    typeof attachment.content !== 'string'
   ) {
     return null;
   }
 
-  const contentType =
-    typeof attachment.contentType === 'string'
-      ? attachment.contentType
-      : typeof attachment.mimeType === 'string'
-        ? attachment.mimeType
-        : typeof attachment.type === 'string'
-          ? attachment.type
-          : '';
+  const content =
+    attachment.content.trim();
 
-  const content = attachment.content.trim();
-
-  const isImage =
-    content.startsWith('data:image/') ||
-    contentType.startsWith('image/');
-
-  return isImage ? content : null;
+  return content || null;
 }
 
 function getAttachmentContentType(
   message: Message,
   imageContent: string,
 ): string {
-  const attachment = message.attachment as
-    | {
-      type?: unknown;
-      mimeType?: unknown;
-      contentType?: unknown;
-    }
-    | undefined;
+  const attachment =
+    getImageAttachment(message);
 
   const configuredType =
     typeof attachment?.contentType === 'string'
       ? attachment.contentType
       : typeof attachment?.mimeType === 'string'
         ? attachment.mimeType
-        : typeof attachment?.type === 'string'
-          ? attachment.type
-          : '';
+        : '';
 
   if (configuredType.startsWith('image/')) {
-    return configuredType;
+    return configuredType.toLowerCase();
   }
 
   const dataUriMatch = imageContent.match(
     /^data:(image\/[a-zA-Z0-9.+-]+);base64,/,
   );
 
-  return dataUriMatch?.[1] || 'image/jpeg';
+  return (
+    dataUriMatch?.[1]?.toLowerCase() ||
+    'image/jpeg'
+  );
 }
 
 function stripImageDataUriPrefix(
@@ -259,6 +300,37 @@ function stripImageDataUriPrefix(
   }
 
   return imageContent;
+}
+
+function removeAttachmentContents(
+  message: Message,
+): Message {
+  const clonedMessage =
+    JSON.parse(JSON.stringify(message)) as Message & {
+      attachment?: ImageAttachment;
+      attachments?: ImageAttachment[];
+  };
+
+  if (clonedMessage.attachment) {
+    clonedMessage.attachment = {
+      ...clonedMessage.attachment,
+      content: '',
+    };
+  }
+
+  if (
+    Array.isArray(clonedMessage.attachments)
+  ) {
+    clonedMessage.attachments =
+      clonedMessage.attachments.map(
+        attachment => ({
+          ...attachment,
+          content: '',
+        }),
+      );
+  }
+
+  return clonedMessage;
 }
 
 function normalizeImageSearchResponse(
@@ -508,6 +580,65 @@ export const Chat = () => {
   const controllerRef = useRef(new AbortController());
   const selectedConversationRef = useRef(selectedConversation);
   const conversationsRef = useRef(conversations);
+  
+  const persistConversationState =
+  useCallback(
+    (
+      conversation: Conversation,
+    ) => {
+      const currentConversations =
+        conversationsRef.current || [];
+
+      const exists =
+        currentConversations.some(
+          item =>
+            item.id === conversation.id,
+        );
+
+      const updatedConversations =
+        exists
+          ? currentConversations.map(
+              item =>
+                item.id === conversation.id
+                  ? conversation
+                  : item,
+            )
+          : [
+              ...currentConversations,
+              conversation,
+            ];
+
+      selectedConversationRef.current =
+        conversation;
+
+      conversationsRef.current =
+        updatedConversations;
+
+      homeDispatch({
+        field: 'selectedConversation',
+        value: conversation,
+      });
+
+      homeDispatch({
+        field: 'conversations',
+        value: updatedConversations,
+      });
+
+      saveConversation(
+        conversation,
+        storageKeyPrefix,
+      );
+
+      saveConversations(
+        updatedConversations,
+        storageKeyPrefix,
+      );
+    },
+    [
+      homeDispatch,
+      storageKeyPrefix,
+    ],
+  );
 
   const [modalOpen, setModalOpen] = useState(false);
   const [interactionMessage, setInteractionMessage] = useState(null);
@@ -1252,26 +1383,20 @@ export const Chat = () => {
 
       onMessageSubmitted?.();
 
+      const messageWithoutAttachmentContent =
+        removeAttachmentContents(
+          stripUploadConversationScope(message),
+        );
+      
       const userMessage: Message = {
-        ...stripUploadConversationScope(message),
+        ...messageWithoutAttachmentContent,
         id: uuidv4(),
         content:
           typeof message.content === 'string' &&
-            message.content.trim()
+          message.content.trim()
             ? message.content
             : '업로드한 이미지와 유사한 장면을 검색해줘',
       };
-
-      /*
-       * base64 데이터가 sessionStorage에 저장되지 않도록
-       * 대화 기록에는 attachment content를 제거합니다.
-       */
-      if (userMessage.attachment) {
-        userMessage.attachment = {
-          ...userMessage.attachment,
-          content: '',
-        };
-      }
 
       let pendingConversation: Conversation = {
         ...conversation,
@@ -1282,17 +1407,19 @@ export const Chat = () => {
         isHomepageConversation: undefined,
       };
 
-      selectedConversationRef.current =
-        pendingConversation;
-
-      homeDispatch({
-        field: 'selectedConversation',
-        value: pendingConversation,
-      });
+      persistConversationState(
+        pendingConversation,
+      );
 
       try {
         const ownedVideoIds =
           await fetchOwnedVideoIdsForSearch();
+
+        if (ownedVideoIds.length === 0) {
+          throw new Error(
+            '검색 가능한 소유 영상이 없거나 영상 접근 권한을 확인하지 못했습니다.',
+          );
+        }
 
         /*
          * /api/image-search는 앞서 추가한
@@ -1385,54 +1512,8 @@ export const Chat = () => {
           ],
         };
 
-        const currentConversations =
-          conversationsRef.current || [];
-
-        const conversationExists =
-          currentConversations.some(
-            (item) =>
-              item.id ===
-              completedConversation.id,
-          );
-
-        const updatedConversations =
-          conversationExists
-            ? currentConversations.map(
-              (item) =>
-                item.id ===
-                  completedConversation.id
-                  ? completedConversation
-                  : item,
-            )
-            : [
-              ...currentConversations,
-              completedConversation,
-            ];
-
-        selectedConversationRef.current =
-          completedConversation;
-
-        conversationsRef.current =
-          updatedConversations;
-
-        homeDispatch({
-          field: 'selectedConversation',
-          value: completedConversation,
-        });
-
-        homeDispatch({
-          field: 'conversations',
-          value: updatedConversations,
-        });
-
-        saveConversation(
+        persistConversationState(
           completedConversation,
-          storageKeyPrefix,
-        );
-
-        saveConversations(
-          updatedConversations,
-          storageKeyPrefix,
         );
 
         onAnswerComplete?.();
@@ -1475,51 +1556,8 @@ export const Chat = () => {
           ],
         };
 
-        const currentConversations =
-          conversationsRef.current || [];
-
-        const updatedConversations =
-          currentConversations.some(
-            (item) =>
-              item.id ===
-              failedConversation.id,
-          )
-            ? currentConversations.map(
-              (item) =>
-                item.id ===
-                  failedConversation.id
-                  ? failedConversation
-                  : item,
-            )
-            : [
-              ...currentConversations,
-              failedConversation,
-            ];
-
-        selectedConversationRef.current =
-          failedConversation;
-
-        conversationsRef.current =
-          updatedConversations;
-
-        homeDispatch({
-          field: 'selectedConversation',
-          value: failedConversation,
-        });
-
-        homeDispatch({
-          field: 'conversations',
-          value: updatedConversations,
-        });
-
-        saveConversation(
+        persistConversationState(
           failedConversation,
-          storageKeyPrefix,
-        );
-
-        saveConversations(
-          updatedConversations,
-          storageKeyPrefix,
         );
       } finally {
         homeDispatch({
@@ -1534,13 +1572,13 @@ export const Chat = () => {
       }
     },
     [
-      storageKeyPrefix,
       homeDispatch,
       fetchOwnedVideoIdsForSearch,
       isSearchSidebarContext,
       onMessageSubmitted,
       onAnswerComplete,
       handleCompletedAnswerWithContent,
+      persistConversationState,
     ],
   );
 
@@ -1585,10 +1623,7 @@ export const Chat = () => {
         } else {
           // remove content from attachment since it could a large base64 encoded string which can cause session stroage overflow
           // Clone the message and update the attachment contentconst updateMessage = JSON.parse(JSON.stringify(message));
-          const updateMessage = JSON.parse(JSON.stringify(messageWithNewId));
-          if (updateMessage?.attachment) {
-            updateMessage.attachment.content = '';
-          }
+          const updateMessage = removeAttachmentContents(messageWithNewId,);
           updatedConversation = {
             ...selectedConversation,
             messages: [...selectedConversation.messages, { ...updateMessage }],
@@ -2611,7 +2646,6 @@ export const Chat = () => {
           showScrollDownButton={
             showScrollDownButton
           }
-          controller={controllerRef}
           onStopConversation={
             handleStopConversation
           }

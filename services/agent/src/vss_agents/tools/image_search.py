@@ -1,15 +1,15 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
-# All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026,
+# NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
-import asyncio
 import base64
+import binascii
 from collections.abc import AsyncGenerator
-from datetime import UTC
-from datetime import datetime
+from datetime import UTC, datetime
 import logging
+import math
 import re
 from typing import Any
 
@@ -19,9 +19,7 @@ from nat.builder.framework_enum import LLMFrameworkEnum
 from nat.builder.function_info import FunctionInfo
 from nat.cli.register_workflow import register_function
 from nat.data_models.function import FunctionBaseConfig
-from pydantic import BaseModel
-from pydantic import Field
-from pydantic import field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from vss_agents.embed.cosmos_embed import CosmosEmbedClient
 from vss_agents.tools.vst.snapshot import build_screenshot_url
@@ -29,6 +27,7 @@ from vss_agents.utils.es_client import VSSESClient
 from vss_agents.utils.time_convert import datetime_to_iso8601
 from vss_agents.utils.time_convert import iso8601_to_datetime
 from vss_agents.utils.uuid_string import is_standard_uuid_string
+
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +38,20 @@ ALLOWED_IMAGE_TYPES = {
     "image/png",
     "image/webp",
 }
+
+DATA_URI_PATTERN = re.compile(
+    r"^data:(image/[a-zA-Z0-9.+-]+);base64,(.*)$",
+    re.DOTALL,
+)
+
+UUID_PATTERN = re.compile(
+    r"[0-9a-f]{8}-"
+    r"[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-"
+    r"[0-9a-f]{12}",
+    re.IGNORECASE,
+)
 
 
 class ImageSearchConfig(
@@ -69,7 +82,7 @@ class ImageSearchConfig(
 
     vst_internal_url: str | None = Field(
         default=None,
-        description="Internal VST URL. Reserved for future validation.",
+        description="Internal VST URL. Reserved for future use.",
     )
 
     embedding_field: str = Field(
@@ -84,26 +97,65 @@ class ImageSearchConfig(
 
     embedding_dimensions: int = Field(
         default=768,
+        ge=1,
         description="Expected image embedding dimension.",
+    )
+
+    sensor_filter_field: str = Field(
+        default="sensor.id.keyword",
+        description="Elasticsearch field used for sensor access filtering.",
+    )
+
+    start_time_field: str = Field(
+        default="start",
+        description="Scene start-time field in Elasticsearch.",
+    )
+
+    end_time_field: str = Field(
+        default="end",
+        description="Scene end-time field in Elasticsearch.",
     )
 
     default_max_results: int = Field(
         default=10,
         ge=1,
-        le=1000,
+        le=100,
         description="Default number of image search results.",
     )
 
     default_num_candidates: int = Field(
         default=100,
         ge=1,
+        le=1000,
         description="Default Elasticsearch KNN candidate count.",
+    )
+
+    maximum_knn_results: int = Field(
+        default=200,
+        ge=1,
+        le=1000,
+        description="Upper bound for Elasticsearch KNN k.",
+    )
+
+    maximum_num_candidates: int = Field(
+        default=500,
+        ge=1,
+        le=5000,
+        description="Upper bound for Elasticsearch num_candidates.",
     )
 
     max_image_size_bytes: int = Field(
         default=10 * 1024 * 1024,
         ge=1,
         description="Maximum decoded image size.",
+    )
+
+    require_sensor_ids: bool = Field(
+        default=True,
+        description=(
+            "Reject searches without sensor IDs. This prevents a failure "
+            "to resolve user permissions from becoming an unrestricted search."
+        ),
     )
 
 
@@ -114,7 +166,7 @@ class ImageSearchInput(BaseModel):
         ...,
         min_length=1,
         description=(
-            "Base64-encoded image. A full data URI such as "
+            "Base64-encoded image. A complete data URI such as "
             "'data:image/jpeg;base64,...' is also accepted."
         ),
     )
@@ -135,7 +187,7 @@ class ImageSearchInput(BaseModel):
         default=None,
         ge=-1.0,
         le=1.0,
-        description="Minimum cosine similarity in the range -1.0 to 1.0.",
+        description="Minimum cosine similarity from -1.0 to 1.0.",
     )
 
     sensor_ids: list[str] | None = Field(
@@ -165,6 +217,32 @@ class ImageSearchInput(BaseModel):
 
         return normalized
 
+    @field_validator("sensor_ids")
+    @classmethod
+    def normalize_sensor_ids(
+        cls,
+        value: list[str] | None,
+    ) -> list[str] | None:
+        if value is None:
+            return None
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for sensor_id in value:
+            if not isinstance(sensor_id, str):
+                continue
+
+            cleaned = sensor_id.strip()
+
+            if not cleaned or cleaned in seen:
+                continue
+
+            normalized.append(cleaned)
+            seen.add(cleaned)
+
+        return normalized
+
 
 class ImageSearchResultItem(BaseModel):
     """A single image similarity search result."""
@@ -191,7 +269,7 @@ class ImageSearchResultItem(BaseModel):
 
     sensor_id: str = Field(
         default="",
-        description="VST stream UUID.",
+        description="VST stream UUID or sensor ID.",
     )
 
     screenshot_url: str = Field(
@@ -201,6 +279,8 @@ class ImageSearchResultItem(BaseModel):
 
     similarity_score: float = Field(
         default=0.0,
+        ge=-1.0,
+        le=1.0,
         description="Cosine similarity score.",
     )
 
@@ -215,6 +295,7 @@ class ImageSearchOutput(BaseModel):
 
     total: int = Field(
         default=0,
+        ge=0,
         description="Number of returned results.",
     )
 
@@ -224,31 +305,75 @@ class ImageSearchOutput(BaseModel):
     )
 
 
+def _detect_image_content_type(image_bytes: bytes) -> str | None:
+    """Detect supported image MIME type from file signature."""
+
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+
+    if (
+        len(image_bytes) >= 12
+        and image_bytes[:4] == b"RIFF"
+        and image_bytes[8:12] == b"WEBP"
+    ):
+        return "image/webp"
+
+    return None
+
+
 def _decode_image(
     image_base64: str,
     content_type: str,
 ) -> tuple[bytes, str]:
-    """Decode plain base64 or a base64 data URI."""
+    """Decode plain base64 or a base64 image data URI."""
 
     encoded_data = image_base64.strip()
-    detected_content_type = content_type
+    declared_content_type = content_type.lower().strip()
 
-    if encoded_data.startswith("data:image/"):
-        try:
-            header, encoded_data = encoded_data.split(",", 1)
-        except ValueError as exc:
-            raise ValueError("Invalid image data URI.") from exc
+    data_uri_match = DATA_URI_PATTERN.match(encoded_data)
 
-        mime_section = header.split(";", 1)[0]
-        detected_content_type = mime_section.removeprefix("data:")
+    if data_uri_match:
+        declared_content_type = data_uri_match.group(1).lower()
+        encoded_data = data_uri_match.group(2)
+
+    if declared_content_type not in ALLOWED_IMAGE_TYPES:
+        raise ValueError(
+            f"Unsupported declared image content type: {declared_content_type}"
+        )
+
+    # Accept base64 generated by command-line tools that may contain newlines.
+    encoded_data = "".join(encoded_data.split())
+
+    if not encoded_data:
+        raise ValueError("Image base64 data is empty.")
 
     try:
         image_bytes = base64.b64decode(
             encoded_data,
             validate=True,
         )
-    except (ValueError, TypeError) as exc:
+    except (binascii.Error, ValueError, TypeError) as exc:
         raise ValueError("Invalid base64 image.") from exc
+
+    if not image_bytes:
+        raise ValueError("Decoded image is empty.")
+
+    detected_content_type = _detect_image_content_type(image_bytes)
+
+    if detected_content_type is None:
+        raise ValueError(
+            "The decoded file is not a supported JPEG, PNG or WEBP image."
+        )
+
+    if detected_content_type != declared_content_type:
+        raise ValueError(
+            "Image content type does not match the decoded file: "
+            f"declared={declared_content_type}, "
+            f"detected={detected_content_type}"
+        )
 
     return image_bytes, detected_content_type
 
@@ -261,35 +386,76 @@ def _build_image_data_uri(
     return f"data:{content_type};base64,{encoded}"
 
 
+def _parse_request_time(
+    value: str | None,
+    field_name: str,
+) -> datetime | None:
+    if value is None:
+        return None
+
+    try:
+        return iso8601_to_datetime(value)
+    except Exception as exc:
+        raise ValueError(
+            f"{field_name} must be a valid ISO 8601 datetime."
+        ) from exc
+
+
+def _validate_time_range(
+    request: ImageSearchInput,
+) -> None:
+    start_time = _parse_request_time(
+        request.start_time,
+        "start_time",
+    )
+    end_time = _parse_request_time(
+        request.end_time,
+        "end_time",
+    )
+
+    if (
+        start_time is not None
+        and end_time is not None
+        and start_time > end_time
+    ):
+        raise ValueError(
+            "start_time must be earlier than or equal to end_time."
+        )
+
+
 def _build_filter_clauses(
     request: ImageSearchInput,
+    config: ImageSearchConfig,
 ) -> list[dict[str, Any]]:
+    """Build parent-document filters for the KNN search."""
+
     filters: list[dict[str, Any]] = []
 
-    if request.sensor_ids:
-        sensor_ids = [
-            sensor_id.strip()
-            for sensor_id in request.sensor_ids
-            if sensor_id and sensor_id.strip()
-        ]
+    sensor_ids = request.sensor_ids or []
 
-        if sensor_ids:
-            filters.append(
-                {
-                    "terms": {
-                        "sensor.id.keyword": sensor_ids,
-                    }
+    if config.require_sensor_ids and not sensor_ids:
+        raise ValueError(
+            "No allowed sensor IDs were supplied. "
+            "Image search was blocked to prevent unrestricted index access."
+        )
+
+    if sensor_ids:
+        filters.append(
+            {
+                "terms": {
+                    config.sensor_filter_field: sensor_ids,
                 }
-            )
+            }
+        )
 
-    # Return scenes overlapping the requested range:
-    # document start <= requested end
-    # document end >= requested start
+    # Scene overlap rule:
+    # document.end >= requested start
+    # document.start <= requested end
     if request.start_time:
         filters.append(
             {
                 "range": {
-                    "end": {
+                    config.end_time_field: {
                         "gte": request.start_time,
                     }
                 }
@@ -300,7 +466,7 @@ def _build_filter_clauses(
         filters.append(
             {
                 "range": {
-                    "timestamp": {
+                    config.start_time_field: {
                         "lte": request.end_time,
                     }
                 }
@@ -310,6 +476,42 @@ def _build_filter_clauses(
     return filters
 
 
+def _validate_embedding(
+    query_embedding: Any,
+    expected_dimensions: int,
+) -> list[float]:
+    if not isinstance(query_embedding, (list, tuple)):
+        raise ValueError(
+            "Cosmos Embed returned an invalid embedding type."
+        )
+
+    if len(query_embedding) != expected_dimensions:
+        raise ValueError(
+            "Image embedding dimension mismatch: "
+            f"expected={expected_dimensions}, "
+            f"actual={len(query_embedding)}"
+        )
+
+    normalized_embedding: list[float] = []
+
+    for index, value in enumerate(query_embedding):
+        if not isinstance(value, (int, float)):
+            raise ValueError(
+                f"Image embedding contains a non-numeric value at index {index}."
+            )
+
+        numeric_value = float(value)
+
+        if not math.isfinite(numeric_value):
+            raise ValueError(
+                f"Image embedding contains a non-finite value at index {index}."
+            )
+
+        normalized_embedding.append(numeric_value)
+
+    return normalized_embedding
+
+
 def _build_es_query(
     query_embedding: list[float],
     request: ImageSearchInput,
@@ -317,23 +519,29 @@ def _build_es_query(
 ) -> dict[str, Any]:
     """Build a nested Elasticsearch KNN query."""
 
-    if len(query_embedding) != config.embedding_dimensions:
-        raise ValueError(
-            "Image embedding dimension mismatch: "
-            f"expected={config.embedding_dimensions}, "
-            f"actual={len(query_embedding)}"
-        )
-
-    max_results = request.max_results or config.default_max_results
-
-    # Overfetch because similarity filtering and invalid documents may
-    # remove results during post-processing.
-    k_value = max_results * 5
-
-    num_candidates = max(
-        config.default_num_candidates,
-        k_value * 2,
+    max_results = (
+        request.max_results
+        or config.default_max_results
     )
+
+    # Overfetch to compensate for post-filtering and invalid documents.
+    k_value = min(
+        max(max_results * 5, max_results),
+        config.maximum_knn_results,
+    )
+
+    num_candidates = min(
+        max(
+            config.default_num_candidates,
+            k_value * 2,
+            k_value,
+        ),
+        config.maximum_num_candidates,
+    )
+
+    # Elasticsearch requires num_candidates >= k.
+    if num_candidates < k_value:
+        num_candidates = k_value
 
     knn_query: dict[str, Any] = {
         "field": config.embedding_field,
@@ -345,10 +553,12 @@ def _build_es_query(
     nested_query: dict[str, Any] = {
         "nested": {
             "path": config.embedding_nested_path,
+            "score_mode": "max",
             "query": {
                 "knn": knn_query,
             },
             "inner_hits": {
+                "name": "best_vision_embedding",
                 "size": 1,
                 "_source": {
                     "excludes": [
@@ -359,80 +569,105 @@ def _build_es_query(
         }
     }
 
-    filters = _build_filter_clauses(request)
+    filters = _build_filter_clauses(
+        request=request,
+        config=config,
+    )
+
+    query: dict[str, Any]
 
     if filters:
-        query_body: dict[str, Any] = {
-            "query": {
-                "bool": {
-                    "must": [
-                        nested_query,
-                    ],
-                    "filter": filters,
-                }
-            },
-            "size": k_value,
+        query = {
+            "bool": {
+                "must": [
+                    nested_query,
+                ],
+                "filter": filters,
+            }
         }
     else:
-        query_body = {
-            "query": nested_query,
-            "size": k_value,
-        }
+        query = nested_query
 
-    query_body["_source"] = {
-        "excludes": [
-            config.embedding_field,
-        ]
+    return {
+        "size": k_value,
+        "track_total_hits": False,
+        "query": query,
+        "_source": {
+            "excludes": [
+                config.embedding_field,
+            ]
+        },
     }
-
-    return query_body
 
 
 def _extract_stream_id(
     source: dict[str, Any],
 ) -> str:
-    sensor = source.get("sensor", {}) or {}
-    sensor_info = sensor.get("info", {}) or {}
-    info = source.get("info", {}) or {}
+    sensor = source.get("sensor") or {}
+    sensor_info = sensor.get("info") or {}
+    info = source.get("info") or {}
 
-    sensor_id = str(sensor.get("id", "") or "")
+    sensor_id = str(sensor.get("id") or "").strip()
+
     video_path = str(
-        sensor_info.get("path", "")
-        or sensor_info.get("url", "")
+        sensor_info.get("path")
+        or sensor_info.get("url")
         or ""
     )
 
     possible_stream_ids = [
         sensor.get("stream_id"),
+        sensor.get("streamId"),
         info.get("streamId"),
         info.get("sensorId"),
     ]
 
     for value in possible_stream_ids:
-        if value and is_standard_uuid_string(str(value)):
-            return str(value)
+        candidate = str(value or "").strip()
 
-    uuid_pattern = (
-        r"[0-9a-f]{8}-"
-        r"[0-9a-f]{4}-"
-        r"[0-9a-f]{4}-"
-        r"[0-9a-f]{4}-"
-        r"[0-9a-f]{12}"
-    )
+        if (
+            candidate
+            and is_standard_uuid_string(candidate)
+        ):
+            return candidate
 
-    uuid_match = re.search(
-        uuid_pattern,
-        video_path,
-        re.IGNORECASE,
-    )
+    uuid_match = UUID_PATTERN.search(video_path)
 
     if uuid_match:
         return uuid_match.group(0)
 
-    if sensor_id:
-        return sensor_id
+    return sensor_id
 
-    return ""
+
+def _extract_video_name(
+    source: dict[str, Any],
+    stream_id: str,
+) -> str:
+    sensor = source.get("sensor") or {}
+    sensor_info = sensor.get("info") or {}
+    info = source.get("info") or {}
+
+    explicit_name = (
+        source.get("video_name")
+        or source.get("videoName")
+        or info.get("streamId")
+    )
+
+    if explicit_name:
+        return str(explicit_name)
+
+    video_path = str(
+        sensor_info.get("path")
+        or sensor_info.get("url")
+        or ""
+    ).strip()
+
+    if video_path:
+        return video_path.rstrip("/").split("/")[-1]
+
+    sensor_id = str(sensor.get("id") or "").strip()
+
+    return sensor_id or stream_id
 
 
 def _normalize_time(
@@ -453,72 +688,88 @@ def _normalize_time(
         return str(value)
 
 
-async def _process_search_hit(
+def _score_to_cosine_similarity(
+    score: Any,
+) -> float:
+    try:
+        normalized_score = float(score)
+    except (TypeError, ValueError):
+        normalized_score = 0.0
+
+    # For indexed cosine dense_vector fields:
+    # Elasticsearch score = (1 + cosine_similarity) / 2
+    cosine_similarity = (2.0 * normalized_score) - 1.0
+
+    # Protect the output model from small floating-point overflows.
+    cosine_similarity = max(
+        -1.0,
+        min(1.0, cosine_similarity),
+    )
+
+    return round(cosine_similarity, 4)
+
+
+def _process_search_hit(
     hit: dict[str, Any],
     config: ImageSearchConfig,
     minimum_similarity: float,
 ) -> ImageSearchResultItem | None:
+    """Convert one Elasticsearch hit into an API result."""
+
     try:
-        # Elasticsearch cosine KNN score is normalized:
-        # score = (1 + cosine_similarity) / 2
-        similarity_score = round(
-            (2.0 * float(hit.get("_score", 0.0))) - 1.0,
-            4,
+        similarity_score = _score_to_cosine_similarity(
+            hit.get("_score"),
         )
 
         if similarity_score < minimum_similarity:
             return None
 
-        source = hit.get("_source", {}) or {}
-        sensor = source.get("sensor", {}) or {}
-        sensor_info = sensor.get("info", {}) or {}
+        source = hit.get("_source") or {}
+        sensor = source.get("sensor") or {}
 
-        if "llm" not in source:
+        stream_id = _extract_stream_id(source)
+
+        if not stream_id:
             logger.warning(
-                "Skipping result without llm field: %s",
+                "Skipping image search result without a usable stream ID: %s",
                 hit.get("_id", "unknown"),
             )
             return None
 
-        sensor_id_raw = str(sensor.get("id", "") or "")
-        stream_id = _extract_stream_id(source)
-
-        video_path = str(
-            sensor_info.get("path", "")
-            or sensor_info.get("url", "")
-            or ""
+        video_name = _extract_video_name(
+            source=source,
+            stream_id=stream_id,
         )
-
-        if video_path:
-            video_name = video_path.rstrip("/").split("/")[-1]
-        else:
-            video_name = sensor_id_raw or stream_id
 
         description = str(
-            sensor.get("description", "")
+            sensor.get("description")
             or ""
         )
 
-        # Existing embed_search.py uses timestamp as the result start time
-        # and end as the result end time.
+        # Use the actual scene start first.
         start_time = _normalize_time(
-            source.get("timestamp")
-            or source.get("start")
+            source.get(config.start_time_field)
+            or source.get("timestamp")
         )
 
         end_time = _normalize_time(
-            source.get("end")
+            source.get(config.end_time_field)
+            or source.get(config.start_time_field)
             or source.get("timestamp")
-            or source.get("start")
         )
 
         screenshot_url = ""
 
-        if stream_id:
+        try:
             screenshot_url = build_screenshot_url(
                 config.vst_external_url,
                 stream_id,
                 start_time,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to build VST screenshot URL for stream %s.",
+                stream_id,
             )
 
         return ImageSearchResultItem(
@@ -549,7 +800,11 @@ async def image_search(
 ) -> AsyncGenerator[FunctionInfo]:
     """Register image similarity search."""
 
-    logger.info("Image search config: %s", config)
+    logger.info(
+        "Initializing image search: index=%s, embedding_field=%s",
+        config.es_index,
+        config.embedding_field,
+    )
 
     es = await VSSESClient.get_es_client(
         es_endpoint=config.es_endpoint,
@@ -564,36 +819,22 @@ async def image_search(
     ) -> ImageSearchOutput:
         """Search stored video scenes using an uploaded image.
 
-        The image is embedded with Cosmos Embed and compared directly
-        against vision embeddings stored in Elasticsearch.
-
-        Input:
-        - image_base64: Required base64 image or image data URI.
-        - content_type: image/jpeg, image/png or image/webp.
-        - max_results: Maximum result count.
-        - min_similarity: Minimum cosine similarity from -1.0 to 1.0.
-        - sensor_ids: Optional list of allowed sensor IDs.
-        - start_time: Optional ISO 8601 search start.
-        - end_time: Optional ISO 8601 search end.
+        The uploaded image is embedded with Cosmos Embed and compared
+        directly against vision embeddings stored in Elasticsearch.
         """
 
-        image_bytes, detected_content_type = _decode_image(
-            request.image_base64,
-            request.content_type,
-        )
+        _validate_time_range(request)
 
-        if not image_bytes:
-            raise ValueError("Uploaded image is empty.")
+        image_bytes, detected_content_type = _decode_image(
+            image_base64=request.image_base64,
+            content_type=request.content_type,
+        )
 
         if len(image_bytes) > config.max_image_size_bytes:
             raise ValueError(
                 "Image exceeds maximum allowed size: "
-                f"{config.max_image_size_bytes} bytes."
-            )
-
-        if detected_content_type not in ALLOWED_IMAGE_TYPES:
-            raise ValueError(
-                f"Unsupported image content type: {detected_content_type}"
+                f"maximum={config.max_image_size_bytes} bytes, "
+                f"actual={len(image_bytes)} bytes."
             )
 
         index_exists = bool(
@@ -608,24 +849,43 @@ async def image_search(
                 config.es_index,
             )
 
-            return ImageSearchOutput(
-                results=[],
-                total=0,
-            )
+            return ImageSearchOutput()
 
         image_data_uri = _build_image_data_uri(
-            image_bytes,
-            detected_content_type,
+            image_bytes=image_bytes,
+            content_type=detected_content_type,
         )
 
-        query_embedding = await embed_client.get_image_embedding(
-            image_data_uri,
+        try:
+            raw_embedding = (
+                await embed_client.get_image_embedding(
+                    image_data_uri,
+                )
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to generate image embedding."
+            )
+            raise RuntimeError(
+                "Cosmos Embed failed to generate an image embedding."
+            ) from exc
+
+        query_embedding = _validate_embedding(
+            query_embedding=raw_embedding,
+            expected_dimensions=config.embedding_dimensions,
         )
 
         es_query = _build_es_query(
             query_embedding=query_embedding,
             request=request,
             config=config,
+        )
+
+        logger.debug(
+            "Executing image search: index=%s, max_results=%s, sensor_count=%s",
+            config.es_index,
+            request.max_results or config.default_max_results,
+            len(request.sensor_ids or []),
         )
 
         try:
@@ -638,13 +898,25 @@ async def image_search(
                 "Image search index '%s' was not found.",
                 config.es_index,
             )
-
-            return ImageSearchOutput(
-                results=[],
-                total=0,
+            return ImageSearchOutput()
+        except Exception as exc:
+            logger.exception(
+                "Elasticsearch image similarity search failed."
             )
+            raise RuntimeError(
+                "Elasticsearch image similarity search failed."
+            ) from exc
 
-        hits = response["hits"]["hits"]
+        hits_container = response.get("hits") or {}
+        hits = hits_container.get("hits") or []
+
+        if not isinstance(hits, list):
+            logger.error(
+                "Elasticsearch returned an invalid hits structure."
+            )
+            raise RuntimeError(
+                "Elasticsearch returned an invalid search response."
+            )
 
         minimum_similarity = (
             request.min_similarity
@@ -652,22 +924,27 @@ async def image_search(
             else -1.0
         )
 
-        tasks = [
-            _process_search_hit(
+        results: list[ImageSearchResultItem] = []
+
+        for hit in hits:
+            if not isinstance(hit, dict):
+                continue
+
+            result = _process_search_hit(
                 hit=hit,
                 config=config,
                 minimum_similarity=minimum_similarity,
             )
-            for hit in hits
-        ]
 
-        processed_results = await asyncio.gather(*tasks)
+            if result is not None:
+                results.append(result)
 
-        results = [
-            result
-            for result in processed_results
-            if result is not None
-        ]
+        # Elasticsearch normally returns scores in descending order,
+        # but sort explicitly after score conversion for predictable output.
+        results.sort(
+            key=lambda item: item.similarity_score,
+            reverse=True,
+        )
 
         max_results = (
             request.max_results
@@ -677,7 +954,7 @@ async def image_search(
         results = results[:max_results]
 
         logger.info(
-            "Image search returned %d results.",
+            "Image search returned %d result(s).",
             len(results),
         )
 
@@ -686,7 +963,7 @@ async def image_search(
             total=len(results),
         )
 
-       try:
+    try:
         yield FunctionInfo.create(
             single_fn=_image_search,
             description=_image_search.__doc__,
