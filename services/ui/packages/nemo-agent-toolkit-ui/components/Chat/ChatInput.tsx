@@ -9,7 +9,6 @@ import {
   IconTrash,
   IconMicrophone,
   IconPlayerStopFilled,
-  IconUpload,
   IconBrain,
   IconVideo,
   IconX,
@@ -35,7 +34,7 @@ import { Message, QueryDataContext } from '@/types/chat';
 
 import HomeContext from '@/pages/api/home/home.context';
 import { isQueryProcessing } from '@/utils/app/queryProcessing';
-import { ChatFileUpload } from './ChatFileUpload';
+// Chat file upload UI removed per product request
 import {
   CustomAgentParams,
   CustomAgentParamsValues,
@@ -918,40 +917,6 @@ export const ChatInput = ({
               </div>
             </div>
           )}
-          {appConfig?.fileUploadEnabled && !inputFile && (
-            <>
-              <button
-                type="button"
-                className={`absolute top-2 rounded-sm p-1 text-neutral-800 opacity-60 hover:text-[#76b900] disabled:cursor-not-allowed disabled:opacity-40 dark:text-neutral-100 ${
-                  paramFields.length > 0
-                    ? 'right-[72px]'
-                    : 'right-10'
-                }`}
-                onClick={triggerFileUpload}
-                disabled={
-                  chatBlocked ||
-                  messageIsStreaming
-                }
-                aria-label="Attach search image"
-                title="이미지 기반 유사도 검색"
-              >
-                {!messageIsStreaming && (
-                  <IconPhoto size={18} />
-                )}
-              </button>
-              <input
-                type="file"
-                ref={fileInputRef}
-                accept="image/jpeg,image/png,image/webp"
-                style={{ display: 'none' }}
-                onChange={handleFileChange}
-                disabled={
-                  chatBlocked ||
-                  messageIsStreaming
-                }
-              />
-            </>
-          )}
           {hasLeftButtons && (
             <div className="absolute left-2 top-2 flex gap-1">
               {chatInputMicEnabled && (
@@ -974,37 +939,37 @@ export const ChatInput = ({
                 </button>
               )}
               {chatUploadFileEnabled && (
-                <ChatFileUpload
-                  uploadFlowSourceId="chat-input"
-                  getActiveConversationId={getActiveConversationId}
-                  onUploadFlowActiveChange={onUploadFlowActiveChange}
-                  onSendHiddenMessage={(message, uploadConversationId) => {
-                    onSend(
-                      {
-                        role: 'user',
-                        content: message,
-                        hidden: true,
-                        uploadConversationId,
-                      },
-                      fieldsToParams(paramFields),
-                    );
-                  }}
-                  disabled={uploadDisabled}
-                  onUploadBatchComplete={onChatVideoUploadComplete}
-                >
-                  {({ triggerUpload }) => (
-                    <button
-                      onClick={triggerUpload}
-                      className={`rounded-sm p-[5px] text-neutral-800 opacity-60 dark:bg-opacity-50 dark:text-neutral-100 ${uploadDisabled
-                          ? 'text-neutral-400'
-                          : 'hover:text-[#76b900] dark:hover:text-neutral-200'
-                        }`}
-                      disabled={uploadDisabled}
-                    >
-                      <IconUpload size={18} />
-                    </button>
-                  )}
-                </ChatFileUpload>
+                <>
+                  <button
+                    type="button"
+                    className={`rounded-sm p-[5px] text-neutral-800 opacity-60 dark:bg-opacity-50 dark:text-neutral-100 ${uploadDisabled
+                        ? 'text-neutral-400'
+                        : 'hover:text-[#76b900] dark:hover:text-neutral-200'
+                      }`}
+                    onClick={triggerFileUpload}
+                    disabled={
+                      chatBlocked ||
+                      messageIsStreaming
+                    }
+                    aria-label="Attach search image"
+                    title="이미지 기반 유사도 검색"
+                  >
+                    {!messageIsStreaming && (
+                      <IconPhoto size={18} />
+                    )}
+                  </button>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept="image/jpeg,image/png,image/webp"
+                    style={{ display: 'none' }}
+                    onChange={handleFileChange}
+                    disabled={
+                      chatBlocked ||
+                      messageIsStreaming
+                    }
+                  />
+                </>
               )}
             </div>
           )}
