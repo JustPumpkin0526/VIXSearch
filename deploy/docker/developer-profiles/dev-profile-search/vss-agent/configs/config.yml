@@ -22,6 +22,7 @@ general:
     streaming_ingest:
       vst_internal_url: ${VST_INTERNAL_URL}
       vst_external_url: ${VST_EXTERNAL_URL}
+      cosmos_embed_endpoint: ${COSMOS_EMBED_ENDPOINT}
       # storage in place when an RTSP stream is removed.
       delete_vst_storage_on_stream_remove: false
       rtvi_embed_base_url: http://${HOST_IP}:${RTVI_EMBED_PORT}

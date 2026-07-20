@@ -37,10 +37,7 @@ type ErrorResponse = {
 const MAX_BASE64_LENGTH = 15 * 1024 * 1024;
 
 function resolveAgentBaseUrl(): string {
-  const value =
-    process.env.VSS_AGENT_URL ||
-    process.env.NEXT_PUBLIC_VSS_AGENT_URL ||
-    process.env.NEXT_PUBLIC_AGENT_URL;
+  const value = process.env.VSS_AGENT_URL;
 
   if (!value) {
     throw new Error(
