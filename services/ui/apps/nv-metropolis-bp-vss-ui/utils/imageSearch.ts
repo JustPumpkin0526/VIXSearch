@@ -11,6 +11,9 @@ type ImageSearchRequest = {
   sensorIds?: string[];
   startTime?: string;
   endTime?: string;
+  bbox?: number[]; // normalized [x,y,w,h]
+  croppedImageBase64?: string;
+  objectQuery?: string;
 };
 
 type AgentImageSearchRequest = {
@@ -21,6 +24,9 @@ type AgentImageSearchRequest = {
   sensor_ids?: string[];
   start_time?: string;
   end_time?: string;
+  bbox?: number[];
+  cropped_image_base64?: string;
+  object_query?: string;
 };
 
 type ErrorResponse = {
@@ -135,6 +141,18 @@ export default async function handler(
 
   if (body.endTime) {
     agentRequest.end_time = body.endTime;
+  }
+
+  if (Array.isArray((body as any).bbox) && (body as any).bbox.length === 4) {
+    (agentRequest as any).bbox = (body as any).bbox.map((v: unknown) => Number(v));
+  }
+
+  if (typeof (body as any).croppedImageBase64 === 'string') {
+    (agentRequest as any).cropped_image_base64 = (body as any).croppedImageBase64;
+  }
+
+  if (typeof (body as any).objectQuery === 'string') {
+    (agentRequest as any).object_query = (body as any).objectQuery;
   }
 
   try {

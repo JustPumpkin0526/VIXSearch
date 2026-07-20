@@ -119,3 +119,34 @@ class CustomFastApiFrontEndWorker(FastApiFrontEndPluginWorker):
         register_rtsp_ingest_routes(app, self.config)
         register_rtsp_delete_routes(app, self.config)
         register_video_delete_routes(app, self.config)
+        # Register optional image-detect route for whole-image auto-detection
+        try:
+            from vss_agents.api.image_detect import create_image_detect_router
+
+            rtvi_cv_url = getattr(streaming_config, "rtvi_cv_base_url", "")
+            rtvi_cv_timeout = getattr(streaming_config, "rtvi_cv_timeout_seconds", None)
+
+            if rtvi_cv_url:
+                app.include_router(create_image_detect_router(rtvi_cv_base_url=rtvi_cv_url, rtvi_cv_timeout_seconds=rtvi_cv_timeout))
+                logger.info("Registered POST /api/v1/image_detect (RTVI-CV)")
+            else:
+                logger.info("RTVI-CV not configured; skipping image-detect route")
+        except Exception:
+            logger.exception("Failed to register image-detect route")
+
+        # Register optional image-search route (exposes /api/v1/image_search)
+        try:
+            from vss_agents.api.image_search_api import create_image_search_router
+
+            cosmos_url = getattr(streaming_config, "cosmos_embed_endpoint", "")
+            es_url = getattr(streaming_config, "elasticsearch_url", "")
+            es_index = getattr(streaming_config, "rtvi_embed_es_index", "") or None
+            vst_external = getattr(streaming_config, "vst_external_url", "")
+
+            if cosmos_url and es_url and vst_external:
+                app.include_router(create_image_search_router(cosmos_embed_endpoint=cosmos_url, es_endpoint=es_url, es_index=es_index, vst_external_url=vst_external))
+                logger.info("Registered POST /api/v1/image_search (image similarity)")
+            else:
+                logger.info("Image search not configured; skipping image-search route")
+        except Exception:
+            logger.exception("Failed to register image-search route")

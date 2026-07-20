@@ -2,8 +2,6 @@
 # NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from __future__ import annotations
-
 import base64
 import binascii
 from collections.abc import AsyncGenerator
@@ -11,6 +9,7 @@ from datetime import UTC, datetime
 import logging
 import math
 import re
+import io
 from typing import Any
 
 from elasticsearch import NotFoundError as ESNotFoundError
@@ -27,6 +26,11 @@ from vss_agents.utils.es_client import VSSESClient
 from vss_agents.utils.time_convert import datetime_to_iso8601
 from vss_agents.utils.time_convert import iso8601_to_datetime
 from vss_agents.utils.uuid_string import is_standard_uuid_string
+
+try:  # Pillow is optional at runtime; provide clear error if cropping requested but not installed
+    from PIL import Image
+except Exception:  # pragma: no cover - defensive
+    Image = None
 
 
 logger = logging.getLogger(__name__)
@@ -203,6 +207,29 @@ class ImageSearchInput(BaseModel):
     end_time: str | None = Field(
         default=None,
         description="Search range end time in ISO 8601 format.",
+    )
+
+    bbox: list[float] | None = Field(
+        default=None,
+        description=(
+            "Optional normalized bounding box to crop before embedding: "
+            "[x, y, w, h] where values are in the 0..1 range."
+        ),
+    )
+
+    cropped_image_base64: str | None = Field(
+        default=None,
+        description=(
+            "Optional pre-cropped image base64 (data URI or raw base64). If provided, "
+            "it is used directly instead of server-side cropping."
+        ),
+    )
+
+    object_query: str | None = Field(
+        default=None,
+        description=(
+            "Optional textual refinement for hybrid search (e.g. 'red car', 'two people')."
+        ),
     )
 
     @field_validator("content_type")
@@ -384,6 +411,73 @@ def _build_image_data_uri(
 ) -> str:
     encoded = base64.b64encode(image_bytes).decode("ascii")
     return f"data:{content_type};base64,{encoded}"
+
+
+def _crop_image_by_normalized_bbox(image_bytes: bytes, bbox: list[float]) -> tuple[bytes, str]:
+    """Crop image bytes by normalized bbox [x, y, w, h] and return bytes and detected content type.
+
+    Raises ValueError on invalid bbox. Raises RuntimeError when Pillow is not installed.
+    """
+    if Image is None:
+        raise RuntimeError(
+            "Server-side cropping requires Pillow. Install with 'pip install pillow'."
+        )
+
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        raise ValueError("bbox must be a list of four floats: [x, y, w, h].")
+
+    try:
+        x, y, w, h = [float(v) for v in bbox]
+    except Exception as exc:
+        raise ValueError("bbox values must be numeric.") from exc
+
+    if not (0 <= x <= 1 and 0 <= y <= 1 and 0 <= w <= 1 and 0 <= h <= 1):
+        raise ValueError("bbox values must be normalized in the 0..1 range.")
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            img = img.convert("RGB")
+            img_w, img_h = img.size
+
+            left = int(round(x * img_w))
+            top = int(round(y * img_h))
+            right = int(round((x + w) * img_w))
+            bottom = int(round((y + h) * img_h))
+
+            # Clamp
+            left = max(0, min(left, img_w - 1))
+            top = max(0, min(top, img_h - 1))
+            right = max(left + 1, min(right, img_w))
+            bottom = max(top + 1, min(bottom, img_h))
+
+            cropped = img.crop((left, top, right, bottom))
+
+            buf = io.BytesIO()
+            cropped.save(buf, format="JPEG")
+            cropped_bytes = buf.getvalue()
+
+            detected = _detect_image_content_type(cropped_bytes) or "image/jpeg"
+            return cropped_bytes, detected
+    except Exception as exc:
+        raise RuntimeError("Failed to crop image on server.") from exc
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+
+    dot = 0.0
+    na = 0.0
+    nb = 0.0
+    for x, y in zip(a, b):
+        dot += x * y
+        na += x * x
+        nb += y * y
+
+    if na <= 0 or nb <= 0:
+        return 0.0
+
+    return dot / (math.sqrt(na) * math.sqrt(nb))
 
 
 def _parse_request_time(
@@ -825,10 +919,32 @@ async def image_search(
 
         _validate_time_range(request)
 
-        image_bytes, detected_content_type = _decode_image(
-            image_base64=request.image_base64,
-            content_type=request.content_type,
-        )
+        # Determine image bytes to embed. Support three modes:
+        # 1) `cropped_image_base64` provided by client -> use directly
+        # 2) `bbox` provided -> server-side crop original `image_base64`
+        # 3) fallback -> use full `image_base64`
+
+        if request.cropped_image_base64:
+            image_bytes, detected_content_type = _decode_image(
+                image_base64=request.cropped_image_base64,
+                content_type=request.content_type,
+            )
+        elif request.bbox is not None:
+            # Decode original image, then crop server-side
+            original_bytes, original_content_type = _decode_image(
+                image_base64=request.image_base64,
+                content_type=request.content_type,
+            )
+
+            image_bytes, detected_content_type = _crop_image_by_normalized_bbox(
+                original_bytes,
+                request.bbox,
+            )
+        else:
+            image_bytes, detected_content_type = _decode_image(
+                image_base64=request.image_base64,
+                content_type=request.content_type,
+            )
 
         if len(image_bytes) > config.max_image_size_bytes:
             raise ValueError(
@@ -952,6 +1068,50 @@ async def image_search(
         )
 
         results = results[:max_results]
+
+        # If the caller provided an object_query, perform a lightweight
+        # hybrid re-ranking: compute a text embedding for the query and
+        # compare it to candidate screenshot embeddings, then combine
+        # with the image similarity score.
+        if request.object_query:
+            try:
+                text_embedding = await embed_client.get_text_embedding(request.object_query)
+            except Exception:
+                logger.exception("Failed to generate text embedding for object_query")
+                text_embedding = None
+
+            if text_embedding is not None:
+                alpha = 0.7
+                reranked: list[ImageSearchResultItem] = []
+
+                for item in results:
+                    # Default to original score when anything fails
+                    combined_score = item.similarity_score
+
+                    if item.screenshot_url:
+                        try:
+                            candidate_emb = await embed_client.get_image_embedding(item.screenshot_url)
+                            candidate_emb = _validate_embedding(
+                                query_embedding=candidate_emb,
+                                expected_dimensions=config.embedding_dimensions,
+                            )
+
+                            text_sim = _cosine_similarity(text_embedding, candidate_emb)
+
+                            combined_score = (
+                                (alpha * item.similarity_score) + ((1.0 - alpha) * text_sim)
+                            )
+                        except Exception:
+                            logger.debug(
+                                "Hybrid rerank: failed to embed candidate screenshot %s",
+                                item.screenshot_url,
+                            )
+
+                    item.similarity_score = round(max(-1.0, min(1.0, combined_score)), 4)
+                    reranked.append(item)
+
+                reranked.sort(key=lambda it: it.similarity_score, reverse=True)
+                results = reranked
 
         logger.info(
             "Image search returned %d result(s).",
