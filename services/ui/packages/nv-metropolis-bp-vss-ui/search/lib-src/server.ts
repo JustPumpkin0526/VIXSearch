@@ -33,8 +33,7 @@ export async function fetchSearchData() {
     agentApiUrl: AGENT_API_URL_BASE || null,
     vstApiUrl: VST_API_URL || null,
     mdxWebApiUrl: MDX_WEB_API_URL || null,
-    mediaWithObjectsBbox:
-      SEARCH_TAB_MEDIA_WITH_OBJECTS_BBOX === 'true',
+    mediaWithObjectsBbox: SEARCH_TAB_MEDIA_WITH_OBJECTS_BBOX
   };
 }
 
