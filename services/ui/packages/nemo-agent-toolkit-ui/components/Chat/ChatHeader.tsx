@@ -8,12 +8,12 @@ import {
   IconUserFilled,
   IconChevronLeft,
   IconChevronRight,
+  IconUpload,
 } from '@tabler/icons-react';
 import React, { useContext, useState, useRef, useEffect } from 'react';
 
 import { useWorkflowName, useRightMenuOpenDefault } from '@/contexts/RuntimeConfigContext';
 import ChatFileUpload from '@/components/Chat/ChatFileUpload';
-// Chat file upload UI removed per product request
 import { isQueryProcessing } from '@/utils/app/queryProcessing';
 
 import HomeContext from '@/pages/api/home/home.context';
@@ -113,7 +113,48 @@ export const ChatHeader = ({
             How can I assist you today?
           </div>
           
-          {/* Upload UI removed */}
+          {/* File Upload Drop Zone - only show when upload is enabled  */}
+          {chatUploadFileEnabled && uploadProps && (
+            <label
+              htmlFor={uploadProps.fileInputId}
+              className={`
+                w-full max-w-md cursor-pointer rounded-xl border-2 border-dashed p-8 block
+                transition-all duration-300 ease-in-out
+                ${uploadProps.isDragging 
+                  ? 'border-[#76b900] bg-[#76b900]/10 scale-105 shadow-lg shadow-[#76b900]/20' 
+                  : 'border-gray-300 dark:border-gray-600 hover:border-[#76b900] hover:bg-gray-50 dark:hover:bg-black/50'
+                }
+                ${uploadProps.isUploading || uploadDisabled ? 'opacity-50 pointer-events-none' : ''}
+              `}
+            >
+              <div className="flex flex-col items-center gap-4">
+                <div className={`
+                  p-4 rounded-2xl transition-all duration-300
+                  ${uploadProps.isDragging 
+                    ? 'bg-[#76b900]/20 text-[#76b900]' 
+                    : 'bg-[#76b900]/15 text-[#76b900]'
+                  }
+                `}>
+                  <IconUpload size={48} stroke={1.5} />
+                </div>
+                
+                <div data-testid="upload-drop-zone-text" className="text-center">
+                  <p className={`text-base font-medium mb-1 transition-colors duration-300 ${
+                    uploadProps.isDragging 
+                      ? 'text-[#76b900]' 
+                      : 'text-gray-700 dark:text-gray-300'
+                  }`}>
+                    {uploadProps.isDragging ? 'Drop files here' : 'Click or drop files here to upload'}
+                  </p>
+                </div>
+                
+                {/* File type hints */}
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Movie Files (mp4, mkv)
+                </p>
+              </div>
+            </label>
+          )}
         </div>
       )}
 
@@ -262,7 +303,23 @@ export const ChatHeader = ({
     </div>
   );
 
-  return renderHeaderContent();
+  // Conditionally wrap with ChatFileUpload when upload is enabled
+  if (chatUploadFileEnabled) {
+    return (
+      <ChatFileUpload
+        uploadFlowSourceId="chat-header"
+        getActiveConversationId={getActiveConversationId}
+        onUploadFlowActiveChange={onUploadFlowActiveChange}
+        onSendHiddenMessage={onSendHiddenMessage}
+        disabled={uploadDisabled}
+        onUploadBatchComplete={onChatVideoUploadComplete}
+      >
+        {({ triggerFilePicker, fileInputId, isUploading, isDragging, dragHandlers }) => 
+          renderHeaderContent({ triggerFilePicker, fileInputId, isUploading, isDragging, dragHandlers })
+        }
+      </ChatFileUpload>
+    );
+  }
 
   return renderHeaderContent();
 };

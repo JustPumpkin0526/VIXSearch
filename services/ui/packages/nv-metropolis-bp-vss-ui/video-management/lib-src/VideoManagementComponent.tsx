@@ -4,12 +4,16 @@ import type {
   VideoManagementComponentProps,
   UploadProgress,
   StreamInfo,
+  StreamsApiResponse,
   VideoGroup,
 } from './types';
 import { useStreams, useStorageTimelines } from './hooks';
-import { filterStreams, isRtspStream } from './utils';
 import {
-  UploadFilesDialog,
+  filterStreams,
+  isRtspStream,
+  parseStreamsResponse,
+} from './utils';
+import {
   VideoModal,
   useVideoModal,
   useChatVideoUploadCompleteSubscription,
@@ -30,6 +34,95 @@ import {
   VideoManagementSidebarControls,
   AgentUploadDialog,
 } from './components';
+
+async function waitForCanonicalStream(
+  vstApiUrl: string,
+  streamId: string,
+  abortSignal?: AbortSignal,
+): Promise<StreamInfo> {
+  const apiEndpoints = createApiEndpoints(vstApiUrl);
+
+  const maxAttempts = 20;
+  const retryDelayMs = 500;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (abortSignal?.aborted) {
+      throw new DOMException('Request was aborted', 'AbortError');
+    }
+
+    try {
+      const response = await fetch(apiEndpoints.STREAMS, {
+        method: 'GET',
+        cache: 'no-store',
+        signal: abortSignal,
+      });
+
+      if (response.ok) {
+        const payload: StreamsApiResponse = await response.json();
+        const currentStreams = parseStreamsResponse(payload);
+
+        const matchedStream = currentStreams.find(
+          (stream) => stream.streamId === streamId,
+        );
+
+        if (matchedStream?.sensorId) {
+          return matchedStream;
+        }
+      } else {
+        console.warn(
+          '[VideoManagement] failed to fetch VST streams:',
+          response.status,
+        );
+      }
+    } catch (error) {
+      if (
+        error instanceof DOMException &&
+        error.name === 'AbortError'
+      ) {
+        throw error;
+      }
+
+      console.warn(
+        '[VideoManagement] canonical stream lookup failed:',
+        error,
+      );
+    }
+
+    if (attempt < maxAttempts) {
+      await new Promise<void>((resolve, reject) => {
+        const handleAbort = () => {
+          window.clearTimeout(timeoutId);
+
+          reject(
+            new DOMException(
+              'Request was aborted',
+              'AbortError',
+            ),
+          );
+        };
+
+        const timeoutId = window.setTimeout(() => {
+          abortSignal?.removeEventListener(
+            'abort',
+            handleAbort,
+          );
+
+          resolve();
+        }, retryDelayMs);
+
+        abortSignal?.addEventListener(
+          'abort',
+          handleAbort,
+          { once: true },
+        );
+      });
+    }
+  }
+
+  throw new Error(
+    `Failed to resolve sensorId for streamId=${streamId}`,
+  );
+}
 
 export type { VideoManagementComponentProps, VideoManagementSidebarControlHandlers } from './types';
 
@@ -109,41 +202,6 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const uploadAbortControllerRef = useRef<AbortController | null>(null);
   const pendingFilesQueueRef = useRef<Array<{ id: string; file: File }>>([]);
 
-  function pickNonEmptyString(...values: unknown[]): string | null {
-    for (const value of values) {
-      if (typeof value === 'string') {
-        const trimmed = value.trim();
-        if (trimmed) return trimmed;
-      }
-
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        return String(value);
-      }
-    }
-
-    return null;
-  }
-
-  function getUploadVideoId(uploadResponse: any): string | null {
-    // VST 응답에서 stream/video ID로 쓰일 수 있는 값
-    return pickNonEmptyString(
-      uploadResponse?.streamId,
-      uploadResponse?.stream_id,
-      uploadResponse?.video_id,
-      uploadResponse?.videoId,
-      uploadResponse?.id,
-    );
-  }
-
-  function getUploadSensorId(uploadResponse: any): string | null {
-    // VST 응답에서 sensor ID/name으로 쓰일 수 있는 값
-    return pickNonEmptyString(
-      uploadResponse?.sensorId,
-      uploadResponse?.sensor_id,
-      uploadResponse?.sensor,
-    );
-  }
-
   useEffect(() => {
     isUploadingRef.current = isUploading;
   }, [isUploading]);
@@ -160,7 +218,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const { getEndTimeForStream, getLastTimelineForStream, refetch: refetchTimelines } = useStorageTimelines({ vstApiUrl });
   const { videoModal, openVideoModal, closeVideoModal } = useVideoModal(vstApiUrl ?? undefined);
 
-  
+
   const streamsById = useMemo(
     () => new Map(streams.map((stream) => [stream.streamId, stream])),
     [streams],
@@ -196,18 +254,18 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     if (!showVideos) {
       return [];
     }
-  
+
     const normalizedQuery = appliedSearchQuery.trim().toLowerCase();
-  
+
     if (!normalizedQuery) {
       return videoGroups;
     }
-  
+
     return videoGroups.filter((group) => {
       if (group.name.toLowerCase().includes(normalizedQuery)) {
         return true;
       }
-    
+
       return group.sensorIds.some((sensorId) => {
         const streamName = streamsBySensorId.get(sensorId)?.name ?? '';
         return streamName.toLowerCase().includes(normalizedQuery);
@@ -277,21 +335,21 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
 
     const nextGroups: VideoGroup[] = Array.isArray(payload?.groups)
       ? payload.groups
-          .filter((item: any) => Boolean(item?.id) && Array.isArray(item?.sensorIds))
-          .map((item: any) => ({
-            id: String(item.id),
-            name:
-              typeof item.name === 'string' && item.name.trim()
-                ? item.name.trim()
-                : '새 그룹',
-            sensorIds: item.sensorIds
-              .map((sensorId: unknown) => String(sensorId))
-              .filter(Boolean),
-            createdAt:
-              typeof item.createdAt === 'string'
-                ? item.createdAt
-                : new Date().toISOString(),
-          }))
+        .filter((item: any) => Boolean(item?.id) && Array.isArray(item?.sensorIds))
+        .map((item: any) => ({
+          id: String(item.id),
+          name:
+            typeof item.name === 'string' && item.name.trim()
+              ? item.name.trim()
+              : '새 그룹',
+          sensorIds: item.sensorIds
+            .map((sensorId: unknown) => String(sensorId))
+            .filter(Boolean),
+          createdAt:
+            typeof item.createdAt === 'string'
+              ? item.createdAt
+              : new Date().toISOString(),
+        }))
       : [];
 
     setVideoGroups(nextGroups);
@@ -357,7 +415,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
 
         // Step 1: Chunked upload directly to the video storage service
         // (bypasses agent, avoids Cloudflare 100s timeout on large files)
-        
+
         const uploadEndpoints = createApiEndpoints(vstApiUrl);
         const videoUploadApiResponse = await chunkedUpload({
           file,
@@ -396,53 +454,98 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
             typeof window !== 'undefined'
               ? window.localStorage.getItem('vss.auth.token')
               : null;
-                
-          if (token) {
-            const originalFilename = file.name || '';
-            const normalizedFilename =
-              originalFilename.replace(/\.[^.]+$/, '') || originalFilename;
-                      
-            const uploadVideoId = getUploadVideoId(videoUploadApiResponse);
-            const uploadSensorId = getUploadSensorId(videoUploadApiResponse);
 
-            const response = await fetch('/api/videos/complete', {
+          if (!token) {
+            throw new Error(
+              'Missing auth token; cannot persist uploaded video ownership',
+            );
+          }
+
+          const originalFilename = file.name;
+          const normalizedFilename =
+            originalFilename.replace(/\.[^.]+$/, '') ||
+            originalFilename;
+
+          /*
+           * 업로드 응답의 sensorId는 실제 replay sensorId로
+           * 보장되지 않으므로 streamId 기준으로 다시 조회한다.
+           */
+          const canonicalStream = await waitForCanonicalStream(
+            vstApiUrl,
+            videoUploadApiResponse.streamId,
+            abortController.signal,
+          );
+
+          console.log(
+            '[VideoManagement] resolved upload identifiers:',
+            {
+              filename:
+                videoUploadApiResponse.filename,
+            
+              uploadResponseId:
+                videoUploadApiResponse.id,
+            
+              uploadResponseStreamId:
+                videoUploadApiResponse.streamId,
+            
+              uploadResponseSensorId:
+                videoUploadApiResponse.sensorId,
+            
+              canonicalStreamId:
+                canonicalStream.streamId,
+            
+              canonicalSensorId:
+                canonicalStream.sensorId,
+            },
+          );
+
+          const response = await fetch(
+            '/api/videos/complete',
+            {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 Authorization: `Bearer ${token}`,
               },
               body: JSON.stringify({
-                video_id: uploadVideoId,
-                sensor_id: uploadSensorId,
-              
+                video_id: videoUploadApiResponse.id,
+                stream_id: canonicalStream.streamId,
+                sensor_id: canonicalStream.sensorId,
                 filename: normalizedFilename,
-                storage_filename: (videoUploadApiResponse as any).filename ?? originalFilename,
-                video_url:
-                  (videoUploadApiResponse as any).filePath ??
-                  (videoUploadApiResponse as any).url ??
-                  (videoUploadApiResponse as any).video_url ??
-                  null,
-                uploaded_at: new Date().toISOString(),
-                timestamp: new Date().toISOString(),
-                bytes: (videoUploadApiResponse as any).bytes ?? file.size ?? null,
+                storage_filename: videoUploadApiResponse.filename,
+                video_url: videoUploadApiResponse.filePath,
+                file_path: videoUploadApiResponse.filePath,
+                bytes: videoUploadApiResponse.bytes,
+                uploaded_at: videoUploadApiResponse.created_at,
+                timestamp: videoUploadApiResponse.created_at,
               }),
               signal: abortController.signal,
-            });
-          
-            if (!response.ok) {
-              const message = await response.text();
-              console.warn(
-                '[VideoManagement] failed to persist uploaded video ownership:',
-                response.status,
-                message,
-              );
-            }
+            },
+          );
+
+          const responsePayload =
+            await response.json().catch(() => null);
+
+          if (!response.ok) {
+            throw new Error(
+              responsePayload?.error ??
+              `Failed to persist uploaded video ownership: ${response.status}`,
+            );
+          }
+
+          if (responsePayload?.skipped) {
+            throw new Error(
+              responsePayload?.reason ??
+              'Uploaded video ownership record was skipped',
+            );
           }
         } catch (ownershipError) {
-          console.warn(
+          console.error(
             '[VideoManagement] failed to persist uploaded video ownership record',
             ownershipError,
           );
+
+          throw ownershipError;
         }
 
         if (!isSessionValid()) return;
@@ -497,7 +600,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
       refetchTimelinesRef.current(),
       fetchVideoGroups(),
     ]);
-  }, [vstApiUrl, agentApiUrl]);
+  }, [vstApiUrl, agentApiUrl, fetchVideoGroups,]);
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -696,32 +799,32 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
       handleCloseCreateGroupModal();
       return;
     }
-  
+
     if (typeof window === 'undefined') {
       return;
     }
-  
+
     const token = window.localStorage?.getItem('vss.auth.token');
-  
+
     if (!token) {
       console.warn('Missing auth token; cannot persist video group');
       return;
     }
-  
+
     const suggestedName = `그룹 ${videoGroups.length + 1}`;
     const nextName = newGroupName.trim() || suggestedName;
-  
+
     const selectedSensorIds = Array.from(
       new Set(selectedGroupStreams.map((stream) => stream.sensorId).filter(Boolean)),
     );
-  
+
     if (selectedSensorIds.length === 0) {
       handleCloseCreateGroupModal();
       return;
     }
-  
+
     setIsCreatingGroup(true);
-  
+
     try {
       const response = await fetch('/api/videos/groups', {
         method: 'POST',
@@ -734,32 +837,32 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
           sensorIds: selectedSensorIds,
         }),
       });
-    
+
       if (!response.ok) {
         throw new Error(`Failed to create video group: ${response.status}`);
       }
-    
+
       const payload = await response.json();
-    
+
       const nextGroups: VideoGroup[] = Array.isArray(payload?.groups)
         ? payload.groups
-            .filter((item: any) => Boolean(item?.id) && Array.isArray(item?.sensorIds))
-            .map((item: any) => ({
-              id: String(item.id),
-              name:
-                typeof item.name === 'string' && item.name.trim()
-                  ? item.name.trim()
-                  : '새 그룹',
-              sensorIds: item.sensorIds
-                .map((sensorId: unknown) => String(sensorId))
-                .filter(Boolean),
-              createdAt:
-                typeof item.createdAt === 'string'
-                  ? item.createdAt
-                  : new Date().toISOString(),
-            }))
+          .filter((item: any) => Boolean(item?.id) && Array.isArray(item?.sensorIds))
+          .map((item: any) => ({
+            id: String(item.id),
+            name:
+              typeof item.name === 'string' && item.name.trim()
+                ? item.name.trim()
+                : '새 그룹',
+            sensorIds: item.sensorIds
+              .map((sensorId: unknown) => String(sensorId))
+              .filter(Boolean),
+            createdAt:
+              typeof item.createdAt === 'string'
+                ? item.createdAt
+                : new Date().toISOString(),
+          }))
         : [];
-          
+
       setVideoGroups(nextGroups);
       setSelectedStreams(new Set());
       setSelectedGroups(new Set());
@@ -805,41 +908,71 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     setShowDeleteConfirm(false);
   }, [isDeleting]);
 
-  async function deleteUploadedVideoOwnershipRecord(stream: StreamInfo) {
-    if (typeof window === 'undefined') return;
-
-    const token = window.localStorage.getItem('vss.auth.token');
-
-    if (!token) {
-      console.warn('[VideoManagement] Missing auth token; skipping uploaded_videos cleanup');
+  async function deleteUploadedVideoOwnershipRecord(stream: StreamInfo,) {
+    if (typeof window === 'undefined') {
       return;
     }
 
-    const response = await fetch('/api/videos/delete', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+    const token =
+      window.localStorage.getItem(
+        'vss.auth.token',
+      );
+
+    if (!token) {
+      console.warn(
+        '[VideoManagement] Missing auth token; skipping uploaded_videos cleanup',
+      );
+
+      return;
+    }
+
+    const streamUrl =
+      stream.vodUrl ??
+      stream.url ??
+      null;
+
+    const response = await fetch(
+      '/api/videos/delete',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type':
+            'application/json',
+
+          Authorization:
+            `Bearer ${token}`,
+        },
+
+        body: JSON.stringify({
+          stream_id:
+            stream.streamId,
+
+          sensor_id:
+            stream.sensorId,
+
+          filename:
+            stream.name,
+
+          video_url:
+            streamUrl,
+
+          file_path:
+            streamUrl,
+        }),
       },
-      body: JSON.stringify({
-        video_id: stream.streamId || stream.sensorId,
-        videoId: stream.streamId || stream.sensorId,
-            
-        sensor_id: stream.sensorId,
-        sensorId: stream.sensorId,
-            
-        filename: stream.name,
-        video_url: stream.vodUrl ?? stream.url ?? null,
-        filePath: stream.vodUrl ?? stream.url ?? null,
-      }),
-    });
+    );
 
     if (!response.ok) {
-      const message = await response.text().catch(() => '');
+      const responsePayload =
+        await response
+          .json()
+          .catch(() => null);
+
       console.warn(
         '[VideoManagement] failed to delete uploaded_videos ownership record:',
         response.status,
-        message,
+        responsePayload?.error ??
+          responsePayload,
       );
     }
   }
@@ -861,13 +994,13 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     for (const selectedStreamId of selectedStreamIds) {
       const stream = streams.find((s) => s.streamId === selectedStreamId);
       if (!stream) continue;
-    
+
       const deleteId = isRtspStream(stream)
         ? stream.sensorId
         : stream.streamId || stream.sensorId;
-    
+
       if (!deleteId) continue;
-    
+
       const existing = videoIdToStreams.get(deleteId) || [];
       existing.push(stream);
       videoIdToStreams.set(deleteId, existing);
@@ -881,13 +1014,13 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         if (typeof window === 'undefined') {
           throw new Error('Window is unavailable; cannot delete groups');
         }
-      
+
         const token = window.localStorage?.getItem('vss.auth.token');
-      
+
         if (!token) {
           throw new Error('Missing auth token; cannot delete video groups');
         }
-      
+
         const groupDeleteResponse = await fetch('/api/videos/groups', {
           method: 'DELETE',
           headers: {
@@ -898,7 +1031,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
             groupIds: selectedGroupIds,
           }),
         });
-      
+
         if (!groupDeleteResponse.ok) {
           throw new Error(`Failed to delete video groups: ${groupDeleteResponse.status}`);
         }
@@ -912,22 +1045,40 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
           if (!agentApiUrl) {
             throw new Error('Agent API URL not configured for RTSP stream deletion');
           }
-        
-          await deleteRtspStream(agentApiUrl, firstStream.name);
+
+          try {
+            await deleteRtspStream(agentApiUrl, firstStream.name);
+          } finally {
+            if (firstStream) {
+              try {
+                await deleteUploadedVideoOwnershipRecord(firstStream);
+              } catch (e) {
+                console.warn('[VideoManagement] failed to delete uploaded_videos ownership record after RTSP delete', e);
+              }
+            }
+          }
+
           return videoId;
         }
-      
+
         if (!agentApiUrl) {
           throw new Error('Agent API URL not configured for video deletion');
         }
-      
-        // 핵심 수정: uploaded video 삭제는 streamId/videoId 기준
-        await deleteVideo(agentApiUrl, videoId);
-      
-        if (firstStream) {
-          await deleteUploadedVideoOwnershipRecord(firstStream);
+
+        try {
+          await deleteVideo(agentApiUrl, videoId);
+        } catch (err) {
+          console.error('[VideoManagement] deleteVideo failed for', videoId, err);
+        } finally {
+          if (firstStream) {
+            try {
+              await deleteUploadedVideoOwnershipRecord(firstStream);
+            } catch (e) {
+              console.warn('[VideoManagement] failed to delete uploaded_videos ownership record', videoId, e);
+            }
+          }
         }
-      
+
         return videoId;
       });
 
@@ -1158,9 +1309,9 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
               const shouldClose =
                 createGroupBackdropPressedRef.current &&
                 event.target === event.currentTarget;
-            
+
               createGroupBackdropPressedRef.current = false;
-            
+
               if (shouldClose) {
                 handleCloseCreateGroupModal();
               }
@@ -1171,11 +1322,11 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
               onClick={(event) => event.stopPropagation()}
             >
               <h2 className="mb-2 text-lg font-semibold">그룹 생성</h2>
-          
+
               <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
                 선택한 동영상을 새 그룹으로 묶습니다.
               </p>
-          
+
               <label className="mb-1 block text-sm font-medium">그룹명</label>
               <input
                 value={newGroupName}
@@ -1189,14 +1340,14 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
                 <div className="mb-2 font-medium">
                   선택한 동영상 목록: 총 {selectedGroupStreams.length}개
                 </div>
-          
+
                 <ul className="max-h-40 overflow-auto text-gray-600 dark:text-gray-300">
                   {selectedGroupStreams.map((stream) => (
                     <li key={stream.streamId}>- {stream.name}</li>
                   ))}
                 </ul>
               </div>
-                
+
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
@@ -1206,7 +1357,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
                 >
                   닫기
                 </button>
-                
+
                 <button
                   type="button"
                   disabled={isCreatingGroup || selectedGroupStreams.length === 0}

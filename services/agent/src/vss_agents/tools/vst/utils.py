@@ -542,12 +542,9 @@ async def delete_sensor(sensor_id: str | None, vst_internal_url: str | None = No
         try:
             async with session.delete(url) as response:
                 if response.status in (200, 204):
-                    logger.info(f"VST sensor deleted: {scrub_log(sensor_id)}")
+                    logger.info(f"VST sensor deleted: {sensor_id}")
                     return True, "OK"
-                
-                if response.status == 404:
-                    logger.info(f"VST sensor already deleted or not found: {scrub_log(sensor_id)}")
-                    return True, "Already deleted"
+                # Try to parse VST error response for cleaner message
                 try:
                     error_json = await response.json(content_type=None)
                     error_msg = error_json.get("error_message", str(error_json))

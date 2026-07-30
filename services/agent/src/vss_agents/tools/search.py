@@ -73,7 +73,6 @@ Extract the following parameters from the user query:
 - has_action: REQUIRED boolean. Set to True if the query explicitly mentions an action/event/activity (e.g., running, walking, carrying, pushing, entering, leaving, moving). Set to False if the query only describes visual/physical attributes (what someone/something LOOKS LIKE) without any action. Examples: "person" → false, "person walking" → true, "red car" → false, "person carrying box" → true, "forklift" → false.
 - object_ids: List of integer object IDs if explicitly mentioned in the query (e.g., "find object 5" → [5], "search for objects 10, 20" → [10, 20]). null if no object IDs are mentioned.
 - top_k: Number of results to return (integer, only if explicitly mentioned, e.g., "top 5", "first 10")
-- min_cosine_similarity: Minimum similarity threshold between -1.0 and 1.0 (e.g., "highly similar" = 0.8, "somewhat similar" = 0.5, "exact match" = 0.9, "any match" = -1.0)
 
 Examples:
 {few_shot_examples}
@@ -117,11 +116,7 @@ Output: {{"query": "object ids 5, 6", "object_ids": [5, 6], "has_action": false}
 
 Example 10:
 User query: "find more objects like object 42 near warehouse entrance"
-Output: {{"query": "objects like object 42 near warehouse entrance", "object_ids": [42], "video_sources": ["warehouse entrance"], "has_action": false}}
-
-Example 11:
-User query: "find highly similar people wearing yellow helmets"
-Output: {{"query": "people wearing yellow helmets", "video_sources": [], "source_type": "video_file", "attributes": ["people wearing yellow helmets"], "has_action": false, "min_cosine_similarity": 0.8}}"""
+Output: {{"query": "objects like object 42 near warehouse entrance", "object_ids": [42], "video_sources": ["warehouse entrance"], "has_action": false}}"""
 
 
 class DecomposedQuery(BaseModel):
@@ -141,7 +136,6 @@ class DecomposedQuery(BaseModel):
         default=None, description="List of integer object IDs if explicitly mentioned in the query"
     )
     top_k: int | None = Field(default=None, description="Number of results to return")
-    min_cosine_similarity: float | None = Field(default=None, description="Minimum similarity threshold (-1.0 to 1.0)")
 
 
 async def _run_attribute_only_search(
@@ -151,7 +145,6 @@ async def _run_attribute_only_search(
     top_k: int,
     min_similarity: float | None,
     exclude_videos: list[dict[str, str]] | None = None,
-    object_types: list[str] | None = None,
 ) -> list["SearchResult"]:
     """
     Modular helper function to run attribute-only search.
@@ -171,7 +164,6 @@ async def _run_attribute_only_search(
             "min_similarity": min_similarity if min_similarity is not None else 0.3,
             "fuse_multi_attribute": False,  # Append mode - no fusion
             "exclude_videos": exclude_videos,
-            "object_types": object_types,
         }
 
         attribute_results = await attribute_search_fn.ainvoke(attr_params)
@@ -345,14 +337,6 @@ async def decompose_query(
             except (ValueError, TypeError):
                 logger.debug("Failed to parse top_k value: %s", extracted["top_k"])
 
-        # Parse min_cosine_similarity if present
-        min_cosine_similarity = None
-        if extracted.get("min_cosine_similarity") is not None:
-            try:
-                min_cosine_similarity = float(extracted["min_cosine_similarity"])
-            except (ValueError, TypeError):
-                logger.debug("Failed to parse min_cosine_similarity value: %s", extracted["min_cosine_similarity"])
-
         # Parse has_action if present
         has_action = None
         if extracted.get("has_action") is not None:
@@ -381,7 +365,6 @@ async def decompose_query(
             has_action=has_action,
             object_ids=object_ids,
             top_k=top_k,
-            min_cosine_similarity=min_cosine_similarity,
         )
     except Exception as e:
         logger.warning(f"Failed to decompose query, using original: {e}")
@@ -730,174 +713,96 @@ async def fusion_search_rerank(
     return final_results
 
 
-_MERGE_GAP_TOLERANCE_SECONDS = 1.0
-_MIN_RESULT_CLIP_SECONDS = 0.0
+_SIMILARITY_RATIO_THRESHOLD = 0.9
 
 
-def _get_result_duration_seconds(result: "SearchResult") -> float | None:
-    """Return SearchResult duration in seconds. Return None if timestamp is invalid."""
-    try:
-        start_dt = iso8601_to_datetime(result.start_time)
-        end_dt = iso8601_to_datetime(result.end_time)
-        return (end_dt - start_dt).total_seconds()
-    except Exception as e:
-        logger.warning(
-            "Failed to calculate result duration. sensor_id=%s, start=%s, end=%s, error=%s",
-            getattr(result, "sensor_id", None),
-            getattr(result, "start_time", None),
-            getattr(result, "end_time", None),
-            e,
-        )
-        return None
+def _merge_consecutive_results(results: list["SearchResult"]) -> list["SearchResult"]:
+    """Merge consecutive/overlapping SearchResult chunks from the same sensor.
 
-
-def _filter_short_results(
-    results: list["SearchResult"],
-    min_duration_seconds: float,
-) -> list["SearchResult"]:
-    """Drop clips shorter than min_duration_seconds.
-
-    This must run after consecutive-clip merging.
-    Otherwise a valid merged clip can be removed while still split.
-    """
-    if min_duration_seconds <= 0:
-        return results
-
-    filtered: list[SearchResult] = []
-
-    for result in results:
-        duration = _get_result_duration_seconds(result)
-
-        # Keep malformed timestamp results instead of silently removing them.
-        # They cannot be safely duration-filtered here.
-        if duration is None:
-            filtered.append(result)
-            continue
-
-        if duration >= min_duration_seconds:
-            filtered.append(result)
-        else:
-            logger.info(
-                "Filtered short search result clip. sensor_id=%s, start=%s, end=%s, "
-                "duration=%.3fs, min_duration=%.3fs",
-                result.sensor_id,
-                result.start_time,
-                result.end_time,
-                duration,
-                min_duration_seconds,
-            )
-
-    return filtered
-
-
-def _merge_consecutive_results(
-    results: list["SearchResult"],
-    merge_gap_tolerance_seconds: float = _MERGE_GAP_TOLERANCE_SECONDS,
-) -> list["SearchResult"]:
-    """Merge consecutive/overlapping SearchResult chunks from the same video.
-
-    Important:
-    - Merge is based on time continuity, not similarity score.
-    - A small gap tolerance is allowed to absorb timestamp rounding drift.
-    - Invalid negative-duration clips are dropped.
-    - 0-second clips are not expanded here. They are removed later by duration filtering.
+    Merging rules:
+    - video_name, sensor_id, description, screenshot_url: taken from the first chunk
+    - start_time / end_time: span of the merged window
+    - similarity: mean across merged chunks
+    - object_ids: concatenated (preserving order, deduplicating)
+    - critic_result: always None (merge runs before the critic)
     """
     if not results:
         return results
 
-    parsed_results: list[tuple[SearchResult, datetime, datetime]] = []
+    # Results without timestamps (or with malformed ones) cannot be time-merged; pass them through as-is
+    timestamped: list[SearchResult] = []
     no_timestamp: list[SearchResult] = []
-
-    for result in results:
-        if not result.start_time or not result.end_time:
-            no_timestamp.append(result)
+    for r in results:
+        if not r.start_time or not r.end_time:
+            no_timestamp.append(r)
             continue
-
         try:
-            start_dt = iso8601_to_datetime(result.start_time)
-            end_dt = iso8601_to_datetime(result.end_time)
-
-            if end_dt < start_dt:
-                logger.warning(
-                    "Dropping invalid search result with negative duration. "
-                    "sensor_id=%s, start=%s, end=%s",
-                    result.sensor_id,
-                    result.start_time,
-                    result.end_time,
-                )
-                continue
-
-            parsed_results.append((result, start_dt, end_dt))
+            iso8601_to_datetime(r.start_time)
+            iso8601_to_datetime(r.end_time)
+            timestamped.append(r)
         except (ValueError, TypeError) as e:
-            logger.warning(
-                "Skipping merge for result with malformed timestamp. sensor_id=%s, error=%s",
-                result.sensor_id,
-                e,
-            )
-            no_timestamp.append(result)
+            logger.warning(f"Skipping merge for result with malformed timestamp (sensor={r.sensor_id}): {e}")
+            no_timestamp.append(r)
 
     merged: list[SearchResult] = list(no_timestamp)
 
-    if not parsed_results:
+    if not timestamped:
         merged.sort(key=lambda r: r.similarity, reverse=True)
         return merged
 
-    # Group by both sensor_id and video_name.
-    # This prevents accidental cross-video merge when sensor_id handling changes.
-    by_video: dict[tuple[str, str], list[tuple[SearchResult, datetime, datetime]]] = {}
+    # Group by sensor_id
+    by_sensor: dict[str, list[SearchResult]] = {}
+    for result in timestamped:
+        by_sensor.setdefault(result.sensor_id, []).append(result)
 
-    for item in parsed_results:
-        result, _, _ = item
-        by_video.setdefault((result.sensor_id, result.video_name), []).append(item)
+    for sensor_id, sensor_results in by_sensor.items():
+        # Sort by start_time within each sensor group
+        sorted_results = sorted(sensor_results, key=lambda r: r.start_time)
 
-    gap_tolerance = timedelta(seconds=max(0.0, merge_gap_tolerance_seconds))
+        # Build contiguous groups of overlapping/adjacent chunks
+        groups: list[list[SearchResult]] = []
+        group_chunks: list[SearchResult] = [sorted_results[0]]
+        group_end_dt = iso8601_to_datetime(sorted_results[0].end_time)
 
-    for (sensor_id, video_name), video_results in by_video.items():
-        sorted_results = sorted(video_results, key=lambda item: item[1])
+        for result in sorted_results[1:]:
+            result_start_dt = iso8601_to_datetime(result.start_time)
+            group_avg_sim = sum(c.similarity for c in group_chunks) / len(group_chunks)
+            pair_max = max(group_avg_sim, result.similarity)
+            pair_min = min(group_avg_sim, result.similarity)
+            sim_compatible = pair_max == 0 or (pair_min / pair_max) >= _SIMILARITY_RATIO_THRESHOLD
 
-        groups: list[list[tuple[SearchResult, datetime, datetime]]] = []
-        current_group: list[tuple[SearchResult, datetime, datetime]] = [sorted_results[0]]
-        current_end_dt = sorted_results[0][2]
-
-        for item in sorted_results[1:]:
-            result, start_dt, end_dt = item
-
-            # Previous logic also required similarity compatibility.
-            # That caused adjacent chunks to remain split when scores differed.
-            if start_dt <= current_end_dt + gap_tolerance:
-                current_group.append(item)
-                if end_dt > current_end_dt:
-                    current_end_dt = end_dt
+            if result_start_dt <= group_end_dt and sim_compatible:
+                # Overlapping or adjacent with compatible similarity — extend the current group
+                result_end_dt = iso8601_to_datetime(result.end_time)
+                if result_end_dt > group_end_dt:
+                    group_end_dt = result_end_dt
+                group_chunks.append(result)
             else:
-                groups.append(current_group)
-                current_group = [item]
-                current_end_dt = end_dt
+                groups.append(group_chunks)
+                group_chunks = [result]
+                group_end_dt = iso8601_to_datetime(result.end_time)
+        groups.append(group_chunks)
 
-        groups.append(current_group)
-
+        # Collapse each group into a single SearchResult
         for group in groups:
-            group_results = [item[0] for item in group]
-            first = group_results[0]
-
-            merged_start_dt = min(item[1] for item in group)
-            merged_end_dt = max(item[2] for item in group)
-            similarity = max(result.similarity for result in group_results)
+            first = group[0]
+            end_dt = max(iso8601_to_datetime(g.end_time) for g in group)
+            similarity = sum(g.similarity for g in group) / len(group)
 
             seen_ids: set[str] = set()
             merged_object_ids: list[str] = []
-
-            for result in group_results:
-                for oid in result.object_ids:
+            for g in group:
+                for oid in g.object_ids:
                     if oid not in seen_ids:
                         merged_object_ids.append(oid)
                         seen_ids.add(oid)
 
             merged.append(
                 SearchResult(
-                    video_name=video_name or first.video_name,
+                    video_name=first.video_name,
                     description=first.description,
-                    start_time=datetime_to_iso8601(merged_start_dt),
-                    end_time=datetime_to_iso8601(merged_end_dt),
+                    start_time=first.start_time,
+                    end_time=datetime_to_iso8601(end_dt),
                     sensor_id=sensor_id,
                     screenshot_url=first.screenshot_url,
                     similarity=similarity,
@@ -906,6 +811,7 @@ def _merge_consecutive_results(
                 )
             )
 
+    # Sort by descending similarity so best matches come first
     merged.sort(key=lambda r: r.similarity, reverse=True)
     return merged
 
@@ -951,24 +857,6 @@ async def execute_core_search(
     """
     decomposed: DecomposedQuery | None = None
     original_query = search_input.query
-    explicit_top_k = search_input.top_k is not None
-    owned_video_ids = {
-        video_id.strip()
-        for video_id in (search_input.owned_video_ids or [])
-        if isinstance(video_id, str) and video_id.strip()
-    }
-
-    if search_input.source_type == "video_file" and search_input.owned_video_ids is not None:
-        if not owned_video_ids:
-            msg = "No uploaded videos are available for the current user."
-            logger.info(msg)
-            yield AgentMessageChunk(
-                type=AgentMessageChunkType.THOUGHT,
-                content=msg,
-            )
-            yield SearchOutput(data=[], search_messages=[msg])
-            return
-
     if search_input.agent_mode and agent_llm:
         try:
             yield AgentMessageChunk(
@@ -989,8 +877,6 @@ async def execute_core_search(
                     # matching the query's source_type so names that collide across
                     # RTSP and video_file sources don't overwrite each other.
                     for stream_id, stream_info in streams_info.items():
-                        if source_type == "video_file" and search_input.owned_video_ids is not None and stream_id not in owned_video_ids:
-                            continue
                         name = stream_info.get("name", "")
                         url = stream_info.get("url", "")
                         if not name:
@@ -1052,16 +938,7 @@ async def execute_core_search(
                 except Exception as e:
                     logger.warning(f"Failed to parse decomposed timestamp_end: {e}")
             if decomposed.top_k is not None:
-                if explicit_top_k:
-                    logger.info(
-                        "Ignoring decomposed top_k=%s because request top_k=%s was explicitly provided",
-                        decomposed.top_k,
-                        search_input.top_k,
-                    )
-                else:
-                    search_input.top_k = decomposed.top_k
-            if decomposed.min_cosine_similarity is not None:
-                search_input.min_cosine_similarity = decomposed.min_cosine_similarity
+                search_input.top_k = decomposed.top_k
 
             # Yield decomposition summary
             decomp_summary: dict[str, Any] = {
@@ -1072,10 +949,8 @@ async def execute_core_search(
                 decomp_summary["timestamp_start"] = decomposed.timestamp_start
             if decomposed.timestamp_end:
                 decomp_summary["timestamp_end"] = decomposed.timestamp_end
-            if decomposed.top_k is not None and not explicit_top_k:
+            if decomposed.top_k is not None:
                 decomp_summary["top_k"] = decomposed.top_k
-            if decomposed.min_cosine_similarity is not None:
-                decomp_summary["min_cosine_similarity"] = decomposed.min_cosine_similarity
             if decomposed.video_sources:
                 decomp_summary["video_sources"] = decomposed.video_sources
             if decomposed.object_ids:
@@ -1093,30 +968,6 @@ async def execute_core_search(
                 type=AgentMessageChunkType.ERROR,
                 content=f"Decomposition failed, using original query: {e!s}",
             )
-
-    if search_input.source_type == "video_file" and search_input.owned_video_ids is not None:
-        if search_input.video_sources:
-            before_sources = list(search_input.video_sources)
-            search_input.video_sources = [
-                source
-                for source in search_input.video_sources
-                if source in owned_video_ids
-            ]
-
-            if not search_input.video_sources:
-                msg = (
-                    "No requested video sources are owned by the current user. "
-                    f"requested={before_sources}"
-                )
-                logger.info(msg)
-                yield AgentMessageChunk(
-                    type=AgentMessageChunkType.THOUGHT,
-                    content=msg,
-                )
-                yield SearchOutput(data=[], search_messages=[msg])
-                return
-        else:
-            search_input.video_sources = sorted(owned_video_ids)
 
     # ===== OBJECT_ID PATH: Direct behavior KNN (bypasses embed_search + fusion) =====
     if decomposed and decomposed.object_ids:
@@ -1195,28 +1046,9 @@ async def execute_core_search(
         return
 
     # ===== SETUP COMMON QUERY PARAMETERS (used by all execution paths) =====
-    final_top_k = search_input.top_k if search_input.top_k is not None else config.default_max_results
-
-    candidate_multiplier = int(getattr(config, "candidate_top_k_multiplier", 10))
-    max_candidate_top_k = int(getattr(config, "max_candidate_top_k", 100))
-
-    # Internal candidate count must be larger than the final output count.
-    # This prevents consecutive-clip merging from shrinking the visible result count.
-    candidate_top_k = final_top_k * candidate_multiplier
-    candidate_top_k = max(final_top_k, candidate_top_k)
-    candidate_top_k = min(candidate_top_k, max_candidate_top_k)
-
-    original_top_k = final_top_k
-    top_k = candidate_top_k
-
-    logger.info(
-        "Search result limits: final_top_k=%s, candidate_top_k=%s, "
-        "candidate_multiplier=%s, max_candidate_top_k=%s",
-        final_top_k,
-        candidate_top_k,
-        candidate_multiplier,
-        max_candidate_top_k,
-    )
+    top_k = search_input.top_k if search_input.top_k is not None else config.default_max_results
+    original_top_k = top_k
+    top_k = top_k * 2
 
     # Build query_params for embed_search (used by embed-only and fusion paths)
     query_params: dict[str, str] = {"query": search_input.query}
@@ -1233,7 +1065,8 @@ async def execute_core_search(
     if search_input.timestamp_end:
         query_params["timestamp_end"] = search_input.timestamp_end.isoformat()
 
-    query_params["min_cosine_similarity"] = str(search_input.min_cosine_similarity)
+    if not search_input.agent_mode:
+        query_params["min_cosine_similarity"] = str(search_input.min_cosine_similarity)
 
     # Extract attributes list and check if attribute-only (used by both attribute-only and fusion paths)
     attribute_list = []
@@ -1263,14 +1096,6 @@ async def execute_core_search(
         elif attribute_list:  # If has_action is None but attributes exist, treat as attribute-only
             is_attribute_only = True
 
-    class_only_search_default = bool(getattr(config, "class_only_search_default", False))
-    class_only_search = bool(search_input.class_only_search or class_only_search_default)
-    class_names = [c for c in (search_input.class_names or []) if isinstance(c, str) and c.strip()]
-
-    # In class-only mode, always force attribute path and class-filtered object lookup.
-    if class_only_search:
-        is_attribute_only = True
-
     # ===== EXECUTION FLOW: Three distinct paths =====
     search_results = []
     do_search = True
@@ -1296,40 +1121,7 @@ async def execute_core_search(
         logger.debug(
             f"is_attribute_only: {is_attribute_only}, attribute_list: {attribute_list}, config.attribute_search_tool: {config.attribute_search_tool}"
         )
-        if class_only_search and config.attribute_search_tool:
-            logger.info("EXECUTION PATH: Class-only attribute search")
-
-            class_only_terms = class_names or [search_input.query]
-            object_types = class_names or None
-
-            yield AgentMessageChunk(
-                type=AgentMessageChunkType.TOOL_CALL,
-                content=(
-                    f"Running class-only search with explicit class filters: {class_names}"
-                    if class_names
-                    else f"Running class-only search with query: {search_input.query}"
-                ),
-            )
-
-            if attribute_search_fn is None:
-                attribute_search_fn = await builder.get_function(config.attribute_search_tool)
-
-            with TimeMeasure("search: class-only attribute search"):
-                search_results = await _run_attribute_only_search(
-                    attribute_list=class_only_terms,
-                    search_input=search_input,
-                    attribute_search_fn=attribute_search_fn,
-                    top_k=top_k,
-                    min_similarity=search_input.min_cosine_similarity,
-                    object_types=object_types,
-                )
-
-            yield AgentMessageChunk(
-                type=AgentMessageChunkType.THOUGHT,
-                content=f"Found {len(search_results)} results from class-only search",
-            )
-
-        elif is_attribute_only and attribute_list and config.attribute_search_tool:
+        if is_attribute_only and attribute_list and config.attribute_search_tool:
             logger.info("EXECUTION PATH: Attribute-only search (no embed, append mode)")
 
             yield AgentMessageChunk(
@@ -1347,8 +1139,8 @@ async def execute_core_search(
                     attribute_list=attribute_list,
                     search_input=search_input,
                     attribute_search_fn=attribute_search_fn,
-                    top_k=top_k,
-                    min_similarity=search_input.min_cosine_similarity,
+                    top_k=original_top_k,
+                    min_similarity=0.0,
                 )
 
             yield AgentMessageChunk(
@@ -1501,40 +1293,6 @@ async def execute_core_search(
                         )
                         # Fall through to return original embed_search results
 
-        # Request-level similarity filtering. For embed_search, this is also passed down
-        # as min_cosine_similarity, but apply it once more here so attribute-only and
-        # fusion reranking paths behave consistently.
-        if search_input.min_cosine_similarity is not None:
-            before_similarity_filter = len(search_results)
-            search_results = [
-                result for result in search_results if result.similarity >= search_input.min_cosine_similarity
-            ]
-            removed_count = before_similarity_filter - len(search_results)
-            if removed_count > 0:
-                logger.info(
-                    "Filtered %d search result clip(s) below min_cosine_similarity=%s",
-                    removed_count,
-                    search_input.min_cosine_similarity,
-                )
-                yield AgentMessageChunk(
-                    type=AgentMessageChunkType.THOUGHT,
-                    content=(
-                        f"Filtered {removed_count} clip(s) below similarity threshold "
-                        f"{search_input.min_cosine_similarity}"
-                    ),
-                )
-
-        if search_input.source_type == "video_file" and search_input.owned_video_ids is not None:
-            before_owner_filter = len(search_results)
-            search_results = [result for result in search_results if result.sensor_id in owned_video_ids]
-            removed_count = before_owner_filter - len(search_results)
-            if removed_count > 0:
-                logger.info("Filtered %d non-owned uploaded video search result(s)", removed_count)
-                yield AgentMessageChunk(
-                    type=AgentMessageChunkType.THOUGHT,
-                    content=f"Filtered {removed_count} non-owned uploaded video result(s)",
-                )
-
         # Percentage-based filtering: keep results with similarity >= max_similarity * top_percent_filter
         top_pct = getattr(config, "top_percent_filter", None)
         if top_pct and 0 < top_pct < 1.0 and search_results:
@@ -1547,43 +1305,8 @@ async def execute_core_search(
                 f"(similarity >= {sim_threshold:.4f}, i.e. {top_pct * 100:.0f}% of max {max_sim:.4f})"
             )
 
-        # Merge consecutive chunks from the same video into single results first.
-        search_results = _merge_consecutive_results(
-            search_results,
-            merge_gap_tolerance_seconds=getattr(
-                config,
-                "merge_gap_tolerance_seconds",
-                _MERGE_GAP_TOLERANCE_SECONDS,
-            ),
-        )
-        
-        # Then drop clips shorter than the configured minimum duration.
-        # This prevents 0-second clips and partially merged short clips from reaching the UI/VST clip renderer.
-        min_result_clip_seconds = float(
-            getattr(config, "min_result_clip_seconds", _MIN_RESULT_CLIP_SECONDS)
-        )
-        
-        before_short_filter = len(search_results)
-        search_results = _filter_short_results(
-            search_results,
-            min_duration_seconds=min_result_clip_seconds,
-        )
-        
-        removed_short_count = before_short_filter - len(search_results)
-        
-        if removed_short_count > 0:
-            logger.info(
-                "Filtered %d search result clip(s) shorter than min_result_clip_seconds=%s",
-                removed_short_count,
-                min_result_clip_seconds,
-            )
-            yield AgentMessageChunk(
-                type=AgentMessageChunkType.THOUGHT,
-                content=(
-                    f"Filtered {removed_short_count} short clip(s) below "
-                    f"{min_result_clip_seconds:.1f}s"
-                ),
-            )
+        # Merge consecutive chunks from the same sensor into single results
+        search_results = _merge_consecutive_results(search_results)
 
         # Step 3: If critic enabled and configured, verify results with VLM
         if (
@@ -1603,6 +1326,20 @@ async def execute_core_search(
                 yield AgentMessageChunk(
                     type=AgentMessageChunkType.THOUGHT,
                     content=f"Verifying {len(search_results)} results with critic agent",
+                )
+
+                logger.info(
+                    "[Search -> Critic] candidates=%d query=%r result_ids=%s",
+                    len(search_results),
+                    original_query,
+                    [
+                        {
+                            "sensor_id": result.sensor_id,
+                            "start_time": result.start_time,
+                            "end_time": result.end_time,
+                        }
+                        for result in search_results
+                    ],
                 )
 
                 logger.info(f"[Search] Calling critic agent to verify {len(search_results)} results")
@@ -1689,18 +1426,17 @@ async def execute_core_search(
                     content=msg,
                 )
 
-    # Final output limit must be applied only after all post-processing:
-    # similarity filter -> owner filter -> top-percent filter -> merge -> short-clip filter -> critic
-    if original_top_k is not None:
-        search_results = search_results[:original_top_k]
-    
+    # Yield final results summary
     result_count = len(search_results)
-    
     yield AgentMessageChunk(
         type=AgentMessageChunkType.THOUGHT,
         content=f"Found {result_count} result{'s' if result_count != 1 else ''}",
     )
-    
+
+    # Yield final result, truncated to original top_k to undo any critic-loop inflation
+    if original_top_k is not None:
+        search_results = search_results[:original_top_k]
+
     yield SearchOutput(data=search_results, search_messages=search_messages)
 
 
@@ -1826,11 +1562,6 @@ class SearchConfig(FunctionBaseConfig, name="search"):
         description="RRF weight w for attribute cosine similarity in Reciprocal Rank Fusion (default: 0.5, only used for RRF)",
     )
 
-    class_only_search_default: bool = Field(
-        default=False,
-        description="If True, bypass embed/fusion and run attribute-search-only by default.",
-    )
-
     top_percent_filter: float | None = Field(
         default=None,
         ge=0.0,
@@ -1848,42 +1579,6 @@ class SearchConfig(FunctionBaseConfig, name="search"):
     behavior_index: str = Field(
         default=DEFAULT_BEHAVIOR_INDEX,
         description="Behavior index name for object embedding lookup.",
-    )
-
-    merge_gap_tolerance_seconds: float = Field(
-        default=1.0,
-        ge=0.0,
-        description=(
-            "Maximum allowed gap in seconds when merging consecutive search result clips. "
-            "Use this to absorb timestamp rounding drift."
-        ),
-    )
-
-    min_result_clip_seconds: float = Field(
-        default=0.0,
-        ge=0.0,
-        description=(
-            "Minimum duration in seconds for final search result clips after merging. "
-            "Set this to the embedding chunk duration to suppress 0-second or too-short clips."
-        ),
-    )
-
-    candidate_top_k_multiplier: int = Field(
-        default=10,
-        ge=1,
-        description=(
-            "Multiplier for internal candidate retrieval before merging/filtering. "
-            "Final output is still limited by top_k, but internal search fetches more "
-            "candidates so merged consecutive clips do not reduce the visible result count."
-        ),
-    )
-
-    max_candidate_top_k: int = Field(
-        default=100,
-        ge=1,
-        description=(
-            "Maximum number of internal search candidates to fetch before merging/filtering."
-        ),
     )
 
 
@@ -1927,11 +1622,6 @@ class SearchInput(BaseModel):
         description="Number of returned videos. If not provided, returns all matching results.",
     )
 
-    owned_video_ids: list[str] | None = Field(
-        default=None,
-        description="List of uploaded video sensor IDs owned by the currently logged-in user.",
-    )
-
     min_cosine_similarity: float = Field(
         default=0.0,
         description="Minimum cosine similarity to filter non-agent embed-only search results. Default is 0.",
@@ -1946,16 +1636,6 @@ class SearchInput(BaseModel):
         default=True,
         description="""Request-level flag to enable/disable critic agent for this search request.
         `critic_agent` must be set and `enable_critic` must be True in the config.""",
-    )
-    
-    class_only_search: bool = Field(
-        default=False,
-        description="If True, bypass embed/fusion and run attribute-search-only.",
-    )
-
-    class_names: list[str] | None = Field(
-        default=None,
-        description="Optional exact object.type filters for class-only search.",
     )
 
 
@@ -2043,13 +1723,9 @@ async def search(config: SearchConfig, _builder: Builder) -> AsyncGenerator[Func
         return SearchInput.model_validate_json(input)
 
     def _chat_request_input_converter(request: ChatRequest) -> SearchInput:
-        try:
-            logger.info(f"Chat request input content: {request.messages[-1].content}")
-            logger.info(f"Chat request input content type: {type(request.messages[-1].content)}")
-            return SearchInput.model_validate_json(request.messages[-1].content)
-        except Exception:
-            logger.exception("Error in chat request input converter.")
-            raise
+        logger.info(f"Chat request input content: {request.messages[-1].content}")
+        logger.info(f"Chat request input content type: {type(request.messages[-1].content)}")
+        return SearchInput.model_validate_json(request.messages[-1].content)
 
     def _output_converter(output: SearchOutput) -> str:
         logger.info(f"Output: {output}")

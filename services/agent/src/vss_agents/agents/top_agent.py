@@ -96,17 +96,9 @@ class TopAgentRequest(ChatRequestOrMessage):
     llm_reasoning: bool | None = Field(default=None, description="Enable LLM reasoning mode")
     vlm_reasoning: bool | None = Field(default=None, description="Enable VLM reasoning mode")
     search_source_type: Literal["video_file", "rtsp"] | None = Field(
-        default="video_file",
-        description="Video source type for search: 'video_file' or 'rtsp'",
+        default="video_file", description="Video source type for search: 'video_file' or 'rtsp'"
     )
-    use_critic: bool | None = Field(
-        default=None,
-        description="Whether to verify search results with VLM critic agent",
-    )
-    owned_video_ids: list[str] | None = Field(
-        default=None,
-        description="Uploaded video sensor IDs owned by the current UI user.",
-    )
+    use_critic: bool | None = Field(default=None, description="Whether to verify search results with VLM critic agent")
 
 
 def _extract_text_content(message: "Message") -> dict:
@@ -188,20 +180,14 @@ class TopAgentState(BaseModel):
     final_answer: str = Field(default="", description="Final answer from the agent")
     plan: str = Field(default="", description="Execution plan drafted by the plan node")
     previous_conversation: str = Field(default="", description="Previous conversation summary")
-
-    options: AgentRequestOptions = Field(
-        default_factory=AgentRequestOptions,
-        description="Per-request options for the current conversation turn.",
+    options: AgentRequestOptions = Field(default_factory=AgentRequestOptions, description="Per-request options")
+    subagent_side_effects: list[str] = Field(
+        default_factory=list,
+        description="Accumulated sub-agent side effects (download links, media URLs)",
     )
-
     previous_options: AgentRequestOptions | None = Field(
         default=None,
         description="Per-request options from the previous conversation turn.",
-    )
-
-    subagent_side_effects: list[str] = Field(
-        default_factory=list,
-        description="Accumulated side effects returned by sub-agents.",
     )
 
 
@@ -1537,76 +1523,42 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
         ),
     )
 
-    async def _response_fn(request: ChatRequestOrMessage) -> AsyncGenerator[str]:
+    async def _response_fn(
+        request: ChatRequestOrMessage,
+    ) -> AsyncGenerator[str]:
+        """Streaming top agent response.
 
-        logger.info(
-            "Top agent received request dump: %s",
-            request.model_dump(mode="json"),
-        )
-
-        typed_request = TopAgentRequest.model_validate(
-            request.model_dump(mode="json")
-        )
-
-        logger.info(
-            "Top agent typed request ownership: owned_video_ids=%s, search_source_type=%s",
-            typed_request.owned_video_ids,
-            typed_request.search_source_type,
-        )
-
+        Args:
+            request: ChatRequestOrMessage with messages and optional reasoning parameters
+        """
+        # Validate as TopAgentRequest for typed access to per-request option fields
+        typed_request = TopAgentRequest.model_validate(request.model_dump())
         options = AgentRequestOptions(
-            llm_reasoning=(
-                typed_request.llm_reasoning
-                if typed_request.llm_reasoning is not None
-                else config.llm_reasoning
-            ),
-            vlm_reasoning=(
-                typed_request.vlm_reasoning
-                if typed_request.vlm_reasoning is not None
-                else None
-            ),
+            llm_reasoning=typed_request.llm_reasoning
+            if typed_request.llm_reasoning is not None
+            else config.llm_reasoning,
+            vlm_reasoning=typed_request.vlm_reasoning if typed_request.vlm_reasoning is not None else None,
             search_source_type=typed_request.search_source_type or "video_file",
-            use_critic=(
-                typed_request.use_critic
-                if typed_request.use_critic is not None
-                else True
-            ),
-            owned_video_ids=typed_request.owned_video_ids,
+            use_critic=typed_request.use_critic if typed_request.use_critic is not None else True,
         )
 
         # Override with WebSocket payload values if present (WebSocket requests don't pass params through request object)
         context = Context.get()
-
         if hasattr(context.metadata, "payload") and isinstance(context.metadata.payload, dict):
             payload = context.metadata.payload
             options_payload = options.model_dump(mode="json")
-
             if "llm_reasoning" in payload:
                 options_payload["llm_reasoning"] = bool(payload["llm_reasoning"])
-
             if "vlm_reasoning" in payload:
                 options_payload["vlm_reasoning"] = bool(payload["vlm_reasoning"])
-
             if "search_source_type" in payload:
                 options_payload["search_source_type"] = payload["search_source_type"]
-
             if "use_critic" in payload:
                 options_payload["use_critic"] = bool(payload["use_critic"])
-
-            if "owned_video_ids" in payload:
-                raw_owned_video_ids = payload.get("owned_video_ids")
-
-                if isinstance(raw_owned_video_ids, list):
-                    options_payload["owned_video_ids"] = [
-                        str(video_id).strip()
-                        for video_id in raw_owned_video_ids
-                        if str(video_id).strip()
-                    ]
-                else:
-                    options_payload["owned_video_ids"] = []
-
             options = AgentRequestOptions.model_validate(options_payload)
-            logger.info("Extracted from WebSocket payload - %s", options)
+            logger.info(f"Extracted from WebSocket payload - {options}")
+
+        logger.info("Creating Top Agent with options=%s", options)
 
         try:
             # Convert request to ChatRequest following NAT's agent pattern:
@@ -1669,8 +1621,4 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
             message += chunk
         return message
 
-    yield FunctionInfo.create(
-        stream_fn=_response_fn,
-        single_fn=_single_fn,
-        input_schema=ChatRequestOrMessage,
-    )
+    yield FunctionInfo.create(stream_fn=_response_fn, single_fn=_single_fn, input_schema=ChatRequestOrMessage)

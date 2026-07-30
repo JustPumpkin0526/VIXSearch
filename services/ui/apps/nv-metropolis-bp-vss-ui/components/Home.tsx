@@ -46,7 +46,10 @@ interface AlertsData {
 
 interface SearchData {
   systemStatus: string;
-  apiUrl?: string;
+  agentApiUrl?: string | null;
+  vstApiUrl?: string | null;
+  mdxWebApiUrl?: string | null;
+  mediaWithObjectsBbox?: string | boolean | null;
 }
 
 interface DashboardData {
@@ -308,7 +311,7 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
         icon: <IconSearch size={20} />,
         alt: 'Agent Search',
         enabled: true,
-        component: 'NemoAgentToolkitApp',
+        component: 'SearchComponent',
       },
       {
         id: 'report',

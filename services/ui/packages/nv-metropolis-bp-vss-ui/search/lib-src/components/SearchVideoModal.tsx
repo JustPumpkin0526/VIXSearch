@@ -48,11 +48,13 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
   }, [videoElement, searchByImageOverlay]);
 
   const handleVideoPause = useCallback((currentTime: number) => {
+    console.log('[SearchVideoModal] onVideoPause called:', currentTime);
     setPaused(true);
     setPauseTime(currentTime);
   }, []);
 
   const handleVideoPlay = useCallback(() => {
+    console.log('[SearchVideoModal] onVideoPlay called');
     setPaused(false);
   }, []);
 
@@ -66,6 +68,16 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
     () => (videoElement?.parentElement as HTMLDivElement | null) ?? null,
     [videoElement]
   );
+
+  console.log('[Search by Image state]', {
+    searchByImageEnabled,
+    paused,
+    hasSearchByImageOverlay: !!searchByImageOverlay,
+    hasSearchByImageRequest: !!onSearchByImageRequest,
+    hasVideoElement: !!videoElement,
+    hasVideoOverlayHost: !!videoOverlayHost,
+    showSearchByImageButton,
+  });
 
   if (!isOpen) return null;
 

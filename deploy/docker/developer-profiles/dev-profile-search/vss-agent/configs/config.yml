@@ -22,42 +22,33 @@ general:
     streaming_ingest:
       vst_internal_url: ${VST_INTERNAL_URL}
       vst_external_url: ${VST_EXTERNAL_URL}
-      cosmos_embed_endpoint: ${COSMOS_EMBED_ENDPOINT}
       # storage in place when an RTSP stream is removed.
       delete_vst_storage_on_stream_remove: false
       rtvi_embed_base_url: http://${HOST_IP}:${RTVI_EMBED_PORT}
       rtvi_embed_model: ${RTVI_EMBED_MODEL:-cosmos-embed1-448p}
-      rtvi_embed_chunk_duration: 10
+      rtvi_embed_chunk_duration: 5
       rtvi_cv_base_url: http://${HOST_IP}:${RTVI_CV_PORT}
       elasticsearch_url: ${ELASTIC_SEARCH_ENDPOINT}
       rtvi_embed_es_index: ${ELASTIC_SEARCH_INDEX}
       # Nemotron Nano Omni: set ENABLE_AUDIO=true so VST keeps the audio track during upload transcoding.
       enable_audio: ${ENABLE_AUDIO:-false}
-      endpoints:
-      - path: /api/v1/search
-        method: POST
-        description: "Search for a video by query"
-        function_name: search
-
-      - path: /api/v1/attribute_search
-        method: POST
-        description: "Search for objects by visual attributes"
-        function_name: attribute_search
-
-      - path: /api/v1/embed_search
-        method: POST
-        description: "Direct embedding search (bypasses agent)"
-        function_name: embed_search
-
-      - path: /api/v1/image_search
-        method: POST
-        description: "Search for scenes similar to an uploaded image"
-        function_name: image_search
-
-      - path: /api/v1/critic
-        method: POST
-        description: "Score video clips with critic agent"
-        function_name: critic_agent
+    endpoints:
+    - path: /api/v1/search
+      method: POST
+      description: "Search for a video by query"
+      function_name: search
+    - path: /api/v1/attribute_search
+      method: POST
+      description: "Search for objects by visual attributes"
+      function_name: attribute_search
+    - path: /api/v1/embed_search
+      method: POST
+      description: "Direct embedding search (bypasses agent)"
+      function_name: embed_search
+    - path: /api/v1/critic
+      method: POST
+      description: "Score video clips with critic agent"
+      function_name: critic_agent
     cors:
       allow_origins: ['*']
       allow_methods: ['*']
@@ -90,11 +81,6 @@ functions:
     vst_external_url: ${VST_EXTERNAL_URL}  # For browser-facing screenshot URLs in search results
     embed_confidence_threshold: 0.1  # Minimum embed score threshold. fallback to attribute-only search if low
     behavior_es_endpoint: ${ELASTIC_SEARCH_ENDPOINT}
-    class_only_search_default: false
-    merge_gap_tolerance_seconds: 1.0
-    min_result_clip_seconds: 10.0
-    candidate_top_k_multiplier: 10
-    max_candidate_top_k: 100
 
   search_agent:
     _type: search_agent
@@ -110,11 +96,6 @@ functions:
     search_max_iterations: 1
     default_max_results: 10
     behavior_es_endpoint: ${ELASTIC_SEARCH_ENDPOINT}
-    class_only_search_default: false
-    merge_gap_tolerance_seconds: 1.0
-    min_result_clip_seconds: 10.0
-    candidate_top_k_multiplier: 10
-    max_candidate_top_k: 100
 
   vst_video_clip:
     _type: vst.video_clip
@@ -123,38 +104,6 @@ functions:
     time_format: offset
     # Nemotron Nano Omni: set ENABLE_AUDIO=true so VST passes disableAudio=false on clip URLs.
     enable_audio: ${ENABLE_AUDIO:-false}
-    
-  image_search:
-    _type: image_search
-
-    cosmos_embed_endpoint: ${COSMOS_EMBED_ENDPOINT}
-    es_endpoint: ${ELASTIC_SEARCH_ENDPOINT}
-    es_index: ${ELASTIC_SEARCH_INDEX}
-
-    vst_external_url: ${VST_EXTERNAL_URL}
-    vst_internal_url: ${VST_INTERNAL_URL}
-
-    # Elasticsearch embedding mapping
-    embedding_field: llm.visionEmbeddings.vector
-    embedding_nested_path: llm.visionEmbeddings
-    embedding_dimensions: 768
-
-    # Elasticsearch metadata fields
-    sensor_filter_field: sensor.id.keyword
-    start_time_field: start
-    end_time_field: end
-
-    # Result and KNN limits
-    default_max_results: 10
-    default_num_candidates: 100
-    maximum_knn_results: 200
-    maximum_num_candidates: 500
-
-    # Maximum decoded image size: 10 MB
-    max_image_size_bytes: 10485760
-
-    # Prevent unrestricted search when user-owned sensor IDs are missing
-    require_sensor_ids: true
 
   embed_search:
     _type: embed_search
@@ -178,7 +127,7 @@ functions:
   critic_agent:
     _type: critic_agent
     max_concurrent_verifications: 5
-    num_videos_to_evaluate: 10
+    num_videos_to_evaluate: 5
     video_analysis_tool: video_understanding
     time_format: offset
 
@@ -194,11 +143,6 @@ functions:
     time_format: offset
     vlm_mode: ${VLM_MODE}
     vst_internal_url: ${VST_INTERNAL_URL}
-
-  video_upload_url:
-    _type: video_upload_url
-    vst_external_url: ${VST_EXTERNAL_URL}
-    agent_base_url: ${VSS_AGENT_EXTERNAL_URL}
 
 llms:
   # --- LLM profiles (selected by LLM_MODEL_TYPE) ---
@@ -243,7 +187,7 @@ workflow:
   llm_name: ${LLM_MODEL_TYPE:-nim}_llm
   llm_reasoning: false
   max_iterations: 20
-  max_history: 0
+  max_history: 10
   subagent_names:
   - search_agent
   prompt: |

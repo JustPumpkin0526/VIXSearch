@@ -234,32 +234,11 @@ def _build_es_query(query_input: QueryInput, query_embedding: list[float], confi
     Returns:
         The search query body.
     """
+    # Extract parameters from QueryInput
+    video_sources_str = query_input.params.get("video_sources", "")
     top_k_str = query_input.params.get("top_k", "")
     top_k: int | None = int(top_k_str) if top_k_str else None
     min_cosine_similarity = float(query_input.params.get("min_cosine_similarity", "0.0"))
-    filters = _build_filter_clauses(query_input)
-
-    # Adjust k based on filters and similarity threshold.
-    # Overfetch when top_k is specified because post-processing can remove hits
-    # (missing llm field, exclude_videos, similarity threshold, etc.).
-    if top_k is None:
-        k_value = config.default_max_results
-    elif min_cosine_similarity > -1.0 or filters or query_input.exclude_videos:
-        k_value = top_k * 5
-    else:
-        k_value = top_k
-    num_candidates = max(k_value * 2, 1)
-
-    return _build_es_query_from_filters(query_embedding, filters, k_value, num_candidates)
-
-
-def _build_filter_clauses(query_input: QueryInput) -> list[dict[str, Any]]:
-    """Build reusable Elasticsearch filter clauses from QueryInput.
-
-    This is split out so embed_search can reuse the same filters for a count
-    query when top_k is omitted.
-    """
-    video_sources_str = query_input.params.get("video_sources", "")
     description = query_input.params.get("description", "")
     timestamp_start_str = query_input.params.get("timestamp_start", "")
     timestamp_end_str = query_input.params.get("timestamp_end", "")
@@ -268,12 +247,15 @@ def _build_filter_clauses(query_input: QueryInput) -> list[dict[str, Any]]:
     video_sources: list[str] = []
     if video_sources_str:
         try:
+            # Try parsing as JSON array
             parsed = json.loads(video_sources_str)
             if isinstance(parsed, list):
                 video_sources = [str(v) for v in parsed]
             else:
+                # If JSON parsing succeeded but result is not a list, treat as comma-separated
                 video_sources = [v.strip() for v in video_sources_str.split(",") if v.strip()]
         except Exception:
+            # Try comma-separated string
             video_sources = [v.strip() for v in video_sources_str.split(",") if v.strip()]
 
     # Parse timestamps if provided
@@ -281,21 +263,24 @@ def _build_filter_clauses(query_input: QueryInput) -> list[dict[str, Any]]:
     timestamp_end: datetime | None = None
     if timestamp_start_str:
         try:
-            timestamp_start = iso8601_to_datetime(timestamp_start_str)
+            user_ts = iso8601_to_datetime(timestamp_start_str)
+            timestamp_start = user_ts
         except Exception as e:
             logger.warning(f"Failed to parse timestamp_start: {e}")
     if timestamp_end_str:
         try:
-            timestamp_end = iso8601_to_datetime(timestamp_end_str)
+            user_ts = iso8601_to_datetime(timestamp_end_str)
+            timestamp_end = user_ts
         except Exception as e:
             logger.warning(f"Failed to parse timestamp_end: {e}")
 
+    # Build filter conditions
     filters: list[dict[str, Any]] = []
 
-    # Add video_sources filter if provided.
-    # Keep the VSS 3.2.0 optimized two-tier logic:
-    # - resolved video_file UUIDs use a fast terms query
-    # - unresolved names fall back to wildcard/regexp matching
+    # Add video_sources filter if provided
+    # Two-tier approach: resolved UUIDs get a single `terms` clause (O(1) hash lookup),
+    # unresolved names fall back to wildcard/regexp pattern (expensive scan).
+    # UUIDs are resolved upstream in execute_core_search() via VST streams_info mapping.
     if video_sources:
         if query_input.source_type == "rtsp":
             uuid_sources = []
@@ -305,8 +290,10 @@ def _build_filter_clauses(query_input: QueryInput) -> list[dict[str, Any]]:
             non_uuid_sources = [v for v in video_sources if not is_standard_uuid_string(v)]
 
         if uuid_sources and not non_uuid_sources:
+            # All sources are UUIDs — single terms clause (fastest)
             filters.append({"terms": {"sensor.id.keyword": uuid_sources}})
         else:
+            # Mixed or all non-UUID — build should clauses
             should_clauses: list[dict[str, Any]] = []
             if uuid_sources:
                 should_clauses.append({"terms": {"sensor.id.keyword": uuid_sources}})
@@ -366,16 +353,17 @@ def _build_filter_clauses(query_input: QueryInput) -> list[dict[str, Any]]:
         else:
             filters.append(must_clauses[0])
 
-    return filters
+    # Adjust k based on filters and similarity threshold
+    # Overfetch to account for post-retrieval filtering (exclude_videos, missing "llm" field, etc.)
+    if top_k is None:
+        k_value = config.default_max_results
+    elif min_cosine_similarity > 0.0 or filters:
+        k_value = top_k * 5
+    else:
+        k_value = top_k
+    num_candidates = k_value * 2
 
-
-def _build_es_query_from_filters(
-    query_embedding: list[float],
-    filters: list[dict[str, Any]],
-    k_value: int,
-    num_candidates: int,
-) -> dict[str, Any]:
-    """Build the final ES KNN query from precomputed filters."""
+    # Build nested KNN query
     knn_query: dict[str, Any] = {
         "field": "llm.visionEmbeddings.vector",
         "query_vector": query_embedding,
@@ -422,21 +410,6 @@ def _build_es_query_from_filters(
     logger.debug(f"Search query (sanitized): {_sanitize_for_logging(search_query)}")
 
     return search_query
-
-
-def _build_count_query(filters: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build an ES count query using the same non-vector filters.
-
-    Used when top_k is omitted so the search can fetch all filtered video-file
-    candidates instead of stopping at default_max_results.
-    """
-    if not filters:
-        return {"query": {"match_all": {}}}
-
-    if len(filters) > 1:
-        return {"query": {"bool": {"filter": filters}}}
-
-    return {"query": filters[0]}
 
 
 async def _process_search_hit(
@@ -635,84 +608,28 @@ async def embed_search(config: EmbedSearchConfig, _builder: Builder) -> AsyncGen
     async def _embed_search(query_input: QueryInput) -> EmbedSearchOutput:
         """Perform embedding search using QueryInput and return EmbedSearchOutput."""
 
-        # Determine search index by source_type.
-        # For uploaded video files, return an empty result when the fixed index
-        # does not exist yet. This avoids surfacing a backend error before the
-        # user has ingested any video.
+        # Determine search index by source_type
         source_type = query_input.source_type
-        es_index_exists = bool(await es.indices.exists(index=config.es_index))
-
         if source_type == "video_file":
-            if not es_index_exists:
-                logger.warning(
-                    "Search index '%s' does not exist for source_type=video_file; returning empty results.",
-                    config.es_index,
-                )
-                return EmbedSearchOutput(query_embedding=[], results=[])
             search_index: str | list[str] = config.es_index
         else:
-            # Keep the VSS 3.2.0 RTSP behavior, but make exclusion robust when
-            # the video-file index has not been created yet.
-            if es_index_exists:
-                search_index = ["mdx-embed-filtered-*", "-" + config.es_index]
-            else:
-                search_index = ["mdx-embed-filtered-*"]
+            # rtsp: search wildcard indices, excluding the video-file index
+            search_index = ["mdx-embed-filtered-*", "-" + config.es_index]
         logger.info(f"Search index(es): {search_index} (source_type={source_type})")
 
         # Step 1: Generate embedding
         with TimeMeasure("embed_search: generate query embedding"):
             query_embedding = await _generate_query_embedding(query_input, embed_client)
 
-        # Step 2: Build ES query.
-        # Reuse filter clauses so that, when top_k is omitted, we can count the
-        # filtered candidate set and fetch all matching candidates.
+        # Step 2: Build ES query
         with TimeMeasure("embed_search: build ES query"):
-            top_k_str = query_input.params.get("top_k", "")
-            filters = _build_filter_clauses(query_input)
             search_query = _build_es_query(query_input, query_embedding, config)
-
-            if not top_k_str:
-                count_query = _build_count_query(filters)
-                try:
-                    count_response = await es.count(index=search_index, body=count_query)
-                except ESNotFoundError as e:
-                    if source_type == "video_file":
-                        logger.warning(
-                            "Elasticsearch index '%s' not found during video_file count; returning empty results: %s",
-                            search_index,
-                            e,
-                        )
-                        return EmbedSearchOutput(query_embedding=query_embedding, results=[])
-                    logger.error(f"Elasticsearch index '{search_index}' not found during count: {e}")
-                    raise ValueError(
-                        f"Search index '{search_index}' does not exist. "
-                        "Please ensure videos have been ingested before searching."
-                    ) from e
-
-                total_candidates = int(count_response.get("count", 0))
-                if total_candidates == 0:
-                    logger.info("No candidates matched non-vector filters; returning empty result.")
-                    return EmbedSearchOutput(query_embedding=query_embedding, results=[])
-
-                search_query = _build_es_query_from_filters(
-                    query_embedding=query_embedding,
-                    filters=filters,
-                    k_value=total_candidates,
-                    num_candidates=max(total_candidates * 2, 1),
-                )
 
         # Execute ES search
         with TimeMeasure("embed_search: ES search execution"):
             try:
                 response = await es.search(index=search_index, body=search_query)
             except ESNotFoundError as e:
-                if source_type == "video_file":
-                    logger.warning(
-                        "Elasticsearch index '%s' not found during video_file search; returning empty results: %s",
-                        search_index,
-                        e,
-                    )
-                    return EmbedSearchOutput(query_embedding=query_embedding, results=[])
                 logger.error(f"Elasticsearch index '{search_index}' not found: {e}")
                 raise ValueError(
                     f"Search index '{search_index}' does not exist. "

@@ -9,10 +9,6 @@ import {
   IconUser,
   IconVolume2,
 } from '@tabler/icons-react';
-import {
-  extractSearchResultsMessage,
-  SearchResultsMessage,
-} from './SearchResultsMessage';
 import { FC, memo, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 
@@ -38,29 +34,17 @@ import remarkMath from 'remark-math';
 export interface Props {
   message: Message;
   messageIndex: number;
-  sourceQuery?: string;
   onEdit?: (editedMessage: Message, deleteCount?: number) => void;
-  onDelete?: (messageIndex: number) => void;
-  totalMessageCount?: number;
-  isStreaming?: boolean;
+  onDelete?: (messageIndex: number) => void; // Callback to delete message at index
+  totalMessageCount?: number; // Total messages for calculating deleteCount
+  isStreaming?: boolean; // Whether this specific message is currently streaming
   showMessageEdit?: boolean;
   showMessageSpeaker?: boolean;
   showMessageCopy?: boolean;
 }
 
 export const ChatMessage: FC<Props> = memo(
-  ({
-    message,
-    messageIndex,
-    sourceQuery = '',
-    onEdit,
-    onDelete,
-    totalMessageCount = 0,
-    isStreaming = false,
-    showMessageEdit = true,
-    showMessageSpeaker = true,
-    showMessageCopy = true,
-  }) => {
+  ({ message, messageIndex, onEdit, onDelete, totalMessageCount = 0, isStreaming = false, showMessageEdit = true, showMessageSpeaker = true, showMessageCopy = true }) => {
     const { t } = useTranslation('chat');
 
     const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -87,11 +71,7 @@ export const ChatMessage: FC<Props> = memo(
 
     // return if the there is nothing to show
     // no message and no intermediate steps
-    if (
-      message?.content === '' &&
-      message?.intermediateSteps?.length === 0 &&
-      (!Array.isArray(message?.searchResults) || message.searchResults.length === 0)
-    ) {
+    if (message?.content === '' && message?.intermediateSteps?.length === 0) {
       return null;
     }
 
@@ -210,47 +190,6 @@ export const ChatMessage: FC<Props> = memo(
       return fixMalformedHtml(result)?.trim()?.replace(/\n\s+/, '\n ');
     };
 
-    
-    const assistantResponseContent = useMemo(() => {
-      if (message.role !== 'assistant') {
-        return '';
-      }
-    
-      return prepareContent({
-        message: {
-          ...message,
-          content: message.rawContent ?? message.content,
-        },
-        role: 'assistant',
-        intermediateStepsContent: false,
-        responseContent: true,
-      });
-    }, [message]);
-
-    const parsedSearchResultsMessage = useMemo(() => {
-      if (message.role !== 'assistant') {
-        return null;
-      }
-    
-      if (Array.isArray(message.searchResults) && message.searchResults.length > 0) {
-        return {
-          results: message.searchResults,
-          summary: message.searchResultsSummary || '',
-        };
-      }
-    
-      if (!assistantResponseContent) {
-        return null;
-      }
-    
-      return extractSearchResultsMessage(assistantResponseContent);
-    }, [
-      assistantResponseContent,
-      message.role,
-      message.searchResults,
-      message.searchResultsSummary,
-    ]);
-
     return (
       <div
         data-testid={message.role === 'assistant' ? 'chat-message-assistant' : 'chat-message-user'}
@@ -348,34 +287,50 @@ export const ChatMessage: FC<Props> = memo(
                 <div className="flex flex-col w-[90%]">
                   <div className="flex flex-col gap-2">
                     {/* for intermediate steps content  */}
-                    <div
-                      className="w-full overflow-x-hidden overflow-y-auto prose dark:prose-invert max-w-none break-words"
-                      style={{ fontSize: '18px' }}
-                    >
-                      {parsedSearchResultsMessage ? (
-                        <div className="w-full">
-                          <SearchResultsMessage
-                            results={parsedSearchResultsMessage.results}
-                            sourceQuery={sourceQuery}
-                          />
-                        </div>
-                      ) : (
-                        <MemoizedReactMarkdown
-                          rehypePlugins={[rehypeRaw] as any}
-                          remarkPlugins={[
-                            remarkGfm,
-                            [
-                              remarkMath,
-                              {
-                                singleDollarTextMath: false,
-                              },
-                            ],
-                          ]}
-                          components={markdownComponents}
-                        >
-                          {assistantResponseContent}
-                        </MemoizedReactMarkdown>
-                      )}
+                    <div className="w-full overflow-x-hidden overflow-y-auto prose dark:prose-invert max-w-none break-words" style={{ fontSize: '18px' }}>
+                      <MemoizedReactMarkdown
+                        rehypePlugins={[rehypeRaw] as any}
+                        remarkPlugins={[
+                          remarkGfm,
+                          [
+                            remarkMath,
+                            {
+                              singleDollarTextMath: false,
+                            },
+                          ],
+                        ]}
+                        components={markdownComponents}
+                      >
+                        {prepareContent({
+                          message,
+                          role: 'assistant',
+                          intermediateStepsContent: true,
+                          responseContent: false,
+                        })}
+                      </MemoizedReactMarkdown>
+                    </div>
+                    {/* for response content */}
+                    <div className="overflow-x-auto prose dark:prose-invert flex-1 w-full flex-grow max-w-full whitespace-normal" style={{ fontSize: '18px' }}>
+                      <MemoizedReactMarkdown
+                        rehypePlugins={[rehypeRaw] as any}
+                        remarkPlugins={[
+                          remarkGfm,
+                          [
+                            remarkMath,
+                            {
+                              singleDollarTextMath: false,
+                            },
+                          ],
+                        ]}
+                        components={markdownComponents}
+                      >
+                        {prepareContent({
+                          message,
+                          role: 'assistant',
+                          intermediateStepsContent: false,
+                          responseContent: true,
+                        })}
+                      </MemoizedReactMarkdown>
                     </div>
                     {message.callerInfo && (
                       <div className="mt-2 rounded-md border border-black/10 bg-neutral-100 px-4 py-2.5 text-sm text-neutral-800 dark:border-white/10 dark:bg-transparent dark:text-neutral-200 sm:px-5">

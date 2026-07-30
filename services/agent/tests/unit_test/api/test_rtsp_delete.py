@@ -240,7 +240,7 @@ class TestRegisterRtspDeleteRoutes:
         mock_streaming_config.rtvi_cv_base_url = ""
         mock_streaming_config.rtvi_embed_base_url = ""
         mock_streaming_config.rtvi_embed_model = "cosmos-embed1-448p"
-        mock_streaming_config.rtvi_embed_chunk_duration = 10
+        mock_streaming_config.rtvi_embed_chunk_duration = 5
         mock_streaming_config.delete_vst_storage_on_stream_remove = True
         mock_config.general.front_end.streaming_ingest = mock_streaming_config
 
@@ -266,7 +266,7 @@ class TestRegisterRtspDeleteRoutes:
         mock_streaming_config.rtvi_cv_base_url = ""
         mock_streaming_config.rtvi_embed_base_url = ""
         mock_streaming_config.rtvi_embed_model = "cosmos-embed1-448p"
-        mock_streaming_config.rtvi_embed_chunk_duration = 10
+        mock_streaming_config.rtvi_embed_chunk_duration = 5
         mock_streaming_config.delete_vst_storage_on_stream_remove = True
         mock_config.general.front_end.streaming_ingest = mock_streaming_config
 

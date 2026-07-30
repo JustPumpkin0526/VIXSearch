@@ -62,9 +62,6 @@ from vss_agents.utils.url_translation import rewrite_url_host
 
 logger = logging.getLogger(__name__)
 
-_COMPLETE_LOCKS: dict[str, asyncio.Lock] = {}
-_COMPLETE_RESULTS: dict[str, "VideoIngestResponse"] = {}
-
 DEFAULT_RTVI_CV_TIMEOUT_SECONDS = 60.0
 DEFAULT_RTVI_EMBED_TIMEOUT_SECONDS = 600.0
 DEFAULT_VST_STORAGE_TIMEOUT_SECONDS = 60.0
@@ -246,7 +243,7 @@ class _VideoUploadConfig(BaseModel):
     rtvi_embed_base_url: str = ""
     rtvi_cv_base_url: str = ""
     rtvi_embed_model: str = "cosmos-embed1-448p"
-    rtvi_embed_chunk_duration: int = 10
+    rtvi_embed_chunk_duration: int = 5
     disable_audio: bool = True
     rtvi_cv_timeout_seconds: float = DEFAULT_RTVI_CV_TIMEOUT_SECONDS
     rtvi_embed_timeout_seconds: float = DEFAULT_RTVI_EMBED_TIMEOUT_SECONDS
@@ -268,7 +265,7 @@ def _resolve_video_upload_config(config: "Any") -> _VideoUploadConfig | None:
         rtvi_embed_base_url = getattr(streaming_config, "rtvi_embed_base_url", None) or ""
         rtvi_cv_base_url = getattr(streaming_config, "rtvi_cv_base_url", None) or ""
         rtvi_embed_model = getattr(streaming_config, "rtvi_embed_model", "cosmos-embed1-448p")
-        rtvi_embed_chunk_duration = getattr(streaming_config, "rtvi_embed_chunk_duration", 10)
+        rtvi_embed_chunk_duration = getattr(streaming_config, "rtvi_embed_chunk_duration", 5)
         disable_audio = not bool(getattr(streaming_config, "enable_audio", False))
     else:
         # NAT may strip unknown config sections — fall back to env vars set by
@@ -283,7 +280,7 @@ def _resolve_video_upload_config(config: "Any") -> _VideoUploadConfig | None:
         rtvi_embed_base_url = f"http://{host_ip}:{rtvi_embed_port}" if host_ip and rtvi_embed_port else ""
         rtvi_cv_base_url = f"http://{host_ip}:{rtvi_cv_port}" if host_ip and rtvi_cv_port else ""
         rtvi_embed_model = os.getenv("RTVI_EMBED_MODEL", "cosmos-embed1-448p")
-        rtvi_embed_chunk_duration = 10
+        rtvi_embed_chunk_duration = 5
         disable_audio = os.getenv("ENABLE_AUDIO", "false").strip().lower() not in ("true", "1", "yes")
 
     if not vst_internal_url:
@@ -435,14 +432,6 @@ async def _run_rtvi_embedding(
                 },
             )
 
-        if response.status_code == 409 and "ResourceInUse" in response.text:
-            error_msg = f"RTVI Embedding resource already in use: {response.text}"
-            logger.warning(error_msg)
-            raise HTTPException(
-                status_code=202,
-                detail=f"Embedding is already being generated for {sensor_id}",
-            )
-
         if response.status_code != 200:
             error_msg = f"Embedding generation failed with status {response.status_code}: {response.text}"
             logger.error(error_msg)
@@ -463,7 +452,7 @@ async def _run_post_upload_processing(
     rtvi_embed_base_url: str,
     rtvi_cv_base_url: str = "",
     rtvi_embed_model: str = "cosmos-embed1-448p",
-    rtvi_embed_chunk_duration: int = 10,
+    rtvi_embed_chunk_duration: int = 5,
     disable_audio: bool = True,
     rtvi_cv_timeout_seconds: float = DEFAULT_RTVI_CV_TIMEOUT_SECONDS,
     rtvi_embed_timeout_seconds: float = DEFAULT_RTVI_EMBED_TIMEOUT_SECONDS,
@@ -653,7 +642,7 @@ def create_video_upload_complete_router(
     rtvi_embed_base_url: str = "",
     rtvi_cv_base_url: str = "",
     rtvi_embed_model: str = "cosmos-embed1-448p",
-    rtvi_embed_chunk_duration: int = 10,
+    rtvi_embed_chunk_duration: int = 5,
     disable_audio: bool = True,
     rtvi_cv_timeout_seconds: float = DEFAULT_RTVI_CV_TIMEOUT_SECONDS,
     rtvi_embed_timeout_seconds: float = DEFAULT_RTVI_EMBED_TIMEOUT_SECONDS,
@@ -676,79 +665,41 @@ def create_video_upload_complete_router(
             "Universal completion endpoint. Called by the UI after the last chunk "
             "lands, with VST's sensor id as the path param. Runs timeline lookup "
             "→ storage URL resolution → optional RTVI-CV register → optional "
-            "embedding generation."
+            "embedding generation. Each step skips gracefully if its backing "
+            "service isn't configured, so this works across profiles; for search "
+            "profiles the RTVI-CV/embedding hooks drive ingestion."
         ),
         tags=["Video Ingest"],
     )
-    async def upload_complete(
-        sensor_id: str,
-        body: VideoUploadCompleteInput,
-    ) -> VideoIngestResponse:
+    async def upload_complete(sensor_id: str, body: VideoUploadCompleteInput) -> VideoIngestResponse:
         sensor_id = _validate_sensor_id(sensor_id)
+        # ``filename`` comes from the VST upload response the UI forwards. Fall
+        # back to ``sensor_id`` when missing so RTVI-CV's camera_name is at
+        # least populated (lookups by sensor id keep working either way).
+        filename = body.filename or sensor_id
+        camera_name = filename.rsplit(".", 1)[0] if "." in filename else filename
 
-        if sensor_id in _COMPLETE_RESULTS:
-            logger.info(
-                "/complete already completed for %s; returning cached result",
-                sensor_id,
+        try:
+            return await _run_post_upload_processing(
+                camera_name=camera_name,
+                sensor_id=sensor_id,
+                filename=filename,
+                vst_url=vst_internal_url,
+                rtvi_embed_base_url=rtvi_embed_base_url,
+                rtvi_cv_base_url=rtvi_cv_base_url,
+                rtvi_embed_model=rtvi_embed_model,
+                rtvi_embed_chunk_duration=rtvi_embed_chunk_duration,
+                disable_audio=disable_audio,
+                rtvi_cv_timeout_seconds=rtvi_cv_timeout_seconds,
+                rtvi_embed_timeout_seconds=rtvi_embed_timeout_seconds,
+                vst_storage_timeout_seconds=vst_storage_timeout_seconds,
             )
-            return _COMPLETE_RESULTS[sensor_id]
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("/complete failed for %s: %s", sensor_id, exc, exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Post-processing failed: {exc}") from exc
 
-        lock = _COMPLETE_LOCKS.setdefault(sensor_id, asyncio.Lock())
-
-        if lock.locked():
-            logger.info(
-                "/complete already processing for %s",
-                sensor_id,
-            )
-            raise HTTPException(
-                status_code=202,
-                detail=f"Video {sensor_id} is already being processed",
-            )
-
-        async with lock:
-            if sensor_id in _COMPLETE_RESULTS:
-                return _COMPLETE_RESULTS[sensor_id]
-
-            filename = body.filename or sensor_id
-            camera_name = filename.rsplit(".", 1)[0] if "." in filename else filename
-
-            try:
-                result = await _run_post_upload_processing(
-                    camera_name=camera_name,
-                    sensor_id=sensor_id,
-                    filename=filename,
-                    vst_url=vst_internal_url,
-                    rtvi_embed_base_url=rtvi_embed_base_url,
-                    rtvi_cv_base_url=rtvi_cv_base_url,
-                    rtvi_embed_model=rtvi_embed_model,
-                    rtvi_embed_chunk_duration=rtvi_embed_chunk_duration,
-                    disable_audio=disable_audio,
-                    rtvi_cv_timeout_seconds=rtvi_cv_timeout_seconds,
-                    rtvi_embed_timeout_seconds=rtvi_embed_timeout_seconds,
-                    vst_storage_timeout_seconds=vst_storage_timeout_seconds,
-                )
-
-                _COMPLETE_RESULTS[sensor_id] = result
-                return result
-
-            except HTTPException as exc:
-                detail = str(exc.detail)
-
-                if "ResourceInUse" in detail:
-                    logger.warning(
-                        "RTVI Embed ResourceInUse for %s; treating as already processing",
-                        sensor_id,
-                    )
-                    raise HTTPException(
-                        status_code=202,
-                        detail=f"Video {sensor_id} is already being processed by RTVI Embedding",
-                    ) from exc
-
-                raise
-
-            finally:
-                _COMPLETE_LOCKS.pop(sensor_id, None)
-        
     return router
 
 

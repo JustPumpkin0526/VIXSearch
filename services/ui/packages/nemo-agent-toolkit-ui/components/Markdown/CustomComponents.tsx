@@ -189,7 +189,14 @@ export const getReactMarkDownCustomComponents = (
           children: React.ReactNode;
           [key: string]: any;
         }) => {
-          return <p {...props}>{children}</p>;
+          return (
+            <div
+              {...props}
+              className={`markdown-paragraph ${props.className ?? ''}`}
+            >
+              {children}
+            </div>
+          );
         },
         (prevProps, nextProps) => {
           return isEqual(prevProps.children, nextProps.children);

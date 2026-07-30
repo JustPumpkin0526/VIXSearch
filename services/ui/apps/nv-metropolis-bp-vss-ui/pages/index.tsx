@@ -14,12 +14,20 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
       '@nemo-agent-toolkit/ui/server'
     );
 
-    const { fetchVideoManagementData } = await import(
+    const {
+      fetchSearchData,
+      fetchVideoManagementData,
+    } = await import(
       '@nv-metropolis-bp-vss-ui/all/server'
     );
 
-    const [nemoProps, videoManagementData] = await Promise.all([
+    const [
+      nemoProps,
+      searchData,
+      videoManagementData,
+    ] = await Promise.all([
       getNemoAgentToolkitSSProps(context),
+      fetchSearchData(),
       fetchVideoManagementData(),
     ]);
 
@@ -27,13 +35,11 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
       props: {
         ...nemoProps.props,
 
-        // 로그인 속도 개선을 위해 무거운 탭 데이터는 SSR에서 제외
         alertsData: null,
-        searchData: null,
+        searchData,
         dashboardData: null,
         mapData: null,
 
-        // 업로드/삭제에 필요한 VST/Agent URL은 반드시 유지
         videoManagementData,
 
         serverRenderTime: new Date().toISOString(),

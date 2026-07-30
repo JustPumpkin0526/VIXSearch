@@ -123,7 +123,7 @@ class TestServiceConfig:
         assert config.rtvi_embed_url == ""
         assert config.rtvi_vlm_url == ""
         assert config.rtvi_embed_model == "cosmos-embed1-448p"
-        assert config.rtvi_embed_chunk_duration == 10
+        assert config.rtvi_embed_chunk_duration == 5
         # default: alerts/base/lvs-style behavior — VST owns storage, so delete it on remove
         assert config.delete_vst_storage_on_stream_remove is True
         # audio-aware VLMs are opt-in
@@ -1043,7 +1043,7 @@ class TestRegisterRtspStreamApiRoutes:
         mock_streaming_config.rtvi_cv_base_url = ""
         mock_streaming_config.rtvi_embed_base_url = ""
         mock_streaming_config.rtvi_embed_model = "cosmos-embed1-448p"
-        mock_streaming_config.rtvi_embed_chunk_duration = 10
+        mock_streaming_config.rtvi_embed_chunk_duration = 5
         mock_streaming_config.delete_vst_storage_on_stream_remove = True
 
         mock_config.general.front_end.streaming_ingest = mock_streaming_config
@@ -1071,7 +1071,7 @@ class TestRegisterRtspStreamApiRoutes:
         mock_streaming_config.rtvi_cv_base_url = ""
         mock_streaming_config.rtvi_embed_base_url = ""
         mock_streaming_config.rtvi_embed_model = "cosmos-embed1-448p"
-        mock_streaming_config.rtvi_embed_chunk_duration = 10
+        mock_streaming_config.rtvi_embed_chunk_duration = 5
         mock_streaming_config.delete_vst_storage_on_stream_remove = True
 
         mock_config.general.front_end.streaming_ingest = mock_streaming_config

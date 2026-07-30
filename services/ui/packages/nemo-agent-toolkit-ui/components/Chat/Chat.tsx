@@ -158,245 +158,6 @@ function parsePossiblyConcatenatedJson(payload: string): any[] {
 //   console.debug(`[stream][${label}] payload preview:`, preview);
 // };
 
-type ImageSearchApiResult = {
-  video_name?: string;
-  description?: string;
-  start_time?: string;
-  end_time?: string;
-  sensor_id?: string;
-  screenshot_url?: string;
-  similarity_score?: number;
-};
-
-type ImageSearchApiResponse = {
-  results?: ImageSearchApiResult[];
-  data?: ImageSearchApiResult[];
-  total?: number;
-  search_type?: string;
-};
-
-type ImageAttachment = {
-  content?: unknown;
-  type?: unknown;
-  mimeType?: unknown;
-  contentType?: unknown;
-  name?: unknown;
-};
-
-function getImageAttachment(
-  message: Message,
-): ImageAttachment | null {
-  const messageWithAttachments = message as Message & {
-    attachment?: ImageAttachment;
-    attachments?: ImageAttachment[];
-  };
-
-  const singleAttachment =
-    messageWithAttachments.attachment;
-
-  if (
-    singleAttachment &&
-    (
-      singleAttachment.type === 'image' ||
-      (
-        typeof singleAttachment.contentType === 'string' &&
-        singleAttachment.contentType.startsWith('image/')
-      ) ||
-      (
-        typeof singleAttachment.mimeType === 'string' &&
-        singleAttachment.mimeType.startsWith('image/')
-      ) ||
-      (
-        typeof singleAttachment.content === 'string' &&
-        singleAttachment.content.startsWith('data:image/')
-      )
-    )
-  ) {
-    return singleAttachment;
-  }
-
-  const multipleAttachments =
-    Array.isArray(messageWithAttachments.attachments)
-      ? messageWithAttachments.attachments
-      : [];
-
-  return (
-    multipleAttachments.find(
-      attachment =>
-        attachment?.type === 'image' ||
-        (
-          typeof attachment?.contentType === 'string' &&
-          attachment.contentType.startsWith('image/')
-        ) ||
-        (
-          typeof attachment?.mimeType === 'string' &&
-          attachment.mimeType.startsWith('image/')
-        ) ||
-        (
-          typeof attachment?.content === 'string' &&
-          attachment.content.startsWith('data:image/')
-        ),
-    ) || null
-  );
-}
-
-function getImageAttachmentContent(
-  message: Message,
-): string | null {
-  const attachment =
-    getImageAttachment(message);
-
-  if (
-    !attachment ||
-    typeof attachment.content !== 'string'
-  ) {
-    return null;
-  }
-
-  const content =
-    attachment.content.trim();
-
-  return content || null;
-}
-
-function getAttachmentContentType(
-  message: Message,
-  imageContent: string,
-): string {
-  const attachment =
-    getImageAttachment(message);
-
-  const configuredType =
-    typeof attachment?.contentType === 'string'
-      ? attachment.contentType
-      : typeof attachment?.mimeType === 'string'
-        ? attachment.mimeType
-        : '';
-
-  if (configuredType.startsWith('image/')) {
-    return configuredType.toLowerCase();
-  }
-
-  const dataUriMatch = imageContent.match(
-    /^data:(image\/[a-zA-Z0-9.+-]+);base64,/,
-  );
-
-  return (
-    dataUriMatch?.[1]?.toLowerCase() ||
-    'image/jpeg'
-  );
-}
-
-function stripImageDataUriPrefix(
-  imageContent: string,
-): string {
-  const commaIndex = imageContent.indexOf(',');
-
-  if (
-    imageContent.startsWith('data:image/') &&
-    commaIndex >= 0
-  ) {
-    return imageContent.slice(commaIndex + 1);
-  }
-
-  return imageContent;
-}
-
-function removeAttachmentContents(
-  message: Message,
-): Message {
-  const clonedMessage =
-    JSON.parse(JSON.stringify(message)) as Message & {
-      attachment?: ImageAttachment;
-      attachments?: ImageAttachment[];
-  };
-
-  if (clonedMessage.attachment) {
-    clonedMessage.attachment = {
-      ...clonedMessage.attachment,
-      content: '',
-    };
-  }
-
-  if (
-    Array.isArray(clonedMessage.attachments)
-  ) {
-    clonedMessage.attachments =
-      clonedMessage.attachments.map(
-        attachment => ({
-          ...attachment,
-          content: '',
-        }),
-      );
-  }
-
-  return clonedMessage;
-}
-
-function normalizeImageSearchResponse(
-  payload: ImageSearchApiResponse,
-): {
-  data: Array<{
-    video_name: string;
-    description: string;
-    start_time: string;
-    end_time: string;
-    sensor_id: string;
-    screenshot_url: string;
-    similarity_score: number;
-    search_type: 'image_similarity';
-  }>;
-  total: number;
-  search_type: 'image_similarity';
-} {
-  const sourceResults = Array.isArray(payload.results)
-    ? payload.results
-    : Array.isArray(payload.data)
-      ? payload.data
-      : [];
-
-  const data = sourceResults.map((result) => ({
-    video_name:
-      typeof result.video_name === 'string'
-        ? result.video_name
-        : '',
-    description:
-      typeof result.description === 'string'
-        ? result.description
-        : '',
-    start_time:
-      typeof result.start_time === 'string'
-        ? result.start_time
-        : '',
-    end_time:
-      typeof result.end_time === 'string'
-        ? result.end_time
-        : '',
-    sensor_id:
-      typeof result.sensor_id === 'string'
-        ? result.sensor_id
-        : '',
-    screenshot_url:
-      typeof result.screenshot_url === 'string'
-        ? result.screenshot_url
-        : '',
-    similarity_score:
-      typeof result.similarity_score === 'number'
-        ? result.similarity_score
-        : 0,
-    search_type: 'image_similarity' as const,
-  }));
-
-  return {
-    data,
-    total:
-      typeof payload.total === 'number'
-        ? payload.total
-        : data.length,
-    search_type: 'image_similarity',
-  };
-}
-
 export const Chat = () => {
   const { t } = useTranslation('chat');
   const {
@@ -464,115 +225,9 @@ export const Chat = () => {
 
   const [currentMessage, setCurrentMessage] = useState<Message>();
   const [autoScrollEnabled, setAutoScrollEnabled] = useState<boolean>(true);
-  const [showScrollDownButton, setShowScrollDownButton] = useState<boolean>(false);
-
-  const getActiveMainTabId = useCallback((): string => {
-    if (typeof window === 'undefined') {
-      return '';
-    }
-
-    return window.sessionStorage.getItem('activeTab') || '';
-  }, []);
-
-  const isSearchSidebarContext = useCallback((): boolean => {
-    const activeMainTabId = getActiveMainTabId();
-
-    return activeMainTabId === 'search';
-  }, [getActiveMainTabId]);
-
-  const fetchOwnedVideoIdsForSearch = useCallback(async (): Promise<string[]> => {
-    if (!isSearchSidebarContext() || typeof window === 'undefined') {
-      return [];
-    }
-
-    const token = window.localStorage.getItem('vss.auth.token');
-
-    if (!token) {
-      return [];
-    }
-
-    try {
-      const response = await fetch('/api/videos/list', {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        console.warn(
-          'Failed to fetch owned uploaded videos for search:',
-          response.status,
-        );
-        return [];
-      }
-
-      const payload = await response.json();
-      const videos: Array<{ sensor_id?: string }> = Array.isArray(payload?.videos)
-        ? payload.videos
-        : [];
-
-      const ownedVideoIds: string[] = [];
-
-      for (const video of videos) {
-        const sensorId =
-          typeof video?.sensor_id === 'string' ? video.sensor_id.trim() : '';
-
-        if (sensorId) {
-          ownedVideoIds.push(sensorId);
-        }
-      }
-
-      return ownedVideoIds;
-    } catch (error) {
-      console.warn('Failed to resolve owned uploaded videos for search:', error);
-      return [];
-    }
-  }, [isSearchSidebarContext]);
-
-  const buildSearchAwareCustomParams = useCallback(
-    async (
-      customParams?: CustomAgentParamsValues | null,
-    ): Promise<CustomAgentParamsValues> => {
-      const nextCustomParams: CustomAgentParamsValues = {
-        ...(customParams || {}),
-      };
-
-      const activeMainTabId = getActiveMainTabId();
-      const isSearchContext = activeMainTabId === 'search';
-
-      console.log('[VIXSearch][Chat] search context check', {
-        storageKeyPrefix,
-        activeMainTabId,
-        isSearchContext,
-        customParams,
-      });
-
-      if (isSearchContext) {
-        const ownedVideoIds = await fetchOwnedVideoIdsForSearch();
-
-        console.log('[VIXSearch][Chat] owned video ids resolved', {
-          ownedVideoIds,
-          count: ownedVideoIds.length,
-        });
-
-        nextCustomParams.owned_video_ids = ownedVideoIds;
-        nextCustomParams.search_source_type = 'video_file';
-      } else {
-        console.warn('[VIXSearch][Chat] not search context, skip owned_video_ids', {
-          storageKeyPrefix,
-          activeMainTabId,
-        });
-      }
-
-      return nextCustomParams;
-    },
-    [
-      storageKeyPrefix,
-      getActiveMainTabId,
-      fetchOwnedVideoIdsForSearch,
-    ],
-  );
+  const [showSettings, setShowSettings] = useState<boolean>(false);
+  const [showScrollDownButton, setShowScrollDownButton] =
+    useState<boolean>(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -580,65 +235,6 @@ export const Chat = () => {
   const controllerRef = useRef(new AbortController());
   const selectedConversationRef = useRef(selectedConversation);
   const conversationsRef = useRef(conversations);
-  
-  const persistConversationState =
-  useCallback(
-    (
-      conversation: Conversation,
-    ) => {
-      const currentConversations =
-        conversationsRef.current || [];
-
-      const exists =
-        currentConversations.some(
-          item =>
-            item.id === conversation.id,
-        );
-
-      const updatedConversations =
-        exists
-          ? currentConversations.map(
-              item =>
-                item.id === conversation.id
-                  ? conversation
-                  : item,
-            )
-          : [
-              ...currentConversations,
-              conversation,
-            ];
-
-      selectedConversationRef.current =
-        conversation;
-
-      conversationsRef.current =
-        updatedConversations;
-
-      homeDispatch({
-        field: 'selectedConversation',
-        value: conversation,
-      });
-
-      homeDispatch({
-        field: 'conversations',
-        value: updatedConversations,
-      });
-
-      saveConversation(
-        conversation,
-        storageKeyPrefix,
-      );
-
-      saveConversations(
-        updatedConversations,
-        storageKeyPrefix,
-      );
-    },
-    [
-      homeDispatch,
-      storageKeyPrefix,
-    ],
-  );
 
   const [modalOpen, setModalOpen] = useState(false);
   const [interactionMessage, setInteractionMessage] = useState(null);
@@ -647,7 +243,7 @@ export const Chat = () => {
   // Initialize with state value, will be properly set in useEffect after checking sessionStorage
   const webSocketModeRef = useRef<boolean | undefined>(webSocketMode);
   let websocketLoadingToastId: string | null = null;
-
+  
   // Sync webSocketModeRef with sessionStorage and state changes
   // This runs on mount and whenever webSocketMode state changes
   useEffect(() => {
@@ -670,7 +266,7 @@ export const Chat = () => {
 
   // WebSocket message tracking for stop generating functionality
   const activeUserMessageId = useRef<string | null>(null);
-
+  
   // WebSocket throttling for state updates - reduces render cycles while maintaining smooth streaming
   const WS_THROTTLE_MS = 32; // ~30fps update rate
   const wsLastDispatchTime = useRef<number>(0);
@@ -679,10 +275,10 @@ export const Chat = () => {
     messages: Message[];
   } | null>(null);
   const wsFlushTimeout = useRef<NodeJS.Timeout | null>(null);
-
+  
   // Store custom agent params for use in handleSend
   const customAgentParamsRef = useRef<CustomAgentParamsValues | null>(null);
-
+  
   // Ref to store the latest handleSend function for stable callbacks
   // This prevents unnecessary re-renders of memoized chat messages
   const handleSendRef = useRef<(message: Message, deleteCount?: number, retry?: boolean) => Promise<void>>();
@@ -762,7 +358,7 @@ export const Chat = () => {
       conversationsRef.current = conversations;
     }
   }, [conversations, messageIsStreaming]);
-
+  
   // Reset WebSocket state when conversation changes to prevent stale message display
   useEffect(() => {
     if (selectedConversation?.id) {
@@ -848,7 +444,7 @@ export const Chat = () => {
       ws.onopen = () => {
         toast.success(
           'Connected to ' +
-          (sessionStorage.getItem('webSocketURL') || webSocketURL),
+            (sessionStorage.getItem('webSocketURL') || webSocketURL),
           {
             id: 'websocketSuccessToastId',
           }
@@ -1061,10 +657,10 @@ export const Chat = () => {
       return messages.map((m, idx) =>
         idx === messages.length - 1
           ? {
-            ...m,
-            errorMessages: [...(m.errorMessages || []), message],
-            timestamp: Date.now(),
-          }
+              ...m,
+              errorMessages: [...(m.errorMessages || []), message],
+              timestamp: Date.now(),
+            }
           : m
       );
     } else {
@@ -1155,10 +751,10 @@ export const Chat = () => {
 
     // End loading indicators as messages arrive
     homeDispatch({ field: 'loading', value: false });
-
+    
     // Check if this is a completion message
     const isComplete = isSystemResponseComplete(message);
-
+    
     if (isComplete) {
       // Flush any pending updates immediately before completing
       if (wsFlushTimeout.current) {
@@ -1166,7 +762,7 @@ export const Chat = () => {
         wsFlushTimeout.current = null;
       }
       flushWsPendingUpdate();
-
+      
       setTimeout(() => {
         homeDispatch({ field: 'messageIsStreaming', value: false });
         // Clear active tracking when response is complete
@@ -1227,11 +823,11 @@ export const Chat = () => {
     // Process message based on type using pure helpers
     // Use pending messages as base if available for same conversation, otherwise use target conversation
     const pending = wsPendingUpdate.current;
-    let baseMessages =
+    let baseMessages = 
       (pending && pending.conversationId === message.conversation_id)
         ? pending.messages
         : targetConversation.messages;
-
+    
     let updatedMessages = baseMessages;
     updatedMessages = processSystemResponseMessage(message, updatedMessages);
     updatedMessages = processIntermediateStepMessage(message, updatedMessages);
@@ -1320,268 +916,6 @@ export const Chat = () => {
     ],
   );
 
-  const handleImageSearchSend = useCallback(
-    async (
-      message: Message,
-      imageContent: string,
-    ): Promise<void> => {
-      const conversation =
-        selectedConversationRef.current;
-
-      if (!conversation) {
-        toast.error(
-          '이미지 검색을 수행할 대화가 없습니다.',
-        );
-        return;
-      }
-
-      if (!isSearchSidebarContext()) {
-        toast.error(
-          '이미지 유사도 검색은 Search 메뉴에서만 사용할 수 있습니다.',
-        );
-        return;
-      }
-
-      const contentType =
-        getAttachmentContentType(
-          message,
-          imageContent,
-        );
-
-      const allowedContentTypes = new Set([
-        'image/jpeg',
-        'image/png',
-        'image/webp',
-      ]);
-
-      if (!allowedContentTypes.has(contentType)) {
-        toast.error(
-          'JPEG, PNG, WEBP 이미지만 검색할 수 있습니다.',
-        );
-        return;
-      }
-
-      const imageBase64 =
-        stripImageDataUriPrefix(imageContent);
-
-      if (!imageBase64) {
-        toast.error(
-          '첨부된 이미지 데이터가 비어 있습니다.',
-        );
-        return;
-      }
-
-      homeDispatch({
-        field: 'loading',
-        value: true,
-      });
-
-      homeDispatch({
-        field: 'messageIsStreaming',
-        value: true,
-      });
-
-      onMessageSubmitted?.();
-
-      const messageWithoutAttachmentContent =
-        removeAttachmentContents(
-          stripUploadConversationScope(message),
-        );
-      
-      const userMessage: Message = {
-        ...messageWithoutAttachmentContent,
-        id: uuidv4(),
-        content:
-          typeof message.content === 'string' &&
-          message.content.trim()
-            ? message.content
-            : '업로드한 이미지와 유사한 장면을 검색해줘',
-      };
-
-      let pendingConversation: Conversation = {
-        ...conversation,
-        messages: [
-          ...conversation.messages,
-          userMessage,
-        ],
-        isHomepageConversation: undefined,
-      };
-
-      persistConversationState(
-        pendingConversation,
-      );
-
-      try {
-        const ownedVideoIds =
-          await fetchOwnedVideoIdsForSearch();
-
-        if (ownedVideoIds.length === 0) {
-          throw new Error(
-            '검색 가능한 소유 영상이 없거나 영상 접근 권한을 확인하지 못했습니다.',
-          );
-        }
-
-        /*
-         * /api/image-search는 앞서 추가한
-         * Next.js API route입니다.
-         */
-        const response = await fetch(
-          '/api/image-search',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type':
-                'application/json',
-            },
-            credentials: 'include',
-            signal:
-              controllerRef.current.signal,
-            body: JSON.stringify({
-              imageBase64,
-              contentType,
-              maxResults: 10,
-              minSimilarity: 0.1,
-              sensorIds: ownedVideoIds,
-            }),
-          },
-        );
-
-        const responseText =
-          await response.text();
-
-        let responsePayload:
-          | ImageSearchApiResponse
-          | {
-            message?: string;
-            detail?: unknown;
-          } = {};
-
-        if (responseText) {
-          try {
-            responsePayload =
-              JSON.parse(responseText);
-          } catch {
-            responsePayload = {
-              message: responseText,
-            };
-          }
-        }
-
-        if (!response.ok) {
-          const errorMessage =
-            'message' in responsePayload &&
-              typeof responsePayload.message ===
-              'string'
-              ? responsePayload.message
-              : `이미지 검색 요청 실패: ${response.status}`;
-
-          throw new Error(errorMessage);
-        }
-
-        const normalizedResult =
-          normalizeImageSearchResponse(
-            responsePayload as ImageSearchApiResponse,
-          );
-
-        /*
-         * 기존 SearchResultsMessage가 JSON 결과를 감지할 수 있도록
-         * 기존 Search API 출력 형식과 같은 마커를 사용합니다.
-         */
-        const assistantContent = [
-          '**Search API result (JSON):**',
-          '```json',
-          JSON.stringify(
-            normalizedResult,
-            null,
-            2,
-          ),
-          '```',
-        ].join('\n');
-
-        const assistantMessage: Message = {
-          id: uuidv4(),
-          role: 'assistant',
-          content: assistantContent,
-        };
-
-        const completedConversation: Conversation = {
-          ...pendingConversation,
-          messages: [
-            ...pendingConversation.messages,
-            assistantMessage,
-          ],
-        };
-
-        persistConversationState(
-          completedConversation,
-        );
-
-        onAnswerComplete?.();
-
-        handleCompletedAnswerWithContent(
-          assistantContent,
-        );
-      } catch (error) {
-        if (
-          (error as { name?: string })
-            ?.name === 'AbortError'
-        ) {
-          return;
-        }
-
-        console.error(
-          'Image similarity search failed:',
-          error,
-        );
-
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : '이미지 유사도 검색 중 오류가 발생했습니다.';
-
-        toast.error(errorMessage);
-
-        const assistantErrorMessage: Message = {
-          id: uuidv4(),
-          role: 'assistant',
-          content:
-            `이미지 유사도 검색에 실패했습니다.\n\n${errorMessage}`,
-        };
-
-        const failedConversation: Conversation = {
-          ...pendingConversation,
-          messages: [
-            ...pendingConversation.messages,
-            assistantErrorMessage,
-          ],
-        };
-
-        persistConversationState(
-          failedConversation,
-        );
-      } finally {
-        homeDispatch({
-          field: 'loading',
-          value: false,
-        });
-
-        homeDispatch({
-          field: 'messageIsStreaming',
-          value: false,
-        });
-      }
-    },
-    [
-      homeDispatch,
-      fetchOwnedVideoIdsForSearch,
-      isSearchSidebarContext,
-      onMessageSubmitted,
-      onAnswerComplete,
-      handleCompletedAnswerWithContent,
-      persistConversationState,
-    ],
-  );
-
   const handleSend = useCallback(
     async (message: Message, deleteCount = 0, retry = false) => {
       if (
@@ -1609,7 +943,6 @@ export const Chat = () => {
 
       // chat with bot
       if (selectedConversation) {
-        const shouldSendChatHistory = chatHistory && !isSearchSidebarContext();
         let updatedConversation: Conversation;
         if (deleteCount) {
           const updatedMessages = [...selectedConversation.messages];
@@ -1623,7 +956,10 @@ export const Chat = () => {
         } else {
           // remove content from attachment since it could a large base64 encoded string which can cause session stroage overflow
           // Clone the message and update the attachment contentconst updateMessage = JSON.parse(JSON.stringify(message));
-          const updateMessage = removeAttachmentContents(messageWithNewId,);
+          const updateMessage = JSON.parse(JSON.stringify(messageWithNewId));
+          if (updateMessage?.attachment) {
+            updateMessage.attachment.content = '';
+          }
           updatedConversation = {
             ...selectedConversation,
             messages: [...selectedConversation.messages, { ...updateMessage }],
@@ -1661,7 +997,7 @@ export const Chat = () => {
           const conversationExists = currentConversations.some(
             c => c.id === selectedConversation.id
           );
-
+          
           let updatedConversations: Conversation[];
           if (conversationExists) {
             // Update existing conversation
@@ -1675,10 +1011,10 @@ export const Chat = () => {
             // Add new conversation if it doesn't exist in the array
             updatedConversations = [...currentConversations, updatedConversation];
           }
-
+          
           // Update the ref immediately to prevent race condition with incoming WebSocket messages
           conversationsRef.current = updatedConversations;
-
+          
           homeDispatch({
             field: 'conversations',
             value: updatedConversations,
@@ -1686,7 +1022,7 @@ export const Chat = () => {
           saveConversations(updatedConversations, storageKeyPrefix);
 
           let chatMessages;
-          if (shouldSendChatHistory) {
+          if (chatHistory) {
             chatMessages = updatedConversation?.messages?.map(
               (message: Message) => {
                 return {
@@ -1697,15 +1033,15 @@ export const Chat = () => {
                       text: message?.content?.trim() || '',
                     },
                     ...(typeof message?.content === 'object' &&
-                      message?.content &&
-                      'attachments' in message.content &&
-                      (message.content as any).attachments?.length > 0
+                    message?.content &&
+                    'attachments' in message.content &&
+                    (message.content as any).attachments?.length > 0
                       ? (message.content as any).attachments?.map(
-                        (attachment: any) => ({
-                          type: 'image',
-                          image_url: attachment?.content,
-                        })
-                      )
+                          (attachment: any) => ({
+                            type: 'image',
+                            image_url: attachment?.content,
+                          })
+                        )
                       : []),
                   ],
                 };
@@ -1716,7 +1052,7 @@ export const Chat = () => {
           else {
             chatMessages = [
               updatedConversation?.messages[
-              updatedConversation?.messages?.length - 1
+                updatedConversation?.messages?.length - 1
               ],
             ].map(message => {
               return {
@@ -1731,7 +1067,7 @@ export const Chat = () => {
             });
           }
 
-          const wsMessage = {
+                              const wsMessage = {
             // Spread custom params first so fixed fields take precedence
             ...(customAgentParamsRef.current || {}),
             type: webSocketMessageTypes.userMessage,
@@ -1764,7 +1100,7 @@ export const Chat = () => {
         const chatBody: ChatBody = {
           // Spread custom params first so fixed fields take precedence
           ...(customAgentParamsRef.current || {}),
-          messages: shouldSendChatHistory
+          messages: chatHistory
             ? messagesCleaned
             : [{ role: 'user', content: message?.content }],
           chatCompletionURL:
@@ -2097,7 +1433,7 @@ export const Chat = () => {
             }
 
             console.log(`[STREAMING] HTTP response complete detected at: ${new Date().toISOString()} (${performance.now().toFixed(2)}ms)`);
-
+            
             saveConversation(updatedConversation, storageKeyPrefix);
             const updatedConversations: Conversation[] = conversations.map(
               conversation => {
@@ -2185,7 +1521,6 @@ export const Chat = () => {
       onAnswerComplete,
       handleCompletedAnswerWithContent,
       onMessageSubmitted,
-      isSearchSidebarContext,
     ]
   );
 
@@ -2198,24 +1533,14 @@ export const Chat = () => {
   // Expose programmatic submit to embedder (send a message to the agent without user typing)
   useEffect(() => {
     if (!onSubmitMessageReady || !selectedConversation) return;
-
-    const submitMessage = async (content: string) => {
+    const submitMessage = (content: string) => {
       if (uploadFlowActiveRef.current) return;
-
-      customAgentParamsRef.current = await buildSearchAwareCustomParams(
-        customAgentParamsRef.current,
-      );
-
       const message: Message = { role: 'user', content };
       handleSendRef.current?.(message, 0);
+      onMessageSubmitted?.();
     };
-
     onSubmitMessageReady(submitMessage);
-  }, [
-    onSubmitMessageReady,
-    selectedConversation?.id,
-    buildSearchAwareCustomParams,
-  ]);
+  }, [onSubmitMessageReady, selectedConversation?.id, onMessageSubmitted]);
 
   // Expose addQueryContext to embedder so external panels can add context items to the chat input
   useEffect(() => {
@@ -2225,20 +1550,11 @@ export const Chat = () => {
 
   // Create stable onEdit callback to prevent unnecessary re-renders of MemoizedChatMessage
   // Uses ref to access the latest handleSend without depending on it directly
-  const handleEditMessage = useCallback(
-    async (editedMessage: Message, deleteCount?: number) => {
-      if (uploadFlowActiveRef.current) return;
-
-      setCurrentMessage(editedMessage);
-
-      customAgentParamsRef.current = await buildSearchAwareCustomParams(
-        customAgentParamsRef.current,
-      );
-
-      handleSendRef.current?.(editedMessage, deleteCount || 0);
-    },
-    [buildSearchAwareCustomParams],
-  ); // Empty deps - stable reference forever
+  const handleEditMessage = useCallback((editedMessage: Message, deleteCount?: number) => {
+    if (uploadFlowActiveRef.current) return;
+    setCurrentMessage(editedMessage);
+    handleSendRef.current?.(editedMessage, deleteCount || 0);
+  }, []); // Empty deps - stable reference forever
 
   // Create stable onDelete callback - uses refs to access latest state
   const handleDeleteMessage = useCallback((messageIndex: number) => {
@@ -2246,7 +1562,7 @@ export const Chat = () => {
 
     const conversation = selectedConversationRef.current;
     const allConversations = conversationsRef.current;
-
+    
     if (!conversation) return;
 
     const { messages } = conversation;
@@ -2254,7 +1570,7 @@ export const Chat = () => {
 
     // Create a copy of messages to avoid mutating state directly
     const updatedMessages = [...messages];
-
+    
     // If next message is assistant response, delete both
     if (
       messageIndex < updatedMessages.length - 1 &&
@@ -2275,11 +1591,11 @@ export const Chat = () => {
       allConversations || [],
       storageKeyPrefix,
     );
-
+    
     // Update refs immediately to prevent stale state
     selectedConversationRef.current = single;
     conversationsRef.current = all;
-
+    
     homeDispatch({ field: 'selectedConversation', value: single });
     homeDispatch({ field: 'conversations', value: all });
   }, [storageKeyPrefix, homeDispatch]); // Refs for latest state; prefix for correct storage
@@ -2510,145 +1826,59 @@ export const Chat = () => {
           })}
           {loading && <ChatLoader statusUpdateText={`Thinking...`} />}
           <div
-            className={`bg-white dark:bg-black ${(selectedConversation?.messages?.length ?? 0) > 0 || loading
+            className={`bg-white dark:bg-black ${
+              (selectedConversation?.messages?.length ?? 0) > 0 || loading
                 ? 'h-[162px]'
                 : 'h-0'
-              }`}
+            }`}
             ref={messagesEndRef}
           ></div>
         </div>
         <ChatInput
           textareaRef={textareaRef}
           queryContextItems={queryContextItems}
-          onRemoveQueryContext={
-            handleRemoveQueryContext
-          }
+          onRemoveQueryContext={handleRemoveQueryContext}
           chatBlocked={uploadFlowActive}
-          getActiveConversationId={
-            getActiveConversationId
-          }
-          onUploadFlowActiveChange={
-            reportUploadFlowActive
-          }
-          onSend={async (
-            message,
-            customParams,
-          ) => {
-            const imageAttachmentContent =
-              getImageAttachmentContent(message);
-          
-            const items =
-              queryContextRef.current;
-          
+          getActiveConversationId={getActiveConversationId}
+          onUploadFlowActiveChange={reportUploadFlowActive}
+          onSend={(message, customParams) => {
+            const items = queryContextRef.current;
             if (items.length > 0) {
-              const contextJson =
-                JSON.stringify(
-                  items.map(({ data }) => {
-                    const {
-                      contextType:
-                        _omitUiContextType,
-                      ...payload
-                    } = {
-                      ...(data as Record<
-                        string,
-                        unknown
-                      >),
-                    };
-                  
-                    return payload;
-                  }),
-                );
-              
-              const prefix =
-                `[Context: ${contextJson}]`;
-              
-              message = {
-                ...message,
-                content: message.content
-                  ? `${prefix}\n\n${message.content}`
-                  : prefix,
-              };
-            
+              // id, label, and contextType live on QueryDataContext for UI only (keys, chips, tooltips).
+              // Never send contextType to the backend — omit it even if mistakenly duplicated inside `data`.
+              const contextJson = JSON.stringify(
+                items.map(({ data }) => {
+                  const { contextType: _omitUiContextType, ...payload } = {
+                    ...(data as Record<string, unknown>),
+                  };
+                  return payload;
+                }),
+              );
+              const prefix = `[Context: ${contextJson}]`;
+              message = { ...message, content: message.content ? `${prefix}\n\n${message.content}` : prefix };
               setQueryContextItems([]);
             }
-          
             setCurrentMessage(message);
-          
-            if (
-              imageAttachmentContent &&
-              isSearchSidebarContext()
-            ) {
-              await handleImageSearchSend(
-                message,
-                imageAttachmentContent,
-              );
-            
-              return;
+            if (customParams) {
+              customAgentParamsRef.current = customParams;
             }
-          
-            customAgentParamsRef.current =
-              await buildSearchAwareCustomParams(
-                customParams,
-              );
-            
-            await handleSend(message, 0);
+            handleSend(message, 0);
           }}
-          onScrollDownClick={
-            handleScrollDown
-          }
-          onRegenerate={async () => {
-            customAgentParamsRef.current =
-              await buildSearchAwareCustomParams(
-                customAgentParamsRef.current,
-              );
-            
-            if (
-              currentMessage &&
-              currentMessage.role === 'user'
-            ) {
-              /*
-               * 이미지 content는 대화 저장 시 제거되므로
-               * 이미지 검색 메시지는 regenerate할 수 없습니다.
-               */
-              const imageContent =
-                getImageAttachmentContent(
-                  currentMessage,
-                );
-              
-              if (imageContent) {
-                toast.error(
-                  '이미지 검색을 다시 실행하려면 이미지를 다시 첨부해주세요.',
-                );
-                return;
-              }
-            
-              await handleSend(
-                currentMessage,
-                0,
-              );
+          onScrollDownClick={handleScrollDown}
+          onRegenerate={() => {
+            if (currentMessage && currentMessage?.role === 'user') {
+              handleSend(currentMessage, 0);
             } else {
-              const lastUserMessage =
-                fetchLastMessage({
-                  messages:
-                    selectedConversation?.messages ||
-                    [],
-                  role: 'user',
-                });
-              
-              if (lastUserMessage) {
-                await handleSend(
-                  lastUserMessage,
-                  1,
-                );
-              }
+              const lastUserMessage = fetchLastMessage({
+                messages: selectedConversation?.messages || [],
+                role: 'user',
+              });
+              lastUserMessage && handleSend(lastUserMessage, 1);
             }
           }}
-          showScrollDownButton={
-            showScrollDownButton
-          }
-          onStopConversation={
-            handleStopConversation
-          }
+          showScrollDownButton={showScrollDownButton}
+          controller={controllerRef}
+          onStopConversation={handleStopConversation}
         />
         <InteractionModal
           isOpen={modalOpen}

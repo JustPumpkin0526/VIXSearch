@@ -3,6 +3,7 @@ auto_sync_draft: false
 auto_sync_ready: true
 additional_vetters:
   - abhishek-ak-nv
+  - agmohare
   - akshayanv
   - alexzh-nvda
   - ary1111
@@ -45,7 +46,9 @@ additional_vetters:
   - purvag3091
   - rahul3349
   - romalakar
+  - sarathm-nvidia
   - shubham050300
+  - simings-nv
   - soumilinandi
   - ssmmoo1
   - trongp-nvidia

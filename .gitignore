@@ -19,7 +19,3 @@ deploy/docker/rag-secret.override.yml
 *.log
 *checkpoint.*
 .orchestrator-artifacts/*
-
-deploy/docker/data-dir
-models/
-deploy/docker/services/infra/sdrc/.wdm-env/

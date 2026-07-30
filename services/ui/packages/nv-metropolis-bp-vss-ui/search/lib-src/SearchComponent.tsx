@@ -17,11 +17,7 @@ import { VideoModalTooltip } from '@aiqtoolkit-ui/common';
 import { SearchComponentProps, SearchData } from './types';
 
 // Hooks
-import {
-  useSearch,
-  fetchOwnedVideoLookup,
-  OwnedVideoLookup,
-} from './hooks/useSearch';
+import { useSearch } from './hooks/useSearch';
 import { useSearchByImage } from './hooks/useSearchByImage';
 import { extractSearchResultsFromAgentResponse } from './utils/agentResponseParser';
 
@@ -64,49 +60,6 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
 }) => {
   const isDark = theme === 'dark';
   const [agentSearchResults, setAgentSearchResults] = React.useState<SearchData[] | null>(null);
-
-  const showFilenameLookupRef = React.useRef<OwnedVideoLookup | null>(null);
-
-  const resolveAgentDisplayVideoName = React.useCallback(
-    (item: SearchData): string => {
-      const lookup = showFilenameLookupRef.current;
-      const rawVideoName =
-        typeof item.video_name === 'string'
-          ? item.video_name.trim()
-          : '';
-      const sensorId =
-        typeof item.sensor_id === 'string'
-          ? item.sensor_id.trim()
-          : '';
-
-      if (!lookup) {
-        return rawVideoName;
-      }
-
-      return (
-        (sensorId && lookup.showFilenameBySensorId.get(sensorId)) ||
-        (rawVideoName && lookup.showFilenameByStorageFilename.get(rawVideoName)) ||
-        (rawVideoName && lookup.showFilenameByFilename.get(rawVideoName)) ||
-        rawVideoName
-      );
-    },
-    [],
-  );
-
-  const refreshShowFilenameLookup = React.useCallback(async () => {
-    try {
-      showFilenameLookupRef.current = await fetchOwnedVideoLookup();
-    } catch (error) {
-      console.warn('[SearchComponent] Failed to load video filename lookup:', error);
-      showFilenameLookupRef.current = null;
-    }
-  }, []);
-
-  React.useEffect(() => {
-    if (isActive) {
-      refreshShowFilenameLookup();
-    }
-  }, [isActive, refreshShowFilenameLookup]);
 
   React.useEffect(() => {
     loadSearchByImageOverlay()
@@ -245,17 +198,10 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
   const deliverAgentAnswerRef = React.useRef<(answer: string) => boolean>(() => false);
   deliverAgentAnswerRef.current = (answer: string) => {
     const results = extractSearchResultsFromAgentResponse(answer);
-    
     if (results !== null) {
-      const displayResults = results.map((item) => ({
-        ...item,
-        video_name: resolveAgentDisplayVideoName(item),
-      }));
-    
-      setAgentSearchResults(displayResults);
+      setAgentSearchResults(results);
       return true;
     }
-  
     return false;
   };
   const forwardAgentAnswer = React.useCallback((answer: string) => {
@@ -383,6 +329,12 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
   ) : (
     videoModal.title
   );
+
+  console.log('[SearchComponent] mediaWithObjectsBbox', {
+    raw: searchData?.mediaWithObjectsBbox,
+    resolved: mediaWithObjectsBbox,
+    type: typeof mediaWithObjectsBbox,
+  });
   
   return (
     <div 

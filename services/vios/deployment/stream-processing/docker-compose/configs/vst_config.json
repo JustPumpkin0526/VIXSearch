@@ -161,7 +161,7 @@
 		"mega_simulation_delay_max_ms": 5000,
 		"mega_simulation_base_time": "2024-09-27T10:00:00.123456Z",
 		"default_file_expiry_minutes": 10080,
-		"download_files_timeout_secs": 600,
+		"download_files_timeout_secs": 300,
 		"picture_api_timeout_secs": 20,
 		"max_network_db_connections": 10,
 		"restore_rtsp_streams_on_startup": true

@@ -46,17 +46,13 @@ export interface StorageSizeResponse {
 }
 
 export interface FileUploadResponse {
-  bytes: number;
-  chunkCount: string;
-  chunkIdentifier: string;
-  created_at: string;
-  filePath: string;
-  filename: string;
   id: string;
+  filename: string;
+  bytes: number;
   sensorId: string;
   streamId: string;
-  stream_id?: string;
-  sensor_id?: string;
+  filePath: string;
+  created_at: string;
 }
 
 export interface FileUploadError {

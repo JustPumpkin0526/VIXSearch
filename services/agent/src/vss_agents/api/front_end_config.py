@@ -64,7 +64,7 @@ class StreamingIngestConfig(BaseModel):
 
     rtvi_embed_base_url: str = Field(default="", description="Base URL for RTVI embedding service")
     rtvi_embed_model: str = Field(default="cosmos-embed1-448p", description="Embedding model name")
-    rtvi_embed_chunk_duration: int = Field(default=10, description="Chunk duration in seconds for embedding")
+    rtvi_embed_chunk_duration: int = Field(default=5, description="Chunk duration in seconds for embedding")
     rtvi_cv_base_url: str = Field(default="", description="Base URL for RTVI CV service")
     enable_audio: bool = Field(
         default=False,

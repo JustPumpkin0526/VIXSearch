@@ -109,8 +109,6 @@ services:
         # Config file mounts (read-only staging; ds-search-start.sh copies to the writable app dir)
       - $VSS_APPS_DIR/developer-profiles/dev-profile-search/video-analytics-2d-app/deepstream/configs/:/opt/ds-configs-ro:ro
 
-      - ./deepstream/engines:/opt/engines
-
       # Search-profile wrapper script (patches configs, then calls ds-start.sh)
       - $VSS_APPS_DIR/developer-profiles/dev-profile-search/video-analytics-2d-app/deepstream/scripts/ds-search-start.sh:/opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/ds-search-start.sh:ro
 
@@ -125,10 +123,7 @@ services:
       TRANSFORMERS_OFFLINE: 0
       HF_HUB_OFFLINE: 0
       DS_MODE_FLAG: "1"
-      DS_MODEL_FAMILY: rtdetr-gdino
-      MODEL_NAME_2D: GDINO
-      DS_CONFIG_FILE: /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/configs/ds-main-config.txt
-      NUM_SENSORS: "30"
+      DS_MODEL_FAMILY: rtdetr-warehouse
       DS_TRACKER_REID: "true"
       DS_SHOW_SENSOR_ID: "false"
       VISION_ENCODER_MODEL: ${VISION_ENCODER_MODEL:-siglip_v2}
