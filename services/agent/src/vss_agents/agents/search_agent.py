@@ -27,6 +27,7 @@ All paths yield AgentMessageChunk for real-time visibility.
 from collections.abc import AsyncGenerator
 from datetime import UTC
 from datetime import datetime
+from datetime import timedelta
 import json
 import logging
 import time
@@ -56,6 +57,7 @@ from vss_agents.tools.search import SearchOutput
 from vss_agents.tools.search import SearchResult
 from vss_agents.tools.search import execute_core_search
 from vss_agents.tools.vst.utils import get_name_to_stream_id_map
+from vss_agents.utils.time_convert import datetime_to_iso8601
 from vss_agents.utils.time_convert import iso8601_to_datetime
 
 logger = logging.getLogger(__name__)
@@ -117,6 +119,31 @@ class SearchAgentInput(BaseModel):
         description="Per-request options passed by the parent agent. When present, these override matching fields.",
     )
 
+    embed_confidence_threshold: float | None = Field(
+        default=None,
+        description="Override the embed confidence threshold used during fusion fallback",
+    )
+
+    top_k: int | None = Field(
+        default=None,
+        description="Override top_k for internal search retrieval",
+    )
+
+    owned_video_ids: list[str] | None = Field(
+        default=None,
+        description="List of uploaded video sensor IDs owned by the currently logged-in user",
+    )
+
+    class_only_search: bool | None = Field(
+        default=None,
+        description="If True, bypass embed/fusion and run attribute-search-only.",
+    )
+
+    class_names: list[str] | None = Field(
+        default=None,
+        description="Optional exact object.type filters to use in class-only mode.",
+    )
+
 
 def _effective_search_runtime_options(
     search_agent_input: SearchAgentInput,
@@ -129,6 +156,30 @@ def _effective_search_runtime_options(
         search_agent_input.request_options.use_critic,
     )
 
+def _effective_owned_video_ids(
+    search_agent_input: SearchAgentInput,
+) -> list[str] | None:
+    """Resolve owned video IDs from direct search-agent input or parent request options."""
+    if search_agent_input.owned_video_ids is not None:
+        return search_agent_input.owned_video_ids
+
+    request_options = search_agent_input.request_options
+    if request_options is None:
+        return None
+
+    value = getattr(request_options, "owned_video_ids", None)
+
+    if value is None:
+        return None
+
+    if isinstance(value, list):
+        return [
+            str(video_id).strip()
+            for video_id in value
+            if str(video_id).strip()
+        ]
+
+    return None
 
 def _explicit_max_results(search_agent_input: SearchAgentInput) -> int | None:
     """Return max_results only when the caller explicitly provided it."""
@@ -147,13 +198,72 @@ def _apply_final_result_limit(
         return results
     return results[:max_results]
 
+_MIN_RESULT_CLIP_SECONDS = 5.0
+
+
+def _expand_zero_duration_results(
+    results: list[SearchResult],
+    min_duration_seconds: float = _MIN_RESULT_CLIP_SECONDS,
+) -> list[SearchResult]:
+    """Ensure every returned SearchResult has a positive clip duration.
+
+    Some search paths, especially frame/object-level attribute search, can return
+    start_time and end_time as the same timestamp. The UI/VST clip renderer then
+    treats that as a 0-second clip. Expand those results to a small time window.
+    """
+    fixed_results: list[SearchResult] = []
+
+    for result in results:
+        try:
+            if not result.start_time or not result.end_time:
+                fixed_results.append(result)
+                continue
+
+            start_dt = iso8601_to_datetime(result.start_time)
+            end_dt = iso8601_to_datetime(result.end_time)
+
+            if end_dt > start_dt:
+                fixed_results.append(result)
+                continue
+
+            new_end_dt = start_dt + timedelta(seconds=min_duration_seconds)
+
+            logger.info(
+                "Expanded zero-duration search result: sensor_id=%s start=%s end=%s -> %s",
+                result.sensor_id,
+                result.start_time,
+                result.end_time,
+                datetime_to_iso8601(new_end_dt),
+            )
+
+            fixed_results.append(
+                result.model_copy(
+                    update={
+                        "end_time": datetime_to_iso8601(new_end_dt),
+                    }
+                )
+            )
+
+        except Exception as e:
+            logger.warning(
+                "Failed to normalize search result timestamp for sensor_id=%s: %s",
+                getattr(result, "sensor_id", None),
+                e,
+            )
+            fixed_results.append(result)
+
+    return fixed_results
+
 
 def _candidate_top_k(search_agent_input: SearchAgentInput, default_top_k: int) -> int:
-    """Derive internal search depth from config and the requested final count."""
+    """Return the final requested result count.
+
+    Internal candidate expansion is handled by execute_core_search().
+    """
     max_results = _explicit_max_results(search_agent_input)
     if max_results is None:
         return default_top_k
-    return max(default_top_k, max_results)
+    return max(0, max_results)
 
 
 class SearchAgentConfig(FunctionBaseConfig, name="search_agent"):
@@ -254,6 +364,48 @@ class SearchAgentConfig(FunctionBaseConfig, name="search_agent"):
     behavior_index: str = Field(
         default=DEFAULT_BEHAVIOR_INDEX,
         description="Behavior index name for object embedding lookup.",
+    )
+
+    class_only_search_default: bool = Field(
+        default=False,
+        description="If True, bypass embed/fusion and run attribute-search-only by default.",
+    )
+
+    merge_gap_tolerance_seconds: float = Field(
+        default=1.0,
+        ge=0.0,
+        description=(
+            "Maximum allowed gap in seconds when merging consecutive search result clips. "
+            "Use this to absorb timestamp rounding drift."
+        ),
+    )
+
+    min_result_clip_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Minimum duration in seconds for final search result clips after merging. "
+            "Set this to the embedding chunk duration to suppress 0-second or too-short clips."
+        ),
+    )
+
+    candidate_top_k_multiplier: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Multiplier for internal candidate retrieval before merging/filtering. "
+            "Final output is still limited by max_results/top_k, but internal search "
+            "fetches more candidates so merged consecutive clips do not reduce the "
+            "visible result count."
+        ),
+    )
+
+    max_candidate_top_k: int = Field(
+        default=100,
+        ge=1,
+        description=(
+            "Maximum number of internal search candidates to fetch before merging/filtering."
+        ),
     )
 
 
@@ -445,17 +597,46 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             except Exception as e:
                 logger.warning(f"Failed to parse end_time: {e}")
 
-        top_k = _candidate_top_k(search_agent_input, config.default_max_results)
+        top_k = (
+            search_agent_input.top_k
+            if search_agent_input.top_k is not None
+            else _candidate_top_k(search_agent_input, config.default_max_results)
+        )
+
         source_type, use_critic = _effective_search_runtime_options(search_agent_input)
+
+        effective_config = config.model_copy(
+            update={
+                "embed_confidence_threshold": (
+                    search_agent_input.embed_confidence_threshold
+                    if search_agent_input.embed_confidence_threshold is not None
+                    else config.embed_confidence_threshold
+                )
+            }
+        )
+
+        class_only_search_default = bool(
+            getattr(effective_config, "class_only_search_default", False)
+        )
+
+        owned_video_ids = _effective_owned_video_ids(search_agent_input)
 
         search_input = SearchInput(
             query=search_agent_input.query,
             source_type=source_type,
             top_k=top_k,
+            min_cosine_similarity=effective_config.embed_confidence_threshold,
             agent_mode=search_agent_input.agent_mode,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
+            owned_video_ids=owned_video_ids,
             use_critic=use_critic,
+            class_only_search=(
+                search_agent_input.class_only_search
+                if search_agent_input.class_only_search is not None
+                else class_only_search_default
+            ),
+            class_names=search_agent_input.class_names,
         )
 
         # Use shared core search function (async generator, collect all progress and return final result)
@@ -464,7 +645,7 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             search_input=search_input,
             embed_search=embed_search_fn,
             agent_llm=agent_llm,
-            config=config,
+            config=effective_config,
             builder=builder,
             attribute_search_fn=attribute_search_fn,
             critic_agent=critic_agent,
@@ -519,16 +700,44 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             except Exception as e:
                 logger.warning(f"Failed to parse end_time: {e}")
 
-        top_k = _candidate_top_k(search_agent_input, config.default_max_results)
+        top_k = (
+            search_agent_input.top_k
+            if search_agent_input.top_k is not None
+            else _candidate_top_k(search_agent_input, config.default_max_results)
+        )
+
+        effective_config = config.model_copy(
+            update={
+                "embed_confidence_threshold": (
+                    search_agent_input.embed_confidence_threshold
+                    if search_agent_input.embed_confidence_threshold is not None
+                    else config.embed_confidence_threshold
+                )
+            }
+        )
+
+        class_only_search_default = bool(
+            getattr(effective_config, "class_only_search_default", False)
+        )
+
+        owned_video_ids = _effective_owned_video_ids(search_agent_input)
 
         search_input = SearchInput(
             query=query,
             source_type=source_type,
             top_k=top_k,
+            min_cosine_similarity=effective_config.embed_confidence_threshold,
             agent_mode=agent_mode,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
+            owned_video_ids=owned_video_ids,
             use_critic=use_critic,
+            class_only_search=(
+                search_agent_input.class_only_search
+                if search_agent_input.class_only_search is not None
+                else class_only_search_default
+            ),
+            class_names=search_agent_input.class_names,
         )
 
         try:
@@ -539,7 +748,7 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
                 search_input=search_input,
                 embed_search=embed_search_fn,
                 agent_llm=agent_llm,
-                config=config,
+                config=effective_config,
                 builder=builder,
                 attribute_search_fn=attribute_search_fn,
                 critic_agent=critic_agent,
