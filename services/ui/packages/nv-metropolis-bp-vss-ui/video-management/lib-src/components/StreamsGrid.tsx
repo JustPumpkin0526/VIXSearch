@@ -12,6 +12,15 @@ import { StreamCard } from './StreamCard';
 const CARD_MIN_WIDTH = 240; // minmax(240px, 1fr)
 const GRID_GAP = 16; // gap: 16px
 const TARGET_ROWS = 4; // Target number of rows per page (reduced by ~25% from 5)
+const CONTEXT_MENU_WIDTH = 224;
+const CONTEXT_MENU_HEIGHT = 180;
+
+type ContextMenuState = {
+  x: number;
+  y: number;
+  kind: 'stream' | 'group';
+  id: string;
+} | null;
 
 interface StreamsGridProps {
   streams: StreamInfo[];
@@ -22,8 +31,6 @@ interface StreamsGridProps {
   onSelectionChange: (streamId: string, selected: boolean) => void;
   onGroupSelectionChange?: (groupId: string, selected: boolean) => void;
   onSelectAll: (selected: boolean) => void;
-  showVideos: boolean;
-  showRtsps: boolean;
   getEndTimeForStream: (streamId: string) => string | null;
   onPlayStream?: (stream: StreamInfo) => void;
   loadingStreamId?: string | null;
@@ -155,8 +162,6 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
   onSelectionChange,
   onGroupSelectionChange,
   onSelectAll,
-  showVideos,
-  showRtsps,
   getEndTimeForStream,
   onPlayStream,
   loadingStreamId,
@@ -168,9 +173,14 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
   onBackToGroups,
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerRow, setItemsPerRow] = useState(0); // 0 means not yet calculated
+  const [itemsPerRow, setItemsPerRow] = useState(0);
+
+  const [contextMenu, setContextMenu] =
+    useState<ContextMenuState>(null);
+
   const gridRef = useRef<HTMLDivElement>(null);
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   // Calculate items per row based on the actual grid element width
   const calculateItemsPerRow = useCallback(() => {
@@ -259,14 +269,6 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
   const canSelectAll = streams.length > 0 && selectedStreams.size < streams.length;
   const canDeselectAll = selectedStreams.size > 0;
 
-  // Get viewing label based on filter state
-  const getViewingLabel = () => {
-    if (showVideos && showRtsps) return 'All Videos and RTSPs';
-    if (showVideos) return 'Videos only';
-    if (showRtsps) return 'RTSPs only';
-    return 'None';
-  };
-
   const handlePrevPage = () => {
     setCurrentPage((prev) => Math.max(1, prev - 1));
   };
@@ -278,6 +280,110 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
   const handlePageClick = (page: number) => {
     setCurrentPage(page);
   };
+
+  const clearSelectedGroups = useCallback(() => {
+    if (!onGroupSelectionChange) return;
+
+    selectedGroups.forEach((groupId) => {
+      onGroupSelectionChange(groupId, false);
+    });
+  }, [selectedGroups, onGroupSelectionChange]);
+
+  const handleItemContextMenu = useCallback(
+    (
+      event: React.MouseEvent<HTMLDivElement>,
+      kind: 'stream' | 'group',
+      id: string,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      /*
+       * 이미 선택된 항목을 우클릭하면 기존 다중 선택을 유지합니다.
+       *
+       * 선택되지 않은 항목을 우클릭하면 기존 선택을 해제하고
+       * 우클릭한 항목만 선택합니다.
+       */
+      if (kind === 'stream') {
+        if (!selectedStreams.has(id)) {
+          onSelectAll(false);
+          clearSelectedGroups();
+          onSelectionChange(id, true);
+        }
+      } else if (!selectedGroups.has(id)) {
+        onSelectAll(false);
+        clearSelectedGroups();
+        onGroupSelectionChange?.(id, true);
+      }
+
+      // 화면 오른쪽 또는 아래쪽으로 메뉴가 벗어나지 않도록 위치 조정
+      const maxX = Math.max(
+        8,
+        window.innerWidth - CONTEXT_MENU_WIDTH - 8,
+      );
+
+      const maxY = Math.max(
+        8,
+        window.innerHeight - CONTEXT_MENU_HEIGHT - 8,
+      );
+
+      setContextMenu({
+        kind,
+        id,
+        x: Math.min(event.clientX, maxX),
+        y: Math.min(event.clientY, maxY),
+      });
+    },
+    [
+      selectedStreams,
+      selectedGroups,
+      onSelectAll,
+      onSelectionChange,
+      onGroupSelectionChange,
+      clearSelectedGroups,
+    ],
+  );
+
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+
+      if (
+        contextMenuRef.current &&
+        !contextMenuRef.current.contains(target)
+      ) {
+        setContextMenu(null);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setContextMenu(null);
+      }
+    };
+
+    const handleClose = () => {
+      setContextMenu(null);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', handleClose);
+    window.addEventListener('scroll', handleClose, true);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', handleClose);
+      window.removeEventListener('scroll', handleClose, true);
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
+    setContextMenu(null);
+  }, [currentPage, currentGroupName]);
 
   // Generate page numbers to display
   const getPageNumbers = (): (number | 'ellipsis')[] => {
@@ -362,31 +468,9 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
               </Button>
             )}
           </div>
-          <span className="mx-4 text-gray-300 dark:text-gray-600">|</span>
-          <span className="text-sm text-gray-500">
-            Viewing: {getViewingLabel()}
-          </span>
         </div>
 
         <div className="flex items-center gap-2">
-          {onCreateGroup && selectedStreams.size > 0 && !currentGroupName && (
-            <Button
-              kind="primary"
-              onClick={onCreateGroup}
-            >
-              Create Group
-            </Button>
-          )}
-        
-          {onDeleteSelected && (selectedStreams.size > 0 || selectedGroups.size > 0) && (
-            <Button
-              kind="secondary"
-              onClick={onDeleteSelected}
-            >
-              Delete Selected
-            </Button>
-          )}
-        
           {totalPages > 1 && (
             <span className="text-sm text-gray-500">
               {rootItems.length} items
@@ -405,32 +489,153 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
           {paginatedItems.map((item) => {
             if (item.kind === 'group') {
               return (
-                <FolderCard
+                <div
                   key={`group-${item.group.id}`}
-                  group={item.group}
-                  isSelected={selectedGroups.has(item.group.id)}
-                  onSelectionChange={onGroupSelectionChange}
-                  onOpen={() => onOpenGroup?.(item.group.id)}
-                />
+                  onContextMenu={(event) =>
+                    handleItemContextMenu(
+                      event,
+                      'group',
+                      item.group.id,
+                    )
+                  }
+                >
+                  <FolderCard
+                    group={item.group}
+                    isSelected={selectedGroups.has(item.group.id)}
+                    onSelectionChange={onGroupSelectionChange}
+                    onOpen={() => onOpenGroup?.(item.group.id)}
+                  />
+                </div>
               );
             }
           
             return (
-              <StreamCard
+              <div
                 key={item.stream.streamId}
-                stream={item.stream}
-                isSelected={selectedStreams.has(item.stream.streamId)}
-                vstApiUrl={vstApiUrl}
-                onSelectionChange={onSelectionChange}
-                getEndTimeForStream={getEndTimeForStream}
-                onPlay={onPlayStream}
-                isLoadingPlay={loadingStreamId === item.stream.streamId}
-                onAddChatQueryContext={onAddChatQueryContext}
-              />
+                onContextMenu={(event) =>
+                  handleItemContextMenu(
+                    event,
+                    'stream',
+                    item.stream.streamId,
+                  )
+                }
+              >
+                <StreamCard
+                  stream={item.stream}
+                  isSelected={selectedStreams.has(item.stream.streamId)}
+                  vstApiUrl={vstApiUrl}
+                  onSelectionChange={onSelectionChange}
+                  getEndTimeForStream={getEndTimeForStream}
+                  onPlay={onPlayStream}
+                  isLoadingPlay={
+                    loadingStreamId === item.stream.streamId
+                  }
+                  onAddChatQueryContext={onAddChatQueryContext}
+                />
+              </div>
             );
           })}
         </div>
       </div>
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className={[
+            'fixed z-[1000] w-56 overflow-hidden rounded-md',
+            'border border-gray-200 dark:border-gray-700',
+            'bg-white dark:bg-neutral-900',
+            'shadow-xl',
+          ].join(' ')}
+          style={{
+            left: contextMenu.x,
+            top: contextMenu.y,
+          }}
+          role="menu"
+        >
+          <div className="border-b border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+            {selectedStreams.size > 0 && (
+              <span>동영상 {selectedStreams.size}개 선택</span>
+            )}
+
+            {selectedStreams.size > 0 &&
+              selectedGroups.size > 0 && (
+                <span>, </span>
+              )}
+
+            {selectedGroups.size > 0 && (
+              <span>그룹 {selectedGroups.size}개 선택</span>
+            )}
+          </div>
+          
+          {/* 그룹 열기 */}
+          {contextMenu.kind === 'group' && onOpenGroup && (
+            <button
+              type="button"
+              role="menuitem"
+              className={[
+                'block w-full px-3 py-2 text-left text-sm',
+                'text-gray-700 dark:text-gray-200',
+                'hover:bg-gray-100 dark:hover:bg-neutral-800',
+              ].join(' ')}
+              onClick={() => {
+                const groupId = contextMenu.id;
+              
+                setContextMenu(null);
+                onOpenGroup(groupId);
+              }}
+            >
+              Open Group
+            </button>
+          )}
+
+          {/* 그룹 생성 */}
+          {contextMenu.kind === 'stream' &&
+            onCreateGroup &&
+            selectedStreams.size > 0 &&
+            !currentGroupName && (
+              <button
+                type="button"
+                role="menuitem"
+                className={[
+                  'block w-full px-3 py-2 text-left text-sm',
+                  'text-gray-700 dark:text-gray-200',
+                  'hover:bg-gray-100 dark:hover:bg-neutral-800',
+                ].join(' ')}
+                onClick={() => {
+                  setContextMenu(null);
+                  onCreateGroup();
+                }}
+              >
+                Create Group
+              </button>
+            )}
+
+          {/* 선택 항목 삭제 */}
+          {onDeleteSelected &&
+            (selectedStreams.size > 0 ||
+              selectedGroups.size > 0) && (
+              <>
+                <div className="border-t border-gray-200 dark:border-gray-700" />
+              
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={[
+                    'block w-full px-3 py-2 text-left text-sm',
+                    'text-red-600 dark:text-red-400',
+                    'hover:bg-red-50 dark:hover:bg-red-950/30',
+                  ].join(' ')}
+                  onClick={() => {
+                    setContextMenu(null);
+                    void onDeleteSelected();
+                  }}
+                >
+                  Delete Selected
+                </button>
+              </>
+            )}
+        </div>
+      )}
 
       {/* Pagination controls */}
       {totalPages > 1 && (

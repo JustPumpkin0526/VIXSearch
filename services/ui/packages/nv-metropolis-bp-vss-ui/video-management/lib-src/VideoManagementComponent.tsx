@@ -9,8 +9,7 @@ import type {
 } from './types';
 import { useStreams, useStorageTimelines } from './hooks';
 import {
-  filterStreams,
-  isRtspStream,
+  filterVideoStreams,
   parseStreamsResponse,
 } from './utils';
 import {
@@ -20,11 +19,9 @@ import {
 } from '@nemo-agent-toolkit/ui';
 import { chunkedUpload, notifyUploadComplete } from './chunkedUpload';
 import { createApiEndpoints } from './api';
-import { deleteRtspStream } from './rtspStream';
 import { deleteVideo } from './videoDelete';
 import { NUM_PARALLEL_FILE_UPLOADS } from './constants';
 import {
-  AddRtspDialog,
   DeleteConfirmDialog,
   EmptyState,
   LoadingState,
@@ -137,7 +134,6 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const vstApiUrl = videoManagementData?.vstApiUrl;
   const agentApiUrl = videoManagementData?.agentApiUrl;
   const chatUploadFileConfigTemplateJson = videoManagementData?.chatUploadFileConfigTemplateJson;
-  const enableAddRtspButton = videoManagementData?.enableAddRtspButton ?? true;
   const enableVideoUpload = videoManagementData?.enableVideoUpload ?? true;
 
   // Upload dialog state (chat-style upload with config fields)
@@ -175,12 +171,9 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     return `file_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }, []);
 
-  const [isRtspModalOpen, setIsRtspModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
   const searchInputValueRef = useRef('');
-  const [showVideos, setShowVideos] = useState(true);
-  const [showRtsps, setShowRtsps] = useState(true);
   const [selectedStreams, setSelectedStreams] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -205,14 +198,6 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   useEffect(() => {
     isUploadingRef.current = isUploading;
   }, [isUploading]);
-
-  // Sync display filter state with enabled features so label and filter stay correct
-  useEffect(() => {
-    if (!enableAddRtspButton) setShowRtsps(false);
-  }, [enableAddRtspButton]);
-  useEffect(() => {
-    if (!enableVideoUpload) setShowVideos(false);
-  }, [enableVideoUpload]);
 
   const { streams, isLoading, error, refetch } = useStreams({ vstApiUrl });
   const { getEndTimeForStream, getLastTimelineForStream, refetch: refetchTimelines } = useStorageTimelines({ vstApiUrl });
@@ -251,57 +236,65 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   }, [videoGroups]);
 
   const visibleRootGroups = useMemo(() => {
-    if (!showVideos) {
-      return [];
-    }
-
-    const normalizedQuery = appliedSearchQuery.trim().toLowerCase();
+    const normalizedQuery =
+      appliedSearchQuery.trim().toLowerCase();
 
     if (!normalizedQuery) {
       return videoGroups;
     }
 
     return videoGroups.filter((group) => {
-      if (group.name.toLowerCase().includes(normalizedQuery)) {
+      if (
+        group.name
+          .toLowerCase()
+          .includes(normalizedQuery)
+      ) {
         return true;
       }
 
       return group.sensorIds.some((sensorId) => {
-        const streamName = streamsBySensorId.get(sensorId)?.name ?? '';
-        return streamName.toLowerCase().includes(normalizedQuery);
+        const streamName =
+          streamsBySensorId.get(sensorId)?.name ?? '';
+
+        return streamName
+          .toLowerCase()
+          .includes(normalizedQuery);
       });
     });
-  }, [appliedSearchQuery, showVideos, streamsBySensorId, videoGroups]);
+  }, [
+    appliedSearchQuery,
+    streamsBySensorId,
+    videoGroups,
+  ]);
 
   const filteredStreams = useMemo(
-    () => filterStreams(streams, showVideos, showRtsps, appliedSearchQuery),
-    [streams, showVideos, showRtsps, appliedSearchQuery]
+    () =>
+      filterVideoStreams(
+        streams,
+        appliedSearchQuery,
+      ),
+    [streams, appliedSearchQuery],
   );
 
   const visibleStreams = useMemo(() => {
     if (currentGroup) {
-      const currentGroupSensorIds = new Set(currentGroup.sensorIds);
+      const currentGroupSensorIds =
+        new Set(currentGroup.sensorIds);
 
-      return filteredStreams.filter(
-        (stream) =>
-          !isRtspStream(stream) && currentGroupSensorIds.has(stream.sensorId),
+      return filteredStreams.filter((stream) =>
+        currentGroupSensorIds.has(stream.sensorId),
       );
     }
 
-    return filteredStreams.filter((stream) => {
-      if (isRtspStream(stream)) {
-        return true;
-      }
-
-      return !groupedSensorIds.has(stream.sensorId);
-    });
-  }, [currentGroup, filteredStreams, groupedSensorIds]);
-
-  const { hasVideoStreams, hasRtspStreams } = useMemo(() => {
-    const hasVideo = streams.some((stream) => !isRtspStream(stream));
-    const hasRtsp = streams.some(isRtspStream);
-    return { hasVideoStreams: hasVideo, hasRtspStreams: hasRtsp };
-  }, [streams]);
+    return filteredStreams.filter(
+      (stream) =>
+        !groupedSensorIds.has(stream.sensorId),
+    );
+  }, [
+    currentGroup,
+    filteredStreams,
+    groupedSensorIds,
+  ]);
 
   const refetchRef = useRef(refetch);
   const refetchTimelinesRef = useRef(refetchTimelines);
@@ -669,48 +662,35 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     setUploadProgress([]);
   }, []);
 
-  const handleAddRtspClick = () => {
-    setIsRtspModalOpen(true);
-  };
+  const handlePlayStream = useCallback(
+    async (stream: StreamInfo) => {
+      const range =
+        getLastTimelineForStream(stream.streamId);
 
-  const handleRtspDialogClose = () => {
-    setIsRtspModalOpen(false);
-  };
+      if (!range) {
+        return;
+      }
 
-  const handleRtspSuccess = useCallback(() => {
-    refetchRef.current();
-    refetchTimelinesRef.current();
-  }, []);
+      setLoadingStreamId(stream.streamId);
 
-  const handlePlayStream = useCallback(async (stream: StreamInfo) => {
-    let startTime: string;
-    let endTime: string;
-
-    if (isRtspStream(stream)) {
-      const now = new Date();
-      endTime = new Date(now.getTime() - 5000).toISOString();
-      startTime = new Date(now.getTime() - 35000).toISOString();
-    } else {
-      const range = getLastTimelineForStream(stream.streamId);
-      if (!range) return;
-      startTime = range.startTime;
-      endTime = range.endTime;
-    }
-
-    setLoadingStreamId(stream.streamId);
-    try {
-      await openVideoModal({
-        video_name: stream.name,
-        start_time: startTime,
-        end_time: endTime,
-        sensor_id: stream.sensorId,
-      });
-    } catch {
-      // openVideoModal handles errors internally; catch to prevent unhandled rejection
-    } finally {
-      setLoadingStreamId(null);
-    }
-  }, [getLastTimelineForStream, openVideoModal]);
+      try {
+        await openVideoModal({
+          video_name: stream.name,
+          start_time: range.startTime,
+          end_time: range.endTime,
+          sensor_id: stream.sensorId,
+        });
+      } catch {
+        // openVideoModal 내부에서 오류 처리
+      } finally {
+        setLoadingStreamId(null);
+      }
+    },
+    [
+      getLastTimelineForStream,
+      openVideoModal,
+    ],
+  );
 
   const handleSelectionChange = useCallback((streamId: string, selected: boolean) => {
     setSelectedStreams((prev) => {
@@ -768,10 +748,12 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const selectedGroupStreams = useMemo(
     () =>
       Array.from(selectedStreams)
-        .map((streamId) => streamsById.get(streamId))
+        .map((streamId) =>
+          streamsById.get(streamId),
+        )
         .filter(
           (stream): stream is StreamInfo =>
-            Boolean(stream) && !isRtspStream(stream as StreamInfo),
+            Boolean(stream),
         ),
     [selectedStreams, streamsById],
   );
@@ -995,9 +977,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
       const stream = streams.find((s) => s.streamId === selectedStreamId);
       if (!stream) continue;
 
-      const deleteId = isRtspStream(stream)
-        ? stream.sensorId
-        : stream.streamId || stream.sensorId;
+      const deleteId = stream.streamId || stream.sensorId;
 
       if (!deleteId) continue;
 
@@ -1039,46 +1019,44 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
 
       const deletePromises = uniqueVideoIds.map(async (videoId) => {
         const videoStreams = videoIdToStreams.get(videoId) || [];
+      
         const firstStream = videoStreams[0];
-
-        if (firstStream && isRtspStream(firstStream)) {
-          if (!agentApiUrl) {
-            throw new Error('Agent API URL not configured for RTSP stream deletion');
-          }
-
-          try {
-            await deleteRtspStream(agentApiUrl, firstStream.name);
-          } finally {
-            if (firstStream) {
-              try {
-                await deleteUploadedVideoOwnershipRecord(firstStream);
-              } catch (e) {
-                console.warn('[VideoManagement] failed to delete uploaded_videos ownership record after RTSP delete', e);
-              }
-            }
-          }
-
-          return videoId;
-        }
-
+      
         if (!agentApiUrl) {
-          throw new Error('Agent API URL not configured for video deletion');
+          throw new Error(
+            'Agent API URL not configured for video deletion',
+          );
         }
-
+      
         try {
-          await deleteVideo(agentApiUrl, videoId);
-        } catch (err) {
-          console.error('[VideoManagement] deleteVideo failed for', videoId, err);
+          await deleteVideo(
+            agentApiUrl,
+            videoId,
+          );
+        } catch (error) {
+          console.error(
+            '[VideoManagement] deleteVideo failed for',
+            videoId,
+            error,
+          );
+        
+          throw error;
         } finally {
           if (firstStream) {
             try {
-              await deleteUploadedVideoOwnershipRecord(firstStream);
-            } catch (e) {
-              console.warn('[VideoManagement] failed to delete uploaded_videos ownership record', videoId, e);
+              await deleteUploadedVideoOwnershipRecord(
+                firstStream,
+              );
+            } catch (error) {
+              console.warn(
+                '[VideoManagement] ownership cleanup failed',
+                videoId,
+                error,
+              );
             }
           }
         }
-
+      
         return videoId;
       });
 
@@ -1166,8 +1144,6 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         onSelectionChange={handleSelectionChange}
         onGroupSelectionChange={handleGroupSelectionChange}
         onSelectAll={handleSelectAll}
-        showVideos={showVideos}
-        showRtsps={showRtsps}
         getEndTimeForStream={getEndTimeForStream}
         onPlayStream={handlePlayStream}
         loadingStreamId={loadingStreamId}
@@ -1214,19 +1190,8 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         searchQuery={searchQuery}
         onSearchChange={handleSearchChange}
         onSearch={handleSearch}
-        showVideos={showVideos}
-        showRtsps={showRtsps}
-        onShowVideosChange={setShowVideos}
-        onShowRtspsChange={setShowRtsps}
         onFilesSelected={handleFilesSelected}
-        onAddRtspClick={handleAddRtspClick}
-        selectedCount={selectedStreams.size + selectedGroups.size}
-        onDeleteSelected={handleDeleteSelected}
-        isDeleting={isDeleting}
-        enableAddRtspButton={enableAddRtspButton}
         enableVideoUpload={enableVideoUpload}
-        hasVideoStreams={hasVideoStreams}
-        hasRtspStreams={hasRtspStreams}
       />
 
       {/* Main pane: scrollable grid + upload/progress overlays confined to this tab (not full viewport) */}
@@ -1375,14 +1340,6 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
           uploads={uploadProgress}
           onClose={handleClearUploadProgress}
           onCancel={handleCancelUploads}
-        />
-
-        <AddRtspDialog
-          overlay="contained"
-          isOpen={isRtspModalOpen}
-          agentApiUrl={agentApiUrl}
-          onClose={handleRtspDialogClose}
-          onSuccess={handleRtspSuccess}
         />
 
         <DeleteConfirmDialog

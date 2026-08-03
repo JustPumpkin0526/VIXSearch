@@ -8,36 +8,39 @@ export function getFileExtension(path: string): string {
   return parts.length > 1 ? parts.at(-1)!.toUpperCase() : '';
 }
 
-export function isRtspStream(stream: StreamInfo): boolean {
-  return (
-    (stream.url ?? '').toLowerCase().startsWith('rtsp://') ||
-    (stream.vodUrl ?? '').toLowerCase().startsWith('rtsp://')
-  );
-}
-
-export function getStreamType(stream: StreamInfo): 'rtsp' | 'video' {
-  return isRtspStream(stream) ? 'rtsp' : 'video';
-}
-
-export function filterStreams(
+export function filterVideoStreams(
   streams: StreamInfo[],
-  showVideos: boolean,
-  showRtsps: boolean,
-  searchQuery: string
+  searchQuery: string,
 ): StreamInfo[] {
+  const normalizedQuery =
+    searchQuery.trim().toLowerCase();
+
   return streams.filter((stream) => {
-    const streamIsRtsp = isRtspStream(stream);
+    /*
+     * 기존 VST에 RTSP 센서가 남아 있어도
+     * UI로 유입되지 않도록 하는 방어 필터입니다.
+     */
+    const url =
+      (stream.url ?? '').toLowerCase();
 
-    if (!showVideos && !streamIsRtsp) return false;
-    if (!showRtsps && streamIsRtsp) return false;
+    const vodUrl =
+      (stream.vodUrl ?? '').toLowerCase();
 
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase().trim();
-      const name = (stream.name ?? '').toLowerCase();
-      return name.includes(query);
+    const isLegacyRtsp =
+      url.startsWith('rtsp://') ||
+      vodUrl.startsWith('rtsp://');
+
+    if (isLegacyRtsp) {
+      return false;
     }
 
-    return true;
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    return (stream.name ?? '')
+      .toLowerCase()
+      .includes(normalizedQuery);
   });
 }
 

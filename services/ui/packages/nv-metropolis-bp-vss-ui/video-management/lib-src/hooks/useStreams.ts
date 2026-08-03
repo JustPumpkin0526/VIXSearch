@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { StreamInfo, StreamsApiResponse } from '../types';
 import { createApiEndpoints } from '../api';
-import { parseStreamsResponse, isRtspStream } from '../utils';
+import { parseStreamsResponse } from '../utils';
 
 interface UseStreamsOptions {
   vstApiUrl?: string | null;
@@ -17,6 +17,7 @@ interface UseStreamsResult {
 }
 
 type UserVideoRecord = {
+  stream_id?: string | null;
   sensor_id?: string | null;
   video_id?: string | null;
   video_url?: string | null;
@@ -32,6 +33,10 @@ async function fetchUserVideos(): Promise<UserVideoRecord[]> {
   const token = window.localStorage.getItem('vss.auth.token');
 
   if (!token) {
+    console.warn(
+      '[useStreams] auth token is missing',
+    );
+  
     return [];
   }
 
@@ -43,6 +48,11 @@ async function fetchUserVideos(): Promise<UserVideoRecord[]> {
   });
 
   if (!response.ok) {
+    console.error(
+      '[useStreams] failed to fetch user videos:',
+      response.status,
+    );
+
     return [];
   }
 
@@ -53,29 +63,18 @@ async function fetchUserVideos(): Promise<UserVideoRecord[]> {
 
 function findMatchingUserVideo(
   stream: StreamInfo,
+  videosByStreamId: Map<string, UserVideoRecord>,
   videosBySensorId: Map<string, UserVideoRecord>,
   videosByVideoId: Map<string, UserVideoRecord>,
   userVideos: UserVideoRecord[],
 ): UserVideoRecord | null {
 
   if (stream.streamId) {
-    const matchedByVideoId = videosByVideoId.get(stream.streamId);
-    if (matchedByVideoId) {
-      return matchedByVideoId;
-    }
-  }
+    const matchedByStreamId =
+      videosByStreamId.get(stream.streamId);
 
-  if (stream.sensorId) {
-    const matchedBySensorId = videosBySensorId.get(stream.sensorId);
-    if (matchedBySensorId) {
-      return matchedBySensorId;
-    }
-  }
-
-  if (stream.sensorId) {
-    const matched = videosBySensorId.get(stream.sensorId);
-    if (matched) {
-      return matched;
+    if (matchedByStreamId) {
+      return matchedByStreamId;
     }
   }
 
@@ -154,34 +153,48 @@ export function useStreams({
           .map((video) => [video.video_id.trim(), video]),
       );
 
-      const filteredStreams = parsedStreams
-        .map((stream) => {
-          // RTSP를 계속 보여줄 계획이면 유지합니다.
-          // 사용자님처럼 video_file만 쓸 경우 아래 RTSP 유지 로직은 제거해도 됩니다.
-          if (isRtspStream(stream)) {
-            return stream;
-          }
+      const videosByStreamId = new Map(
+        userVideos
+          .filter(
+            (
+              video,
+            ): video is UserVideoRecord & {
+              stream_id: string;
+            } =>
+              typeof video.stream_id === 'string' &&
+              video.stream_id.trim().length > 0,
+          )
+          .map((video) => [
+            video.stream_id.trim(),
+            video,
+          ]),
+      );
 
-          const matchedVideo = findMatchingUserVideo(
-            stream,
-            videosBySensorId,
-            videosByVideoId,
-            userVideos,
-          );
-
-          if (!matchedVideo) {
-            return null;
-          }
-
-          return {
-            ...stream,
-            name:
-              matchedVideo.show_filename ||
-              matchedVideo.filename ||
-              stream.name,
-          };
-        })
-        .filter((stream): stream is StreamInfo => stream !== null);
+      const filteredStreams = parsedStreams.map((stream) => {
+        const matchedVideo = findMatchingUserVideo(
+          stream,
+          videosByStreamId,
+          videosBySensorId,
+          videosByVideoId,
+          userVideos,
+        );
+      
+        if (!matchedVideo) {
+          return null;
+        }
+      
+        return {
+          ...stream,
+          name:
+            matchedVideo.show_filename ||
+            matchedVideo.filename ||
+            stream.name,
+        };
+      })
+      .filter(
+        (stream): stream is StreamInfo =>
+          stream !== null,
+      );
 
       setStreams(filteredStreams);
     } catch (err) {

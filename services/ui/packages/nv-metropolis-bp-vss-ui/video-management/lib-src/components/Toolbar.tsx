@@ -1,49 +1,28 @@
 // SPDX-License-Identifier: MIT
-import React, { useRef, useState, useEffect, useLayoutEffect, useCallback } from 'react';
-import { createPortal } from 'react-dom';
+import React, {
+  useRef,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+} from 'react';
 import { Button, TextInput } from '@nvidia/foundations-react-core';
-
-const DISPLAY_FILTER_MENU_Z_INDEX = 10600;
 
 interface ToolbarProps {
   searchQuery: string;
   onSearchChange: (value: string) => void;
   onSearch: () => void;
-  showVideos: boolean;
-  showRtsps: boolean;
-  onShowVideosChange: (value: boolean) => void;
-  onShowRtspsChange: (value: boolean) => void;
   onFilesSelected: (files: File[]) => void;
-  onAddRtspClick: () => void;
-  selectedCount: number;
-  onDeleteSelected: () => void;
-  isDeleting?: boolean;
-  enableAddRtspButton?: boolean;
   enableVideoUpload?: boolean;
-  /** Only show Video option when API returned at least one video stream */
-  hasVideoStreams?: boolean;
-  /** Only show RTSP option when API returned at least one RTSP stream */
-  hasRtspStreams?: boolean;
 }
 
-export const Toolbar: React.FC<ToolbarProps> = ({
-  searchQuery,
-  onSearchChange,
-  onSearch,
-  showVideos,
-  showRtsps,
-  onShowVideosChange,
-  onShowRtspsChange,
-  onFilesSelected,
-  onAddRtspClick,
-  selectedCount,
-  onDeleteSelected,
-  isDeleting = false,
-  enableAddRtspButton = true,
-  enableVideoUpload = true,
-  hasVideoStreams = true,
-  hasRtspStreams = true,
-}) => {
+export const Toolbar:React.FC<ToolbarProps> = ({
+    searchQuery,
+    onSearchChange,
+    onSearch,
+    onFilesSelected,
+    enableVideoUpload = true,
+  }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const filterTriggerRef = useRef<HTMLDivElement>(null);
   const filterMenuRef = useRef<HTMLDivElement>(null);
@@ -114,19 +93,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
     }
   };
 
-  const showVideoOption = enableVideoUpload && hasVideoStreams;
-  const showRtspOption = enableAddRtspButton && hasRtspStreams;
-  const showDisplayFilter = showVideoOption || showRtspOption;
-
-  const getFilterLabel = () => {
-    const hasVideo = showVideoOption && showVideos;
-    const hasRtsp = showRtspOption && showRtsps;
-    if (hasVideo && hasRtsp) return 'Video, RTSP';
-    if (hasVideo) return 'Video';
-    if (hasRtsp) return 'RTSP';
-    return 'Select File Type';
-  };
-
   const clearSearchSlot = searchQuery ? (
     <button
       type="button"
@@ -180,157 +146,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             Search
           </Button>
         </div>
-
-        {showDisplayFilter && (
-          <div className="relative flex shrink-0 flex-wrap items-center gap-2">
-            <label htmlFor="display-filter-toggle" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              Display:
-            </label>
-            <div className="relative" ref={filterTriggerRef}>
-              <Button
-                kind="tertiary"
-                id="display-filter-toggle"
-                onClick={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
-                aria-expanded={isFilterDropdownOpen}
-                aria-haspopup="true"
-                aria-label={`Display file type: ${getFilterLabel()}`}
-                className="flex items-center gap-2 pr-3" // Add `gap` for spacing between text and chevron, `pr-7` for chevron padding
-              >
-                <span className="truncate">{getFilterLabel()}</span>
-                <span className="ml-2" /> {/* Ensures space after the text */}
-                <svg
-                  className={`absolute right-2 w-4 h-4 transition-transform ${isFilterDropdownOpen ? 'rotate-180' : ''}`}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#76b900"
-                  strokeWidth="2"
-                  aria-hidden
-                >
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </Button>
-
-              {isFilterDropdownOpen &&
-                filterMenuPosition &&
-                typeof document !== 'undefined' &&
-                createPortal(
-                  <div
-                    ref={filterMenuRef}
-                    role="group"
-                    aria-label="Display file type"
-                    className="w-40 rounded-md border shadow-lg py-1 bg-white dark:bg-black border-gray-200 dark:border-gray-600"
-                    style={{
-                      position: 'fixed',
-                      top: filterMenuPosition.top,
-                      left: filterMenuPosition.left,
-                      zIndex: DISPLAY_FILTER_MENU_Z_INDEX,
-                    }}
-                  >
-                    {showVideoOption && (
-                      <label
-                        className="flex items-center gap-2 px-3 py-2 w-full text-left hover:bg-gray-50 dark:hover:bg-black cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={showVideos}
-                          onChange={() => onShowVideosChange(!showVideos)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="sr-only"
-                          aria-label="Video"
-                        />
-                        <span
-                          className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                            showVideos
-                              ? 'bg-green-600 dark:bg-green-600 border-green-600 dark:border-green-600'
-                              : 'bg-white dark:bg-black border-gray-300 dark:border-gray-500'
-                          }`}
-                          aria-hidden
-                        >
-                          {showVideos && (
-                            <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
-                          )}
-                        </span>
-                        <span className="text-sm text-gray-700 dark:text-gray-300">Video</span>
-                      </label>
-                    )}
-
-                    {showRtspOption && (
-                      <label
-                        className="flex items-center gap-2 px-3 py-2 w-full text-left hover:bg-gray-50 dark:hover:bg-black cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={showRtsps}
-                          onChange={() => onShowRtspsChange(!showRtsps)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="sr-only"
-                          aria-label="RTSP"
-                        />
-                        <span
-                          className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                            showRtsps
-                              ? 'bg-green-600 dark:bg-green-600 border-green-600 dark:border-green-600'
-                              : 'bg-white dark:bg-black border-gray-300 dark:border-gray-500'
-                          }`}
-                          aria-hidden
-                        >
-                          {showRtsps && (
-                            <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
-                          )}
-                        </span>
-                        <span className="text-sm text-gray-700 dark:text-gray-300">RTSP</span>
-                      </label>
-                    )}
-                  </div>,
-                  document.body
-                )}
-            </div>
-          </div>
-        )}
-
-        <Button
-          kind="secondary"
-          onClick={onDeleteSelected}
-          disabled={selectedCount === 0 || isDeleting}
-          className="shrink-0"
-        >
-          {isDeleting ? (
-            <svg
-              className="animate-spin"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
-              <path d="M12 2a10 10 0 0 1 10 10" strokeOpacity="1" />
-            </svg>
-          ) : (
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="shrink-0"
-              aria-hidden
-            >
-              <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" />
-              <line x1="15" y1="9" x2="9" y2="15" />
-              <line x1="9" y1="9" x2="15" y2="15" />
-            </svg>
-          )}
-          {isDeleting ? 'Deleting...' : 'Delete Selected'}
-        </Button>
       </div>
     </div>
   );

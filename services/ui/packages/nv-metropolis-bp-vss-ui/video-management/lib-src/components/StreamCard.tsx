@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@nvidia/foundations-react-core';
 import type { StreamInfo, ChatSidebarQueryContext } from '../types';
-import { getFileExtension, isRtspStream, fetchPictureWithQueue, getStreamType } from '../utils';
+import {getFileExtension, fetchPictureWithQueue} from '../utils';
 import { createApiEndpoints } from '../api';
 import { copyToClipboard } from '@nemo-agent-toolkit/ui';
 import { IconCheck } from '@tabler/icons-react';
@@ -32,7 +32,6 @@ export const StreamCard: React.FC<StreamCardProps> = ({
   onContextMenu,
 }) => {
   const extension = getFileExtension(stream.url);
-  const isRtsp = isRtspStream(stream);
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [isLoadingThumbnail, setIsLoadingThumbnail] = useState(true);
   const [thumbnailError, setThumbnailError] = useState(false);
@@ -54,21 +53,29 @@ export const StreamCard: React.FC<StreamCardProps> = ({
       setThumbnailError(false);
 
       try {
-        let pictureUrl: string;
+        const endTime =
+          getEndTimeForStream(stream.streamId);
 
-        if (isRtsp) {
-          pictureUrl = apiEndpoints.LIVE_PICTURE(stream.streamId);
-        } else {
-          const endTime = getEndTimeForStream(stream.streamId);
-          if (!endTime) {
-            if (retryCount < 5 && isMounted) {
-              retryTimer = setTimeout(() => fetchThumbnail(retryCount + 1), 1000);
-              return;
-            }
-            throw new Error('No timeline available');
+        if (!endTime) {
+          if (retryCount < 5 && isMounted) {
+            retryTimer = setTimeout(
+              () => fetchThumbnail(retryCount + 1),
+              1000,
+            );
+          
+            return;
           }
-          pictureUrl = apiEndpoints.REPLAY_PICTURE(stream.streamId, endTime);
+        
+          throw new Error(
+            'No timeline available',
+          );
         }
+
+        const pictureUrl =
+          apiEndpoints.REPLAY_PICTURE(
+            stream.streamId,
+            endTime,
+          );
 
         const blob = await fetchPictureWithQueue(pictureUrl);
         const newUrl = URL.createObjectURL(blob);
@@ -94,7 +101,8 @@ export const StreamCard: React.FC<StreamCardProps> = ({
       isMounted = false;
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [stream.streamId, isRtsp, vstApiUrl, getEndTimeForStream]);
+  }, [stream.streamId,vstApiUrl,getEndTimeForStream,]
+);
 
   useEffect(() => {
     return () => {
@@ -124,7 +132,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({
     const data = {
       sensorName: stream.name,
       streamId: stream.streamId,
-      mediaType: getStreamType(stream),
+      mediaType: 'video',
     };
     const text = JSON.stringify(data, null, 2);
 
@@ -221,7 +229,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({
         )}
 
         <div className="absolute top-2 left-2 px-2 py-0.5 rounded text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
-          {isRtsp ? 'RTSP' : extension || 'VIDEO'}
+          {extension || 'VIDEO'}
         </div>
 
         {onPlay && (
