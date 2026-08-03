@@ -187,8 +187,13 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
+  const [renameGroupName, setRenameGroupName] = useState('');
+  const [isRenamingGroup, setIsRenamingGroup] = useState(false);
+  const [renameGroupError, setRenameGroupError] = useState<string | null>(null);
 
   const createGroupBackdropPressedRef = useRef(false);
+  const renameGroupBackdropPressedRef = useRef(false);
 
   const isUploadingRef = useRef(false);
   const uploadSessionIdRef = useRef(0);
@@ -727,6 +732,147 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     setCurrentGroupId(groupId);
   }, []);
 
+  const handleOpenRenameGroupModal = useCallback(
+    (groupId: string) => {
+      const targetGroup = videoGroups.find(
+        (group) => group.id === groupId,
+      );
+      if (!targetGroup) {
+        console.warn(
+          '[VideoManagement] rename target group not found:',
+          groupId,
+        );
+        return;
+      }
+      setRenameGroupId(targetGroup.id);
+      setRenameGroupName(targetGroup.name);
+      setRenameGroupError(null);
+    },
+    [videoGroups],
+  );
+
+  const handleCloseRenameGroupModal = useCallback(() => {
+    if (isRenamingGroup) {
+      return;
+    }
+
+    setRenameGroupId(null);
+    setRenameGroupName('');
+    setRenameGroupError(null);
+  }, [isRenamingGroup]);
+
+  const handleConfirmRenameGroup = useCallback(async () => {
+    if (!renameGroupId || isRenamingGroup) {
+      return;
+    }
+
+    const nextName = renameGroupName.trim();
+
+    if (!nextName) {
+      setRenameGroupError(
+        '그룹 이름을 입력해주세요.',
+      );
+
+      return;
+    }
+
+    if (nextName.length > 100) {
+      setRenameGroupError(
+        '그룹 이름은 100자 이하로 입력해주세요.',
+      );
+
+      return;
+    }
+
+    const targetGroup = videoGroups.find(
+      (group) => group.id === renameGroupId,
+    );
+
+    if (targetGroup?.name === nextName) {
+      setRenameGroupId(null);
+      setRenameGroupName('');
+      setRenameGroupError(null);
+      return;
+    }
+
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const token =
+      window.localStorage.getItem(
+        'vss.auth.token',
+      );
+
+    if (!token) {
+      setRenameGroupError(
+        '인증 정보가 없습니다. 다시 로그인해주세요.',
+      );
+
+      return;
+    }
+
+    setIsRenamingGroup(true);
+    setRenameGroupError(null);
+
+    try {
+      const response = await fetch(
+        '/api/videos/groups',
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type':
+              'application/json',
+
+            Authorization:
+              `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            group_id: renameGroupId,
+            group_name: nextName,
+          }),
+        },
+      );
+
+      const payload =
+        await response
+          .json()
+          .catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error ??
+          `Failed to rename group: ${response.status}`,
+        );
+      }
+
+      await fetchVideoGroups();
+
+      setRenameGroupId(null);
+      setRenameGroupName('');
+      setRenameGroupError(null);
+    } catch (error) {
+      console.error(
+        '[VideoManagement] failed to rename group:',
+        error,
+      );
+
+      setRenameGroupError(
+        error instanceof Error
+          ? error.message
+          : '그룹 이름 변경에 실패했습니다.',
+      );
+    } finally {
+      setIsRenamingGroup(false);
+    }
+  }, [
+    renameGroupId,
+    renameGroupName,
+    isRenamingGroup,
+    videoGroups,
+    fetchVideoGroups,
+  ]);
+
   const handleSelectAll = useCallback(
     (selected: boolean) => {
       if (selected) {
@@ -1149,6 +1295,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         loadingStreamId={loadingStreamId}
         onAddChatQueryContext={addChatQueryContext}
         onOpenGroup={handleOpenGroup}
+        onRenameGroup={handleOpenRenameGroupModal}
         onCreateGroup={handleCreateGroup}
         onDeleteSelected={handleDeleteSelected}
         currentGroupName={currentGroup?.name ?? null}
@@ -1330,6 +1477,265 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
                   className="rounded bg-cyan-600 px-4 py-2 text-sm text-white disabled:opacity-50"
                 >
                   {isCreatingGroup ? '생성 중...' : '생성'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {renameGroupId !== null ? (
+          <div
+            className={[
+              'absolute inset-0 z-50',
+              'flex items-center justify-center',
+              'bg-black/60 backdrop-blur-sm',
+              'px-4',
+            ].join(' ')}
+            onMouseDown={(event) => {
+              renameGroupBackdropPressedRef.current =
+                event.target === event.currentTarget;
+            }}
+            onClick={(event) => {
+              const shouldClose =
+                renameGroupBackdropPressedRef.current &&
+                event.target === event.currentTarget;
+            
+              renameGroupBackdropPressedRef.current =
+                false;
+            
+              if (shouldClose) {
+                handleCloseRenameGroupModal();
+              }
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="rename-group-title"
+              className={[
+                'w-full max-w-md overflow-hidden',
+                'rounded-2xl',
+                'border border-gray-200 dark:border-neutral-700',
+                'bg-white dark:bg-neutral-900',
+                'shadow-2xl',
+              ].join(' ')}
+              onClick={(event) =>
+                event.stopPropagation()
+              }
+            >
+              {/* Header */}
+              <div className="flex items-start gap-3 px-6 pt-6">
+                <div
+                  className={[
+                    'flex h-10 w-10 shrink-0',
+                    'items-center justify-center',
+                    'rounded-xl',
+                    'bg-cyan-50 text-cyan-600',
+                    'dark:bg-cyan-950/50 dark:text-cyan-300',
+                  ].join(' ')}
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                </div>
+                
+                <div className="min-w-0 flex-1">
+                  <h2
+                    id="rename-group-title"
+                    className="text-lg font-semibold text-gray-900 dark:text-white"
+                  >
+                    Rename Group
+                  </h2>
+                
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    그룹에 사용할 새로운 이름을 입력하세요.
+                  </p>
+                </div>
+                
+                <button
+                  type="button"
+                  aria-label="Close rename group dialog"
+                  disabled={isRenamingGroup}
+                  onClick={handleCloseRenameGroupModal}
+                  className={[
+                    'rounded-lg p-1.5',
+                    'text-gray-400',
+                    'hover:bg-gray-100 hover:text-gray-700',
+                    'dark:hover:bg-neutral-800 dark:hover:text-white',
+                    'disabled:cursor-not-allowed disabled:opacity-50',
+                  ].join(' ')}
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+                
+              {/* Body */}
+              <div className="px-6 py-5">
+                <label
+                  htmlFor="rename-group-name"
+                  className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-200"
+                >
+                  Group name
+                </label>
+                
+                <input
+                  id="rename-group-name"
+                  value={renameGroupName}
+                  disabled={isRenamingGroup}
+                  maxLength={100}
+                  autoFocus
+                  onFocus={(event) => {
+                    event.currentTarget.select();
+                  }}
+                  onChange={(event) => {
+                    setRenameGroupName(
+                      event.target.value,
+                    );
+                  
+                    if (renameGroupError) {
+                      setRenameGroupError(null);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void handleConfirmRenameGroup();
+                    }
+                  
+                    if (event.key === 'Escape') {
+                      handleCloseRenameGroupModal();
+                    }
+                  }}
+                  placeholder="그룹 이름을 입력하세요"
+                  className={[
+                    'w-full rounded-xl border px-3.5 py-2.5',
+                    'text-sm outline-none transition',
+                    'bg-white text-gray-900',
+                    'dark:bg-neutral-800 dark:text-white',
+                    renameGroupError
+                      ? 'border-red-500 focus:ring-2 focus:ring-red-500/20'
+                      : [
+                          'border-gray-300 dark:border-neutral-600',
+                          'focus:border-cyan-500',
+                          'focus:ring-2 focus:ring-cyan-500/20',
+                        ].join(' '),
+                    'disabled:cursor-not-allowed disabled:opacity-60',
+                  ].join(' ')}
+                />
+
+                <div className="mt-2 flex items-start justify-between gap-3">
+                  <div>
+                    {renameGroupError && (
+                      <p className="text-xs text-red-600 dark:text-red-400">
+                        {renameGroupError}
+                      </p>
+                    )}
+                  </div>
+                  
+                  <span className="shrink-0 text-xs text-gray-400">
+                    {renameGroupName.length}/100
+                  </span>
+                </div>
+              </div>
+                  
+              {/* Footer */}
+              <div
+                className={[
+                  'flex justify-end gap-2',
+                  'border-t border-gray-200',
+                  'bg-gray-50 px-6 py-4',
+                  'dark:border-neutral-700',
+                  'dark:bg-neutral-950/60',
+                ].join(' ')}
+              >
+                <button
+                  type="button"
+                  disabled={isRenamingGroup}
+                  onClick={handleCloseRenameGroupModal}
+                  className={[
+                    'rounded-lg border px-4 py-2',
+                    'text-sm font-medium',
+                    'border-gray-300 bg-white',
+                    'text-gray-700 hover:bg-gray-100',
+                    'dark:border-neutral-600',
+                    'dark:bg-neutral-800',
+                    'dark:text-gray-200',
+                    'dark:hover:bg-neutral-700',
+                    'disabled:cursor-not-allowed disabled:opacity-50',
+                  ].join(' ')}
+                >
+                  Cancel
+                </button>
+                
+                <button
+                  type="button"
+                  disabled={
+                    isRenamingGroup ||
+                    renameGroupName.trim().length === 0
+                  }
+                  onClick={() => {
+                    void handleConfirmRenameGroup();
+                  }}
+                  className={[
+                    'inline-flex min-w-[116px]',
+                    'items-center justify-center gap-2',
+                    'rounded-lg px-4 py-2',
+                    'text-sm font-semibold text-white',
+                    'bg-cyan-600 hover:bg-cyan-700',
+                    'disabled:cursor-not-allowed',
+                    'disabled:opacity-50',
+                  ].join(' ')}
+                >
+                  {isRenamingGroup && (
+                    <svg
+                      className="animate-spin"
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      aria-hidden="true"
+                    >
+                      <circle
+                        cx="12"
+                        cy="12"
+                        r="9"
+                        strokeOpacity="0.25"
+                      />
+                      <path
+                        d="M21 12a9 9 0 0 0-9-9"
+                        strokeOpacity="1"
+                      />
+                    </svg>
+                  )}
+
+                  {isRenamingGroup
+                    ? 'Renaming...'
+                    : 'Rename Group'}
                 </button>
               </div>
             </div>

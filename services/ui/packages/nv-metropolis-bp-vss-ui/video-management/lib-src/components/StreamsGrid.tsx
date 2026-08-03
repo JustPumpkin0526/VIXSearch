@@ -37,6 +37,7 @@ interface StreamsGridProps {
   onAddChatQueryContext?: (ctx: ChatSidebarQueryContext) => void;
 
   onOpenGroup?: (groupId: string) => void;
+  onRenameGroup?: (groupId: string) => void;
   onCreateGroup?: () => void;
   onDeleteSelected?: () => void | Promise<void>;
   currentGroupName?: string | null;
@@ -130,7 +131,7 @@ const FolderCard: React.FC<{
 
           <div className="text-center">
             <div className="text-sm font-semibold text-white">
-              Video Group
+              {group.name}
             </div>
             <div className="mt-1 text-xs text-gray-400">
               {group.sensorIds.length} videos
@@ -168,6 +169,7 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
   onAddChatQueryContext,
   onOpenGroup,
   onCreateGroup,
+  onRenameGroup,
   onDeleteSelected,
   currentGroupName,
   onBackToGroups,
@@ -587,6 +589,45 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
               Open Group
             </button>
           )}
+
+          {/* 그룹 이름 변경 */}
+          {contextMenu.kind === 'group' &&
+            onRenameGroup && (
+              <button
+                type="button"
+                role="menuitem"
+                className={[
+                  'flex w-full items-center gap-2 px-3 py-2',
+                  'text-left text-sm',
+                  'text-gray-700 dark:text-gray-200',
+                  'hover:bg-gray-100 dark:hover:bg-neutral-800',
+                  'transition-colors',
+                ].join(' ')}
+                onClick={() => {
+                  const groupId = contextMenu.id;
+                
+                  setContextMenu(null);
+                  onRenameGroup(groupId);
+                }}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              
+                <span>Rename Group</span>
+              </button>
+            )}
 
           {/* 그룹 생성 */}
           {contextMenu.kind === 'stream' &&

@@ -7,6 +7,7 @@ import {
   getVideosPool,
   verifyVideosJwt,
 } from './_lib';
+import { useBodyStyles } from 'rsuite/esm/Modal/utils';
 
 type GroupRow = {
   id: string;
@@ -150,6 +151,69 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
+  if (req.method === 'PATCH') {
+    const body = req.body || {};
+
+    const group_id = typeof (body.group_id) === 'string'
+      ? String(body.group_id).trim()
+      : '';
+
+    const group_name = typeof (body.group_name) === 'string'
+      ? String(body.group_name).trim()
+      : '';
+    
+    if (!group_id) {
+      return res.status(400).json({
+        error: 'group_id is required',
+      });
+    }
+
+    if (!group_name) {
+      return res.status(400).json({
+        error: 'Group name is required'
+      });
+    }
+
+    if (group_name.length > 100) {
+      return res.status(400).json({
+        error: 'Group name must be 100 characters on fewer'
+      });
+    }
+
+    try {
+      const result = await getVideosPool().query(
+        `UPDATE uploaded_video_groups
+        SET name = $1
+        WHERE id = $2
+          AND username = $3
+        RETURNING id`,
+        [group_name, group_id, username],
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({
+          error: 'Video group not found',
+        });
+      }
+
+      const groups = await getGroupsForUser(username);
+
+      return res.status(200).json({
+        ok: true,
+        groups,
+      });
+    } catch (err: any){
+      console.error(
+        '[api/videos/groups][PATCH] failed: ',
+        err,
+      );
+
+      return res.status(500).json({
+        error: String(err?.message || err),
+      });
+    }
+  }
+
   if (req.method === 'DELETE') {
     const body = req.body || {};
     const rawGroupIds = body.group_ids ?? body.groupIds ?? [];
@@ -200,6 +264,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  res.setHeader('Allow', 'GET, POST, DELETE');
+  res.setHeader('Allow', 'GET, POST, PATCH, DELETE');
   return res.status(405).json({ error: 'Method not allowed' });
 }
