@@ -94,7 +94,6 @@ export interface VideoManagementData {
   vstApiUrl?: string | null;
   agentApiUrl?: string | null;
   chatUploadFileConfigTemplateJson?: string | null;
-  enableAddRtspButton?: boolean;
   enableVideoUpload?: boolean;
 }
 

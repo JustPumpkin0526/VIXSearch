@@ -69,11 +69,16 @@ export const useFilter = ({vstApiUrl}: FilterProps) => {
       
       const streamList: StreamInfo[] = [];
       sensors.forEach((sensor: any) => {
-        if (sensor.name && sensor.sensorId && sensor.state === 'online') {
+        if (
+          sensor.name &&
+          sensor.sensorId &&
+          sensor.state === 'online' &&
+          sensor.type === 'sensor_file'
+        ) {
           streamList.push({
             sensorId: sensor.sensorId,
             name: sensor.name,
-            type: sensor.type || ''
+            type: sensor.type
           });
         }
       });

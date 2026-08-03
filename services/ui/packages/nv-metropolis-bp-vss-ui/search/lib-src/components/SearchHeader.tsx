@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { CustomProvider, Whisper, Button, Tooltip } from 'rsuite';
-import { Select, Button as KaizenButton, TextInput, Tag as KaizenTag } from '@nvidia/foundations-react-core';
+import { Button as KaizenButton, TextInput, Tag as KaizenTag } from '@nvidia/foundations-react-core';
 import { IconX } from '@tabler/icons-react';
 import { Search as SearchIcon, Funnel as FunnelIcon, Close as CloseIcon, InfoRound as InfoRoundIcon } from '@rsuite/icons';
 import { IconRefresh } from '@tabler/icons-react';
@@ -26,77 +26,19 @@ interface SearchHeaderProps {
     contentDisabled?: boolean;
   }
 
-const SOURCE_TYPE_OPTIONS = [
-    { label: 'Video', value: 'video_file' },
-    { label: 'RTSP', value: 'rtsp' }
-];
-
-const SOURCE_TYPE_STORAGE_KEY = 'vss_search_sourceType';
-const VALID_SOURCE_TYPES = new Set<string>(['video_file', 'rtsp']);
-
-/** Returns 'video_file' | 'rtsp' when only that type has streams; null when both or neither. */
-function getOnlyOneSourceType(streams: StreamInfo[]): 'video_file' | 'rtsp' | null {
-    const hasVideoFile = streams.some((s) => s.type === 'sensor_file');
-    const hasRtsp = streams.some((s) => s.type === 'sensor_rtsp');
-    if (hasVideoFile && !hasRtsp) return 'video_file';
-    if (!hasVideoFile && hasRtsp) return 'rtsp';
-    return null;
-}
-
-function getStoredSourceType(): string | null {
-    try {
-        const stored = sessionStorage.getItem(SOURCE_TYPE_STORAGE_KEY);
-        return stored && VALID_SOURCE_TYPES.has(stored) ? stored : null;
-    } catch {
-        return null;
-    }
-}
-
 const SEARCH_HEADER_SPIN_STYLE_ID = 'search-header-spin-keyframes';
 let searchHeaderSpinRefCount = 0;
 
 export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams, theme, streams, filterParams, setFilterParams, addFilter, removeFilterTag, filterTags, isSearching = false, onCancelSearch, onGetPendingQuery, submitChatMessage, contentDisabled = false }) => {
-    const [mounted, setMounted] = useState(false);
     const [query, setQuery] = useState(filterParams.query || '');
     const [hasQueryError, setHasQueryError] = useState(false);
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
-    const [sourceType, setSourceType] = useState<string>(() => {
-        const stored = getStoredSourceType();
-        return stored ?? filterParams.sourceType ?? 'video_file';
-    });
+
     // Store videoSources separately for each sourceType (useRef to avoid re-renders)
-    const videoSourcesPerTypeRef = useRef<Record<string, string[]>>({
-        video_file: [],
-        rtsp: []
-    });
     const popoverRef = useRef<HTMLDivElement>(null);
     const filterButtonRef = useRef<HTMLDivElement>(null);
     const filterParamsRef = useRef(filterParams);
     filterParamsRef.current = filterParams;
-    const streamsRef = useRef(streams);
-    streamsRef.current = streams;
-    const initialSourceTypeRef = useRef<string | null>(null);
-    if (initialSourceTypeRef.current === null) {
-        initialSourceTypeRef.current = getStoredSourceType() ?? filterParams.sourceType ?? 'video_file';
-    }
-
-    // Default Source Type only on first visit (no session storage): prefer the option that has video sources.
-    // Once user has a stored preference, allow any option (including one with no streams) to avoid confusion.
-    useEffect(() => {
-        if (getStoredSourceType() != null) return;
-        const next = getOnlyOneSourceType(streams);
-        if (next == null) return; // both or neither → keep current selection
-        if (sourceType === next) return;
-        setSourceType(next);
-        setFilterParams((prev: any) => ({ ...prev, sourceType: next }));
-        try {
-            sessionStorage.setItem(SOURCE_TYPE_STORAGE_KEY, next);
-        } catch {
-            // ignore
-        }
-    }, [streams, sourceType, setFilterParams]);
-
-    useEffect(() => { setMounted(true); }, []);
 
     // Inject keyframes once per document; remove when last instance unmounts (ref-count)
     useEffect(() => {
@@ -115,18 +57,6 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
                 document.getElementById(SEARCH_HEADER_SPIN_STYLE_ID)?.remove();
             }
         };
-    }, []);
-
-    // Sync restored sourceType to parent on mount only (use refs to avoid stale closure).
-    // Skip when only one stream type exists so the "Default Source Type" effect handles it and we don't overwrite.
-    useEffect(() => {
-        const initial = initialSourceTypeRef.current;
-        const current = filterParamsRef.current;
-        if (initial == null) return;
-        if (getOnlyOneSourceType(streamsRef.current) != null) return;
-        if (current.sourceType !== initial) {
-            setFilterParams({ ...current, sourceType: initial });
-        }
     }, []);
 
     useEffect(() => {
@@ -214,33 +144,8 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
       }
       setHasQueryError(false);
       // Always use the search API path (agent or non-agent); do not send Search-submitted queries to the Chat sidebar.
-      onUpdateSearchParams({ ...filterParams, query, sourceType });
-    }, [query, filterParams, sourceType, onUpdateSearchParams]);
-
-    const handleSourceTypeChange = useCallback((value: string | null) => {
-      if (value && value !== sourceType) {
-        try {
-          sessionStorage.setItem(SOURCE_TYPE_STORAGE_KEY, value);
-        } catch {
-          // ignore
-        }
-        // Save current videoSources and restore saved ones for new type
-        videoSourcesPerTypeRef.current[sourceType] = filterParams.videoSources || [];
-        const savedVideoSources = videoSourcesPerTypeRef.current[value] || [];
-        
-        setSourceType(value);
-        const newParams = { ...filterParams, sourceType: value, videoSources: savedVideoSources };
-        setFilterParams(newParams);
-        
-        // Update filter tags based on savedVideoSources
-        const videoSourcesTag = filterTags.find((tag: FilterTag) => tag.key === 'videoSources');
-        if (videoSourcesTag && savedVideoSources.length === 0) {
-          removeFilterTag(videoSourcesTag);
-        } else if (savedVideoSources.length > 0) {
-          addFilter(newParams);
-        }
-      }
-    }, [sourceType, filterParams, filterTags, setFilterParams, removeFilterTag, addFilter]);
+      onUpdateSearchParams({ ...filterParams, query, sourceType: 'video_file' });
+    }, [query, filterParams, onUpdateSearchParams]);
 
     const handleConfirm = useCallback((newParams?: any) => {
       const paramsToUse = newParams || filterParams;
@@ -326,21 +231,6 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
                     />
                   </span>
                 )}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ whiteSpace: 'nowrap' }}>Source Type:</span>
-                    {mounted && (
-                      <Select
-                          data-testid="search-source-type"
-                          value={sourceType}
-                          onValueChange={(val) => handleSourceTypeChange(val)}
-                          disabled={contentDisabled}
-                          items={SOURCE_TYPE_OPTIONS.map(opt => ({
-                            value: opt.value,
-                            children: opt.label,
-                          }))}
-                      />
-                    )}
-                </div>
                 <div style={{ position: 'relative' }} ref={filterButtonRef}>
                     <KaizenButton data-testid="search-filter-button" onClick={togglePopover} disabled={contentDisabled}>Filter <FunnelIcon /></KaizenButton>
                     <FilterDialog
@@ -354,7 +244,6 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
                       setFilterParams={setFilterParams}
                       containerRef={popoverRef}
                       triggerRef={filterButtonRef}
-                      sourceType={sourceType}
                     />
                 </div>
                 {visibleTags.length > 0 && (

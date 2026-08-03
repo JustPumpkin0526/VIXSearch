@@ -21,7 +21,6 @@ interface FilterDialogProps {
   triggerRef?: React.RefObject<HTMLDivElement | null>;
   /** When true, filter inputs are disabled (e.g. when Chat sidebar is open or query is running). */
   disabled?: boolean;
-  sourceType?: string;
 }
 
 export const FilterDialog: React.FC<FilterDialogProps> = ({
@@ -34,8 +33,7 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
   setFilterParams,
   containerRef,
   triggerRef,
-  disabled = false,
-  sourceType = 'video_file',
+  disabled = false
 }) => {
   const [pendingParams, setPendingParams] = useState(filterParams);
   const [wasOpen, setWasOpen] = useState(isOpen);
@@ -74,10 +72,10 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
   const { startDate, endDate, videoSources, similarity, topK } = pendingParams;
 
   // Filter streams based on sourceType
-  const filteredStreams = useMemo(() => {
-    const targetType = sourceType === 'video_file' ? 'sensor_file' : 'sensor_rtsp';
-    return streams.filter(stream => stream.type === targetType);
-  }, [streams, sourceType]);
+  const filteredStreams = useMemo(
+    () => streams.filter((stream) => stream.type === 'sensor_file'),
+    [streams]
+  );
   
   const labelStyle: React.CSSProperties = useMemo(() => ({ 
     width: 70, textAlign: 'right', flexShrink: 0 

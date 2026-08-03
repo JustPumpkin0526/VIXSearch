@@ -159,11 +159,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             + Upload Video
           </Button>
         )}
-        {enableAddRtspButton && (
-          <Button kind="secondary" onClick={onAddRtspClick}>
-            + Add RTSP
-          </Button>
-        )}
 
         <div className="flex min-w-0 max-w-full items-center gap-2">
           <div className="min-w-0 w-[min(100%,14rem)] max-w-sm sm:w-56">

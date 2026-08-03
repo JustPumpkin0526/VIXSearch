@@ -20,11 +20,28 @@ interface UseSearchOptions {
   params?: SearchParams;
 }
 
-function buildRequestBody(searchParams: SearchParams): Record<string, unknown> {
-  const { query, startDate, endDate, videoSources, similarity, topK = 10, agentMode = false, sourceType = 'video_file' } = searchParams;
+function buildRequestBody(
+  searchParams: SearchParams
+): Record<string, unknown> {
+  const {
+    query,
+    startDate,
+    endDate,
+    videoSources,
+    similarity,
+    topK = 10,
+    agentMode = false
+  } = searchParams;
+
   if (agentMode) {
-    return { agent_mode: agentMode, query, top_k: topK, source_type: sourceType };
+    return {
+      agent_mode: agentMode,
+      query,
+      top_k: topK,
+      source_type: 'video_file'
+    };
   }
+
   return {
     query,
     video_sources: videoSources || [],
@@ -33,7 +50,7 @@ function buildRequestBody(searchParams: SearchParams): Record<string, unknown> {
     min_cosine_similarity: Number(similarity)?.toFixed(2),
     top_k: topK,
     agent_mode: agentMode,
-    source_type: sourceType,
+    source_type: 'video_file'
   };
 }
 
