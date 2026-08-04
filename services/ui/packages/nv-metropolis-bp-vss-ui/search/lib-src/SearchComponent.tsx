@@ -157,6 +157,25 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
       () => readVideoGroupSearchScope(),
     );
 
+  const groupSearchSensorIdSet =
+    React.useMemo(() => {
+      if (!groupSearchScope) {
+        return null;
+      }
+
+      return new Set(
+        groupSearchScope.sensorIds
+          .filter(
+            (sensorId): sensorId is string =>
+              typeof sensorId === 'string',
+          )
+          .map((sensorId) =>
+            sensorId.trim(),
+          )
+          .filter(Boolean),
+      );
+    }, [groupSearchScope]);
+
   React.useEffect(() => {
     if (typeof window === 'undefined') {
       return;
@@ -252,6 +271,8 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
     params: filterParams,
     scopeVideoSources:
       groupSearchScope?.sensorIds ?? null,
+    scopeGroupId:
+      groupSearchScope?.groupId ?? null,
   });
 
   const handleClearGroupSearchScope =
@@ -421,22 +442,60 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
   }, [chatSidebarBusy, clearSearchResults]);
 
   // Stable forwarder + ref so Home's register callback stays identity-stable while we always invoke the latest parser/setState.
-  const deliverAgentAnswerRef = React.useRef<(answer: string) => boolean>(() => false);
-  deliverAgentAnswerRef.current = (answer: string) => {
-    const results = extractSearchResultsFromAgentResponse(answer);
-    
-    if (results !== null) {
-      const displayResults = results.map((item) => ({
-        ...item,
-        video_name: resolveAgentDisplayVideoName(item),
-      }));
-    
-      setAgentSearchResults(displayResults);
+  const deliverAgentAnswerRef =
+    React.useRef<
+      (answer: string) => boolean
+    >(() => false);
+
+  deliverAgentAnswerRef.current =
+    (answer: string) => {
+      const results =
+        extractSearchResultsFromAgentResponse(
+          answer,
+        );
+
+      if (results === null) {
+        return false;
+      }
+
+      /*
+       * 그룹 검색이 활성화되어 있으면
+       * Agent 결과에서도 그룹 외 영상을 제거합니다.
+       */
+      const scopedResults =
+        groupSearchSensorIdSet === null
+          ? results
+          : results.filter((item) => {
+              const sensorId =
+                typeof item.sensor_id ===
+                'string'
+                  ? item.sensor_id.trim()
+                  : '';
+
+              return (
+                sensorId.length > 0 &&
+                groupSearchSensorIdSet.has(
+                  sensorId,
+                )
+              );
+            });
+
+      const displayResults =
+        scopedResults.map((item) => ({
+          ...item,
+          video_name:
+            resolveAgentDisplayVideoName(
+              item,
+            ),
+        }));
+
+      setAgentSearchResults(
+        displayResults,
+      );
+
       return true;
-    }
+    };
   
-    return false;
-  };
   const forwardAgentAnswer = React.useCallback((answer: string) => {
     return deliverAgentAnswerRef.current(answer);
   }, []);
@@ -562,6 +621,40 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
   ) : (
     videoModal.title
   );
+
+  const visibleSearchResults =
+    React.useMemo(() => {
+      const sourceResults =
+        agentSearchResults ??
+        searchResults;
+
+      if (
+        groupSearchSensorIdSet === null
+      ) {
+        return sourceResults;
+      }
+
+      return sourceResults.filter(
+        (item) => {
+          const sensorId =
+            typeof item.sensor_id ===
+            'string'
+              ? item.sensor_id.trim()
+              : '';
+
+          return (
+            sensorId.length > 0 &&
+            groupSearchSensorIdSet.has(
+              sensorId,
+            )
+          );
+        },
+      );
+    }, [
+      agentSearchResults,
+      searchResults,
+      groupSearchSensorIdSet,
+    ]);
   
   return (
     <div 
@@ -603,8 +696,12 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
       </div>
       <div className="flex-1 overflow-auto">
         <VideoSearchList
-          data={agentSearchResults ?? searchResults}
-          loading={agentSearchResults !== null ? false : loading}
+          data={visibleSearchResults}
+          loading={
+            agentSearchResults !== null
+              ? false
+              : loading
+          }
           error={agentSearchResults !== null ? null : error}
           isDark={isDark}
           onRefresh={refetch}

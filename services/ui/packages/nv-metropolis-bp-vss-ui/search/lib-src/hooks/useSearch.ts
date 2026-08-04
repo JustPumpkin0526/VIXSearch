@@ -19,6 +19,7 @@ interface UseSearchOptions {
   agentApiUrl?: string;
   params?: SearchParams;
   scopeVideoSources?: string[] | null;
+  scopeGroupId?: string | null;
 }
 
 function buildRequestBody(
@@ -74,7 +75,11 @@ export type OwnedVideoLookup = {
   showFilenameByFilename: Map<string, string>;
 };
 
-export async function fetchOwnedVideoLookup(): Promise<OwnedVideoLookup | null> {
+type FetchOwnedVideoLookupOptions = {
+  groupId?: string | null;
+};
+
+export async function fetchOwnedVideoLookup({groupId = null}: FetchOwnedVideoLookupOptions = {},): Promise<OwnedVideoLookup | null> {
   if (typeof window === 'undefined') {
     return null;
   }
@@ -92,10 +97,21 @@ export async function fetchOwnedVideoLookup(): Promise<OwnedVideoLookup | null> 
     return emptyLookup;
   }
 
-  const response = await fetch('/api/videos/list', {
+  const normalizedGroupId =
+    normalizeLookupKey(groupId);
+
+  const requestUrl =
+    normalizedGroupId
+      ? `/api/videos/list?group_id=${encodeURIComponent(
+          normalizedGroupId,
+        )}`
+      : '/api/videos/list';
+
+  const response = await fetch(requestUrl, {
     method: 'GET',
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization:
+        `Bearer ${token}`,
     },
   });
 
@@ -185,6 +201,7 @@ export const useSearch = ({
   agentApiUrl,
   params = {},
   scopeVideoSources = null,
+  scopeGroupId = null,
 }: UseSearchOptions) => {
   const [searchResults, setSearchResults] = useState<SearchData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -199,6 +216,13 @@ export const useSearch = ({
   scopeVideoSourcesRef.current =
     scopeVideoSources;
   
+  const scopeGroupIdRef =
+    useRef<string | null>(
+      scopeGroupId,
+    );
+
+  scopeGroupIdRef.current =
+    scopeGroupId;
   // AbortController ref for canceling ongoing requests
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -270,11 +294,25 @@ export const useSearch = ({
       setError(null);
       setSearchResults([]);
 
-      let effectiveScopeVideoIds:string[] | null =
+      const activeGroupId =
+        normalizeLookupKey(
+          scopeGroupIdRef.current,
+        );
+      
+      let effectiveScopeVideoIds:
+        string[] | null =
           normalizedScopeVideoSources;
-
+      
+      /*
+       * 그룹이 선택된 경우:
+       * /api/videos/list가 username + group_id로
+       * 필터링된 영상만 반환합니다.
+       */
       const ownedVideoLookup =
-        await fetchOwnedVideoLookup();
+        await fetchOwnedVideoLookup({
+          groupId:
+            activeGroupId || null,
+        });
 
       if (ownedVideoLookup !== null) {
         const { ownedVideoIds } =
@@ -286,9 +324,26 @@ export const useSearch = ({
           return;
         }
       
-        if (
+        if (activeGroupId) {
+          /*
+           * ownedVideoIds는 list.ts에서 이미
+           * username + group_id로 필터링된 결과입니다.
+           */
+          effectiveScopeVideoIds =
+            ownedVideoIds;
+                
+          body.video_sources =
+            ownedVideoIds;
+                
+          body.owned_video_ids =
+            ownedVideoIds;
+        } else if (
           normalizedScopeVideoSources !== null
         ) {
+          /*
+           * 이전 방식과의 호환성을 위한 방어 코드입니다.
+           * groupId 없이 sensorIds만 전달된 경우 사용합니다.
+           */
           const ownedVideoIdSet =
             new Set(ownedVideoIds);
         
@@ -305,16 +360,19 @@ export const useSearch = ({
             setLoading(false);
             return;
           }
-          
+        
           effectiveScopeVideoIds =
             allowedScopeVideoSources;
-
+        
           body.video_sources =
             allowedScopeVideoSources;
         
           body.owned_video_ids =
             allowedScopeVideoSources;
         } else {
+          /*
+           * 그룹을 선택하지 않은 일반 검색입니다.
+           */
           body.owned_video_ids =
             ownedVideoIds;
         

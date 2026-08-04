@@ -25,11 +25,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const username = getAccountIdFromVideosPayload(verification.payload);
   if (!username) return res.status(400).json({ error: 'Token missing subject' });
 
+  const rawGroupId =
+    Array.isArray(req.query.group_id)
+      ? req.query.group_id[0]
+      : req.query.group_id;
+
+  const groupId =
+    typeof rawGroupId === 'string'
+      ? rawGroupId.trim()
+      : '';
+
   await ensureUploadedVideoGroupingSchema();
 
   try {
     const client = await getVideosPool().connect();
     try {
+      const queryParams: string[] = [
+        username,
+      ];
+
+      const conditions: string[] = [
+        'username = $1',
+      ];
+      
+      if (groupId) {
+        queryParams.push(groupId);
+      
+        conditions.push(
+          `group_id = $${queryParams.length}`,
+        );
+      }
+
       const q = `
         SELECT
           video_id,
@@ -43,10 +69,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           uploaded_at,
           group_id
         FROM uploaded_videos
-        WHERE username = $1
+        WHERE ${conditions.join('\n    AND ')}
         ORDER BY uploaded_at DESC
       `;
-      const result = await client.query(q, [username]);
+
+      const result =
+        await client.query(
+          q,
+          queryParams,
+        );
       return res.status(200).json({ videos: result.rows });
     } finally {
       client.release();
