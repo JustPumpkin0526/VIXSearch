@@ -146,6 +146,9 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [isMainDragOver, setIsMainDragOver] = useState(false);
+  const mainDragDepthRef = useRef(0);
+
   // Parse config template from videoManagementData (same as Chat component)
   const configTemplate = useMemo(() => {
     if (chatUploadFileConfigTemplateJson) {
@@ -613,6 +616,92 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     setSelectedFiles((prev) => [...prev, ...newItems]);
     setShowUploadDialog(true);
   }, [generateFileId, generateDefaultFormData]);
+
+  const isFileDragEvent = useCallback(
+  (event: React.DragEvent<HTMLDivElement>) =>
+    Array.from(event.dataTransfer.types).includes('Files'),
+  [],
+);
+
+const handleMainDragEnter = useCallback(
+  (event: React.DragEvent<HTMLDivElement>) => {
+    if (!enableVideoUpload || !isFileDragEvent(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    mainDragDepthRef.current += 1;
+    setIsMainDragOver(true);
+  },
+  [enableVideoUpload, isFileDragEvent],
+);
+
+const handleMainDragOver = useCallback(
+  (event: React.DragEvent<HTMLDivElement>) => {
+    if (!enableVideoUpload || !isFileDragEvent(event)) {
+      return;
+    }
+
+    // drop 이벤트가 발생하려면 dragOver에서 반드시 preventDefault가 필요합니다.
+    event.preventDefault();
+    event.stopPropagation();
+
+    event.dataTransfer.dropEffect = 'copy';
+  },
+  [enableVideoUpload, isFileDragEvent],
+);
+
+const handleMainDragLeave = useCallback(
+  (event: React.DragEvent<HTMLDivElement>) => {
+    if (!enableVideoUpload || !isFileDragEvent(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    mainDragDepthRef.current = Math.max(
+      0,
+      mainDragDepthRef.current - 1,
+    );
+
+    if (mainDragDepthRef.current === 0) {
+      setIsMainDragOver(false);
+    }
+  },
+  [enableVideoUpload, isFileDragEvent],
+);
+
+const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!enableVideoUpload) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    mainDragDepthRef.current = 0;
+    setIsMainDragOver(false);
+
+    const droppedFiles = Array.from(event.dataTransfer.files);
+
+    const supportedFiles = droppedFiles.filter((file) =>
+      /\.(mp4|mkv)$/i.test(file.name),
+    );
+
+    if (supportedFiles.length === 0) {
+      console.warn(
+        '[VideoManagement] No supported video files were dropped',
+      );
+      return;
+    }
+
+    handleFilesSelected(supportedFiles);
+  },
+  [enableVideoUpload, handleFilesSelected],
+);
 
   const uploadProgressRef = useRef<UploadProgress[]>([]);
 
@@ -1343,7 +1432,42 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
 
       {/* Main pane: scrollable grid + upload/progress overlays confined to this tab (not full viewport) */}
       <div className="flex flex-1 min-h-0 flex-col relative">
-        <div className="flex flex-1 min-h-0 flex-col overflow-auto">{renderMainContent()}</div>
+        <div
+          className="flex flex-1 min-h-0 flex-col overflow-auto"
+          onDragEnter={handleMainDragEnter}
+          onDragOver={handleMainDragOver}
+          onDragLeave={handleMainDragLeave}
+          onDrop={handleMainDrop}
+        >
+          {renderMainContent()}
+        </div>
+
+        {isMainDragOver && enableVideoUpload ? (
+          <div
+            className={[
+              'pointer-events-none absolute inset-0 z-30',
+              'flex items-center justify-center',
+              'border-2 border-dashed border-green-500',
+              'bg-green-500/10 backdrop-blur-[1px]',
+            ].join(' ')}
+          >
+            <div
+              className={[
+                'rounded-lg border border-green-500',
+                'bg-white px-8 py-5 shadow-lg',
+                'text-center dark:bg-neutral-900',
+              ].join(' ')}
+            >
+              <p className="text-base font-semibold text-green-500">
+                Drop files to upload
+              </p>
+            
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Movie Files (mp4, mkv)
+              </p>
+            </div>
+          </div>
+        ) : null}
 
         <AgentUploadDialog
           overlay="contained"
@@ -1358,6 +1482,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
               isExpanded: false,
               formData: generateDefaultFormData(),
             }));
+          
             setSelectedFiles((prev) => [...prev, ...newItems]);
           }}
           onClose={() => {
