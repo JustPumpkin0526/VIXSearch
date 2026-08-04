@@ -6,7 +6,7 @@ import { useAuthContext } from '../../contexts/AuthContext';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { ready, login, error } = useAuthContext();
+  const { setError, login, error } = useAuthContext();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -14,20 +14,30 @@ export default function LoginPage() {
 
   const isFilled = username.trim() !== '' && password.trim() !== '';
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (
+    e: React.FormEvent,
+  ) => {
     e.preventDefault();
-
+  
     if (!isFilled || loading) {
       return;
     }
-
+  
+    setError('');
     setLoading(true);
-
+  
     try {
-      await login(username, password);
+      await login(
+        username,
+        password,
+      );
+    
       await router.replace('/');
     } catch {
-      // login hook sets error; remain on page
+      /*
+       * useAuth의 login 함수가 사용자용
+       * 오류 문구를 설정합니다.
+       */
     } finally {
       setLoading(false);
     }
@@ -47,7 +57,11 @@ export default function LoginPage() {
               <label className="block text-base font-medium text-gray-300 mb-2">아이디</label>
               <input
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={(e) => {setUsername(e.target.value);
+                  if (error) {
+                    setError('');
+                  }
+                }}
                 className="block w-full rounded-lg border border-gray-600 px-5 py-3 bg-gray-700 text-gray-100 focus:ring-2 focus:ring-blue-400 focus:outline-none text-lg"
                 required
                 placeholder="아이디를 입력하세요"
@@ -59,7 +73,11 @@ export default function LoginPage() {
               <input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {setPassword(e.target.value);
+                  if (error) {
+                    setError('');
+                  }
+                }}
                 className="block w-full rounded-lg border border-gray-600 px-5 py-3 bg-gray-700 text-gray-100 focus:ring-2 focus:ring-blue-400 focus:outline-none text-lg"
                 required
                 placeholder="비밀번호를 입력하세요"

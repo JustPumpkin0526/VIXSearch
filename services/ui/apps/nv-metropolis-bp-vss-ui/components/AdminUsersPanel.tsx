@@ -21,6 +21,10 @@ export default function AdminUsersPanel() {
   const [creating, setCreating] = React.useState(false);
   const [error, setError] = React.useState('');
   const [message, setMessage] = React.useState('');
+  const [
+    deletingUsername,
+    setDeletingUsername,
+  ] = React.useState<string | null>(null);
 
   const isAdmin = user?.role === 'admin';
 
@@ -88,6 +92,98 @@ export default function AdminUsersPanel() {
     }
   };
 
+  const handleDeleteUser = React.useCallback(
+    async (targetUser: AdminUser) => {
+      if (!user) {
+        return;
+      }
+
+      if (targetUser.username === user.username) {
+        setError(
+          '현재 로그인한 계정은 삭제할 수 없습니다.',
+        );
+        setMessage('');
+        return;
+      }
+
+      const confirmed = window.confirm(
+        [
+          `'${targetUser.username}' 계정을 삭제하시겠습니까?`,
+          '',
+          '해당 계정의 로그인 정보와 사용자별 저장 데이터가 삭제됩니다.',
+          '이 작업은 되돌릴 수 없습니다.',
+        ].join('\n'),
+      );
+
+      if (!confirmed) {
+        return;
+      }
+
+      setDeletingUsername(targetUser.username);
+      setError('');
+      setMessage('');
+
+      try {
+        const response = await fetch(
+          '/api/admin/users',
+          {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              username: targetUser.username,
+            }),
+          },
+        );
+
+        const payload = await response
+          .json()
+          .catch(() => null);
+
+        if (!response.ok) {
+          throw new Error(
+            payload?.error ||
+            'Failed to delete user',
+          );
+        }
+
+        /*
+         * 응답을 기다리지 않고 화면에서도 먼저 제거합니다.
+         */
+        setUsers(currentUsers =>
+          currentUsers.filter(
+            item =>
+              item.username !==
+              targetUser.username,
+          ),
+        );
+
+        setMessage(
+          `계정이 삭제되었습니다: ${targetUser.username}`,
+        );
+
+        /*
+         * DB 상태와 화면 상태를 다시 일치시킵니다.
+         */
+        await loadUsers();
+      } catch (err: any) {
+        setError(
+          String(
+            err?.message ||
+            '계정 삭제 중 오류가 발생했습니다.',
+          ),
+        );
+      } finally {
+        setDeletingUsername(null);
+      }
+    },
+    [
+      loadUsers,
+      user,
+    ],
+  );
+
   if (!isAdmin) {
     return (
       <div className="flex h-full items-center justify-center bg-neutral-950 text-white">
@@ -107,7 +203,7 @@ export default function AdminUsersPanel() {
         <div>
           <h1 className="text-2xl font-semibold">관리자 메뉴</h1>
           <p className="mt-1 text-sm text-gray-400">
-            사용자 계정을 생성하고 권한을 확인합니다.
+            사용자 계정을 생성하고 확인하거나 삭제합니다.
           </p>
         </div>
 
@@ -218,13 +314,19 @@ export default function AdminUsersPanel() {
                   <th className="px-4 py-3 text-left font-medium text-gray-300">
                     생성일
                   </th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-300">
+                    작업
+                  </th>
                 </tr>
               </thead>
 
               <tbody className="divide-y divide-neutral-800">
-                {users.map((item) => (
+                {users.map(item => (
                   <tr key={item.username}>
-                    <td className="px-4 py-3 text-white">{item.username}</td>
+                    <td className="px-4 py-3 text-white">
+                      {item.username}
+                    </td>
+
                     <td className="px-4 py-3">
                       <span
                         className={
@@ -236,20 +338,54 @@ export default function AdminUsersPanel() {
                         {item.role}
                       </span>
                     </td>
+                      
                     <td className="px-4 py-3">
                       {item.isActive ? (
-                        <span className="text-green-300">active</span>
+                        <span className="text-green-300">
+                          active
+                        </span>
                       ) : (
-                        <span className="text-red-300">disabled</span>
+                        <span className="text-red-300">
+                          disabled
+                        </span>
                       )}
                     </td>
+                    
                     <td className="px-4 py-3 text-gray-300">
                       {item.createdBy || '-'}
                     </td>
+                    
                     <td className="px-4 py-3 text-gray-400">
                       {item.createdAt
-                        ? new Date(item.createdAt).toLocaleString()
+                        ? new Date(
+                            item.createdAt,
+                          ).toLocaleString()
                         : '-'}
+                    </td>
+                        
+                    <td className="px-4 py-3 text-right">
+                      {item.username === user?.username ? (
+                        <span className="text-xs text-gray-500">
+                          현재 계정
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleDeleteUser(item);
+                          }}
+                          disabled={
+                            deletingUsername !== null ||
+                            loading
+                          }
+                          className="rounded-lg border border-red-800 px-3 py-1.5 text-xs font-medium text-red-300 transition-colors hover:border-red-500 hover:bg-red-950/60 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {deletingUsername ===
+                          item.username
+                            ? '삭제 중...'
+                            : '삭제'}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -257,7 +393,7 @@ export default function AdminUsersPanel() {
                 {users.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={6}
                       className="px-4 py-8 text-center text-gray-500"
                     >
                       {loading ? '불러오는 중...' : '생성된 계정이 없습니다.'}

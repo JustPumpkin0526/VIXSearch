@@ -15,6 +15,10 @@ type CreateUserBody = {
   role?: UserRole;
 };
 
+type DeleteUserBody = {
+  username?: string;
+};
+
 function normalizeRole(raw: unknown): UserRole {
   return raw === 'admin' ? 'admin' : 'user';
 }
@@ -119,7 +123,126 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    res.setHeader('Allow', 'GET, POST');
+    if (req.method === 'DELETE') {
+      const body = req.body as DeleteUserBody;
+
+      const targetUsername = sanitizeUsername(
+        String(body?.username || ''),
+      );
+    
+      if (!targetUsername) {
+        return res.status(400).json({
+          error: 'username is required',
+        });
+      }
+    
+      if (
+        targetUsername.length < 3 ||
+        targetUsername.length > 64 ||
+        !/^[a-z0-9][a-z0-9._-]*$/.test(targetUsername)
+      ) {
+        return res.status(400).json({
+          error: 'invalid username',
+        });
+      }
+    
+      if (targetUsername === admin.username) {
+        return res.status(400).json({
+          error: '현재 로그인한 계정은 삭제할 수 없습니다.',
+        });
+      }
+    
+      const client = await pool.connect();
+    
+      try {
+        await client.query('BEGIN');
+      
+        const targetResult = await client.query(
+          `
+            SELECT
+              username,
+              role,
+              is_active
+            FROM ui_auth_users
+            WHERE username = $1
+            FOR UPDATE
+          `,
+          [targetUsername],
+        );
+      
+        if (targetResult.rowCount === 0) {
+          await client.query('ROLLBACK');
+        
+          return res.status(404).json({
+            error: '삭제할 계정을 찾을 수 없습니다.',
+          });
+        }
+      
+        const targetUser = targetResult.rows[0] as {
+          username: string;
+          role: UserRole;
+          is_active: boolean;
+        };
+      
+        if (
+          targetUser.role === 'admin' &&
+          targetUser.is_active
+        ) {
+          const adminCountResult = await client.query(
+            `
+              SELECT COUNT(*)::int AS count
+              FROM ui_auth_users
+              WHERE role = 'admin'
+                AND is_active = TRUE
+            `,
+          );
+        
+          const activeAdminCount = Number(
+            adminCountResult.rows[0]?.count || 0,
+          );
+        
+          if (activeAdminCount <= 1) {
+            await client.query('ROLLBACK');
+          
+            return res.status(400).json({
+              error: '마지막 활성 관리자 계정은 삭제할 수 없습니다.',
+            });
+          }
+        }
+      
+        const deleteResult = await client.query(
+          `
+            DELETE FROM ui_auth_users
+            WHERE username = $1
+            RETURNING
+              username,
+              role,
+              is_active
+          `,
+          [targetUsername],
+        );
+      
+        await client.query('COMMIT');
+      
+        const deletedUser = deleteResult.rows[0];
+      
+        return res.status(200).json({
+          deleted: true,
+          user: {
+            username: deletedUser.username,
+            role: deletedUser.role,
+            isActive: deletedUser.is_active,
+          },
+        });
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    res.setHeader('Allow', 'GET, POST, DELETE');
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (error) {
     console.error('[admin/users] failed:', error);

@@ -13,8 +13,28 @@ export type AuthResponse = {
   expiresAt: number;
 };
 
+type AuthErrorCode =
+  | 'AUTH_REQUIRED_FIELDS'
+  | 'AUTH_INVALID_CREDENTIALS'
+  | 'AUTH_METHOD_NOT_ALLOWED'
+  | 'AUTH_SERVER_ERROR';
+
 type ErrorPayload = {
+  code?: AuthErrorCode | string;
   error?: string;
+};
+
+const AUTH_ERROR_MESSAGES: Record<
+  string,
+  string
+> = {
+  AUTH_REQUIRED_FIELDS:'아이디와 비밀번호를 모두 입력해 주세요.',
+
+  AUTH_INVALID_CREDENTIALS:'존재하지 않는 ID/PW 입니다.',
+
+  AUTH_METHOD_NOT_ALLOWED:'지원하지 않는 요청 방식입니다.',
+
+  AUTH_SERVER_ERROR:'로그인 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
 };
 
 const TOKEN_KEY = 'vss.auth.token';
@@ -75,10 +95,47 @@ async function parseApiPayload(response: Response): Promise<AuthResponse | Error
   return { error: text };
 }
 
-function extractError(payload: AuthResponse | ErrorPayload | null, fallback: string): string {
-  if (payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string') {
-    return payload.error;
+function extractError(
+  payload:
+    | AuthResponse
+    | ErrorPayload
+    | null,
+  fallback: string,
+): string {
+  if (
+    payload &&
+    typeof payload === 'object'
+  ) {
+    if (
+      'code' in payload &&
+      typeof payload.code === 'string'
+    ) {
+      const mappedByCode =
+        AUTH_ERROR_MESSAGES[
+          payload.code
+        ];
+
+      if (mappedByCode) {
+        return mappedByCode;
+      }
+    }
+
+    if (
+      'error' in payload &&
+      typeof payload.error === 'string'
+    ) {
+      const rawError =
+        payload.error.trim();
+
+      return (
+        LEGACY_AUTH_ERROR_MESSAGES[
+          rawError
+        ] ||
+        rawError
+      );
+    }
   }
+
   return fallback;
 }
 
@@ -167,20 +224,65 @@ export function useAuth() {
     persist(payload as AuthResponse);
   }, [persist]);
 
-  const login = useCallback(async (username: string, password: string) => {
-    const response = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    const payload = await parseApiPayload(response);
-    if (!response.ok) {
-      const msg = extractError(payload, 'Login failed');
-      setError(msg);
-      throw new Error(msg);
-    }
-    persist(payload as AuthResponse);
-  }, [persist]);
+  const login = useCallback(
+    async (
+      username: string,
+      password: string,
+    ) => {
+      /*
+       * 이전 로그인 오류를 먼저 지웁니다.
+       */
+      setError('');
+    
+      let response: Response;
+    
+      try {
+        response = await fetch(
+          '/api/auth/login',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
+            body: JSON.stringify({
+              username,
+              password,
+            }),
+          },
+        );
+      } catch (error) {
+        console.error(
+          '[auth/login] network error:',
+          error,
+        );
+      
+        const message =
+          '로그인 서버에 연결할 수 없습니다. 네트워크 상태를 확인해 주세요.';
+      
+        setError(message);
+        throw new Error(message);
+      }
+    
+      const payload =
+        await parseApiPayload(response);
+    
+      if (!response.ok) {
+        const message = extractError(
+          payload,
+          '로그인에 실패했습니다. 입력 정보를 확인해 주세요.',
+        );
+      
+        setError(message);
+        throw new Error(message);
+      }
+    
+      persist(
+        payload as AuthResponse,
+      );
+    },
+    [persist],
+  );
 
   const logout = useCallback(async () => {
     try {
