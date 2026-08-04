@@ -1,6 +1,5 @@
 import {
   IconArrowDown,
-  IconBolt,
   IconFile,
   IconPaperclip,
   IconPhoto,
@@ -10,8 +9,6 @@ import {
   IconTrash,
   IconMicrophone,
   IconPlayerStopFilled,
-  IconMicrophone2,
-  IconUpload,
   IconBrain,
   IconVideo,
   IconX,
@@ -19,7 +16,6 @@ import {
 import {
   KeyboardEvent,
   MutableRefObject,
-  Ref,
   useCallback,
   useContext,
   useEffect,
@@ -38,16 +34,45 @@ import { Message, QueryDataContext } from '@/types/chat';
 
 import HomeContext from '@/pages/api/home/home.context';
 import { isQueryProcessing } from '@/utils/app/queryProcessing';
-import { ChatFileUpload } from './ChatFileUpload';
+// Chat file upload UI removed per product request
 import {
   CustomAgentParams,
   CustomAgentParamsValues,
-  ParamField,
   useInitialParamFields,
   fieldsToParams,
 } from './CustomAgentParams';
 
 const QUERY_CONTEXT_ICON_SIZE = 12;
+
+type SpeechRecognitionEventLike = {
+  results: ArrayLike<{
+    0: {
+      transcript: string;
+    };
+  }>;
+};
+
+type SpeechRecognitionInstance = {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  start: () => void;
+  stop: () => void;
+  onresult:
+    | ((event: SpeechRecognitionEventLike) => void)
+    | null;
+  onend: (() => void) | null;
+};
+
+type SpeechRecognitionConstructor =
+  new () => SpeechRecognitionInstance;
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  }
+}
 
 /** Leading icon for context chips; driven by UI-only `contextType` (not sent to the backend). */
 function QueryContextChipIcon({ contextType }: { contextType: string }) {
@@ -65,13 +90,29 @@ function QueryContextChipIcon({ contextType }: { contextType: string }) {
   }
 }
 
+function extractDataUriContentType(
+  dataUri: string,
+  fallback: string,
+): string {
+  const match = dataUri.match(
+    /^data:(image\/[a-zA-Z0-9.+-]+);base64,/,
+  );
+
+  return (
+    match?.[1]?.toLowerCase() ||
+    fallback
+  );
+}
+
 interface Props {
-  onSend: (message: Message, customParams?: CustomAgentParamsValues) => void;
+  onSend: (
+    message: Message,
+    customParams?: CustomAgentParamsValues,
+  ) => void | Promise<void>;
   onRegenerate: () => void;
   onScrollDownClick: () => void;
   textareaRef: MutableRefObject<HTMLTextAreaElement | null>;
   showScrollDownButton: boolean;
-  controller: Ref<AbortController>;
   onStopConversation: () => void;
   queryContextItems?: QueryDataContext[];
   onRemoveQueryContext?: (itemId: string) => void;
@@ -87,7 +128,6 @@ export const ChatInput = ({
   onScrollDownClick,
   textareaRef,
   showScrollDownButton,
-  controller,
   onStopConversation,
   queryContextItems = [],
   onRemoveQueryContext,
@@ -98,9 +138,8 @@ export const ChatInput = ({
   const { t } = useTranslation('chat');
 
   const {
-    state: { selectedConversation, messageIsStreaming, loading, webSocketMode, customAgentParamsJson, chatUploadFileEnabled, chatInputMicEnabled },
+    state: { selectedConversation, messageIsStreaming, loading, customAgentParamsJson, chatUploadFileEnabled, chatInputMicEnabled },
     onChatVideoUploadComplete,
-    dispatch: homeDispatch,
   } = useContext(HomeContext);
 
   const workflow = useWorkflowName();
@@ -127,47 +166,102 @@ export const ChatInput = ({
         console.log('Recording audio file not found, proceeding without sound');
       }
     };
-    
+
     checkAudioFile();
   }, []);
 
   const [content, setContent] = useState<string>('');
   const [isTyping, setIsTyping] = useState<boolean>(false);
-  const fileInputRef = useRef(null);
-  const [inputFile, setInputFile] = useState(null);
-  const [inputFileExtension, setInputFileExtension] = useState('');
-  const [inputFileContent, setInputFileContent] = useState('');
-  const [inputFileContentCompressed, setInputFileContentCompressed] =
-    useState('');
+  const fileInputRef =
+    useRef<HTMLInputElement | null>(null);
+
+  const [inputFile, setInputFile] =
+    useState<string | null>(null);
+
+  const [
+    inputFileContent,
+    setInputFileContent,
+  ] = useState('');
+
+  const [
+    inputFileContentCompressed,
+    setInputFileContentCompressed,
+  ] = useState('');
+
+  const [
+    inputFileContentType,
+    setInputFileContentType,
+  ] = useState('');
   const [isRecording, setIsRecording] = useState(false);
-  const recognitionRef = useRef(null);
+  const recognitionRef =
+    useRef<SpeechRecognitionInstance | null>(
+      null,
+    );
   const [showCustomParams, setShowCustomParams] = useState(false);
   const [paramFields, setParamFields] = useInitialParamFields(customAgentParamsJson);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
 
   const triggerFileUpload = () => {
-    fileInputRef?.current.click();
+    if (
+      chatBlocked ||
+      messageIsStreaming
+    ) {
+      return;
+    }
+
+    fileInputRef.current?.click();
   };
 
-  const handleInputFileDelete = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleInputFileDelete = () => {
     setInputFile(null);
-    setInputFileExtension('');
     setInputFileContent('');
     setInputFileContentCompressed('');
+    setInputFileContentType('');
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
-  const handleFileChange = (e: { target: { files: any[]; value: null } }) => {
-    const file = e.target.files[0];
-    if (file) {
-      // Reset the input value so the same file can be selected again if needed
-      e.target.value = null;
-      const reader = new FileReader();
-      reader.onload = (loadEvent) => {
-        const fullBase64String = loadEvent.target?.result;
-        processFile({ fullBase64String, file });
-      };
-      reader.readAsDataURL(file);
+  const handleFileChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+
+    e.target.value = '';
+
+    if (!file) {
+      return;
     }
+
+    const reader = new FileReader();
+
+    reader.onload = loadEvent => {
+      const fullBase64String =
+        loadEvent.target?.result;
+
+      if (
+        typeof fullBase64String !== 'string'
+      ) {
+        toast.error(
+          '이미지 파일을 읽지 못했습니다.',
+        );
+        return;
+      }
+
+      processFile({
+        fullBase64String,
+        file,
+      });
+    };
+
+    reader.onerror = () => {
+      toast.error(
+        '이미지 파일을 읽는 중 오류가 발생했습니다.',
+      );
+    };
+
+    reader.readAsDataURL(file);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -176,48 +270,132 @@ export const ChatInput = ({
     setContent(value);
   };
 
-  const handleSend = () => {
-    if (chatBlocked || messageIsStreaming) {
+  const handleSend = async () => {
+    if (
+      chatBlocked ||
+      messageIsStreaming
+    ) {
       return;
     }
 
-    // stop recognition if it's running
-    if (isRecording) {
+    if (
+      isRecording &&
+      recognitionRef.current
+    ) {
       recognitionRef.current.stop();
       setIsRecording(false);
     }
 
-    if (!content.trim() && !inputFile && !inputFileContent && queryContextItems.length === 0) {
-      toast.error(t('Please enter a message'));
+    const imageContentToSend =
+      inputFileContentCompressed ||
+      inputFileContent;
+
+    const imageContentTypeToSend =
+      extractDataUriContentType(
+        imageContentToSend,
+        inputFileContentType,
+      );
+
+    const trimmedContent =
+      content.trim();
+
+    const hasImage =
+      Boolean(
+        inputFile &&
+        (
+          inputFileContentCompressed ||
+          inputFileContent
+        ),
+      );
+
+    const hasContext =
+      queryContextItems.length > 0;
+
+    if (
+      !trimmedContent &&
+      !hasImage &&
+      !hasContext
+    ) {
+      toast.error(
+        t('Please enter a message'),
+      );
       return;
     }
 
-    if (inputFile || inputFileContent) {
-      onSend({
-        role: 'user',
-        content: content,
-        attachments: [
+    const customParams =
+      fieldsToParams(paramFields);
+
+    try {
+      if (hasImage) {
+        const imageContentToSend =
+          inputFileContentCompressed ||
+          inputFileContent;
+        await onSend(
           {
-            content: inputFileContent,
-            type: 'image',
+            role: 'user',
+            content:
+              trimmedContent ||
+              '업로드한 이미지와 유사한 장면을 검색해줘',
+            attachments: [
+              {
+                content: imageContentToSend,
+                type: 'image',
+                contentType:
+                  imageContentTypeToSend,
+                mimeType:
+                  imageContentTypeToSend,
+                name:
+                  inputFile || undefined,
+              },
+            ],
+          } as Message,
+          customParams,
+        );
+
+      } else {
+        await onSend(
+          {
+            role: 'user',
+            content: trimmedContent,
           },
-        ],
-      }, fieldsToParams(paramFields));
+          customParams,
+        );
+      }
+
       setContent('');
       setInputFile(null);
-      setInputFileExtension('');
       setInputFileContent('');
       setInputFileContentCompressed('');
-    } else {
-      onSend({ role: 'user', content }, fieldsToParams(paramFields));
-      setContent('');
-      setInputFile(null);
-      setInputFileExtension('');
-      setInputFileContent('');
-      setInputFileContentCompressed('');
+      setInputFileContentType('');
+        
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    
+      if (
+        window.innerWidth < 640 &&
+        textareaRef.current
+      ) {
+        textareaRef.current.blur();
+      }
+    } catch (error) {
+      console.error(
+        'Failed to send chat message:',
+        error,
+      );
+    
+      toast.error(
+        '메시지를 전송하지 못했습니다.',
+      );
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
 
-    if (window.innerWidth < 640 && textareaRef && textareaRef.current) {
+    if (
+      window.innerWidth < 640 &&
+      textareaRef.current
+    ) {
       textareaRef.current.blur();
     }
   };
@@ -226,13 +404,13 @@ export const ChatInput = ({
     if (chatBlocked) return;
     if (e.key === 'Enter' && !isTyping && !isMobile() && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     } else if (e.key === '/' && e.metaKey) {
       e.preventDefault();
     }
   };
 
-      // Use the passed callback for stop conversation
+  // Use the passed callback for stop conversation
   const handleStopConversation = onStopConversation;
 
   const isMobile = () => {
@@ -243,6 +421,15 @@ export const ChatInput = ({
     return mobileRegex.test(userAgent);
   };
 
+  const SUPPORTED_IMAGE_TYPES = new Set([
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+  ]);
+
+  const MAX_IMAGE_SIZE_BYTES =
+    10 * 1024 * 1024;
+
   const processFile = ({
     fullBase64String,
     file,
@@ -250,191 +437,338 @@ export const ChatInput = ({
     fullBase64String: string;
     file: File;
   }) => {
-    const [fileType] = file && file.type.split('/');
-    if (!['image'].includes(fileType)) {
-      alert(`Only supported file types are : ${['image'].join(', ')}`);
-      return;
-    }
+    const normalizedContentType =
+      file.type.toLowerCase();
 
-    if (file && file.size > 2 * 1024 * 1024) {
-      alert(`File size should not exceed : 2 MB`);
-      return;
-    }
-
-    const base64WithoutPrefix = fullBase64String.replace(
-      /^data:image\/[a-z]+;base64,/,
-      '',
-    );
-    const sizeInKB = (base64WithoutPrefix.length * 3) / 4 / 1024;
-    // Compress image only if it larger than 200KB
-    const shouldCompress = sizeInKB > 200;
-
-    if (shouldCompress) {
-      compressImage(
-        fullBase64String,
-        file.type,
-        true,
-        (compressedBase64: string) => {
-          setInputFileContentCompressed(compressedBase64);
-          setInputFileContent(fullBase64String);
-          setInputFile(file?.name);
-          const extension = file.name.split('.').pop() ?? 'jpg';
-          setInputFileExtension(extension.toLowerCase());
-        },
+    if (
+      !SUPPORTED_IMAGE_TYPES.has(
+        normalizedContentType,
+      )
+    ) {
+      toast.error(
+        'JPEG, PNG, WEBP 이미지만 첨부할 수 있습니다.',
       );
-    } else {
-      // If no compression is needed, use the original image data
-      setInputFileContent(fullBase64String);
-      setInputFileContentCompressed(fullBase64String);
-      setInputFile(file.name);
-      const extension = file.name.split('.').pop() ?? 'jpg';
-      setInputFileExtension(extension.toLowerCase());
+      return;
     }
-  };
 
-  const handleInitModal = () => {
-    const selectedPrompt = filteredPrompts[activePromptIndex];
-    if (selectedPrompt) {
-      setContent((prevContent) => {
-        const newContent = prevContent?.replace(
-          /\/\w*$/,
-          selectedPrompt.content,
+    if (
+      file.size <= 0
+    ) {
+      toast.error(
+        '비어 있는 이미지 파일입니다.',
+      );
+      return;
+    }
+
+    if (
+      file.size > MAX_IMAGE_SIZE_BYTES
+    ) {
+      toast.error(
+        '이미지 크기는 10MB 이하여야 합니다.',
+      );
+      return;
+    }
+
+    if (
+      !fullBase64String.startsWith(
+        `data:${normalizedContentType};base64,`,
+      )
+    ) {
+      toast.error(
+        '이미지 데이터 형식이 올바르지 않습니다.',
+      );
+      return;
+    }
+
+    const commaIndex =
+      fullBase64String.indexOf(',');
+
+    const base64WithoutPrefix =
+      commaIndex >= 0
+        ? fullBase64String.slice(
+          commaIndex + 1,
+        )
+        : fullBase64String;
+
+    const sizeInKB =
+      (
+        base64WithoutPrefix.length *
+        3
+      ) /
+      4 /
+      1024;
+
+    setInputFile(file.name);
+    setInputFileContentType(
+      normalizedContentType,
+    );
+
+    const shouldCompress =
+      sizeInKB > 200;
+
+    if (!shouldCompress) {
+      setInputFileContent(
+        fullBase64String,
+      );
+
+      setInputFileContentCompressed(
+        fullBase64String,
+      );
+
+      return;
+    }
+
+    compressImage(
+      fullBase64String,
+      normalizedContentType,
+      true,
+      (
+        compressedBase64: string,
+      ) => {
+        if (
+          typeof compressedBase64 !==
+          'string' ||
+          !compressedBase64
+        ) {
+          toast.error(
+            '이미지 압축에 실패했습니다.',
+          );
+
+          setInputFileContent(
+            fullBase64String,
+          );
+
+          setInputFileContentCompressed(
+            fullBase64String,
+          );
+
+          return;
+        }
+
+        setInputFileContent(
+          fullBase64String,
         );
-        return newContent;
-      });
-      handlePromptSelect(selectedPrompt);
-    }
-    setShowPromptList(false);
-  };
 
-  const parseVariables = (content: string) => {
-    const regex = /{{(.*?)}}/g;
-    const foundVariables = [];
-    let match;
-
-    while ((match = regex.exec(content)) !== null) {
-      foundVariables.push(match[1]);
-    }
-
-    return foundVariables;
-  };
-
-  const handleSubmit = (updatedVariables: string[]) => {
-    const newContent = content?.replace(/{{(.*?)}}/g, (match, variable) => {
-      const index = variables.indexOf(variable);
-      return updatedVariables[index];
-    });
-
-    setContent(newContent);
-
-    if (textareaRef && textareaRef.current) {
-      textareaRef.current.focus();
-    }
+        setInputFileContentCompressed(
+          compressedBase64,
+        );
+      },
+    );
   };
 
   // Additional handlers for drag and drop
-  const handleDragOver = (e: React.DragEvent<HTMLTextAreaElement>) => {
-    e.preventDefault(); // Necessary to allow the drop event
-  };
+  const handleDragOver = (
+    e: React.DragEvent<
+      HTMLTextAreaElement
+    >,
+  ) => {
+    if (
+      chatBlocked ||
+      messageIsStreaming
+    ) {
+      return;
+    }
 
-  const handleDrop = (e: React.DragEvent<HTMLTextAreaElement>) => {
     e.preventDefault();
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      const file = files[0];
-      const reader = new FileReader();
-      reader.onload = (loadEvent) => {
-        const fullBase64String = loadEvent.target?.result;
-        processFile({ fullBase64String, file });
-      };
-      reader.readAsDataURL(file);
-    }
+    e.dataTransfer.dropEffect = 'copy';
   };
 
-  const handlePaste = (event: {
-    clipboardData: any;
-    originalEvent: { clipboardData: any };
-  }) => {
-    const clipboardData =
-      event.clipboardData || event.originalEvent.clipboardData;
-    let items = clipboardData.items;
-    let isImagePasted = false;
+  const handleDrop = (
+    e: React.DragEvent<HTMLTextAreaElement>,
+  ) => {
+    e.preventDefault();
 
-    if (items) {
-      for (const item of items) {
-        if (item.type.indexOf('image') === 0) {
-          isImagePasted = true;
-          const file = item.getAsFile();
-          // Reading the image as Data URL (base64)
-          const reader = new FileReader();
-          reader.onload = (loadEvent) => {
-            const fullBase64String = loadEvent.target?.result;
-            processFile({ fullBase64String, file });
-          };
-          reader.readAsDataURL(file);
-          break; // Stop checking after finding image, preventing any text setting
+    if (
+      chatBlocked ||
+      messageIsStreaming
+    ) {
+      return;
+    }
+
+    const file =
+      e.dataTransfer.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = loadEvent => {
+      const fullBase64String =
+        loadEvent.target?.result;
+
+      if (
+        typeof fullBase64String !==
+        'string'
+      ) {
+        toast.error(
+          '드롭한 이미지를 읽지 못했습니다.',
+        );
+        return;
+      }
+
+      processFile({
+        fullBase64String,
+        file,
+      });
+    };
+
+    reader.readAsDataURL(file);
+  };
+
+  const handlePaste = (
+    event: React.ClipboardEvent<HTMLTextAreaElement>,
+  ) => {
+    if (
+      chatBlocked ||
+      messageIsStreaming
+    ) {
+      return;
+    }
+
+    const items =
+      event.clipboardData.items;
+
+    for (const item of items) {
+      if (
+        !item.type.startsWith('image/')
+      ) {
+        continue;
+      }
+
+      const file = item.getAsFile();
+
+      if (!file) {
+        toast.error(
+          '붙여넣은 이미지를 읽지 못했습니다.',
+        );
+        return;
+      }
+
+      event.preventDefault();
+
+      const reader = new FileReader();
+
+      reader.onload = loadEvent => {
+        const fullBase64String =
+          loadEvent.target?.result;
+
+        if (
+          typeof fullBase64String !== 'string'
+        ) {
+          toast.error(
+            '붙여넣은 이미지를 읽지 못했습니다.',
+          );
+          return;
         }
-      }
+
+        processFile({
+          fullBase64String,
+          file,
+        });
+      };
+
+      reader.onerror = () => {
+        toast.error(
+          '붙여넣은 이미지를 읽는 중 오류가 발생했습니다.',
+        );
+      };
+
+      reader.readAsDataURL(file);
+      return;
     }
 
-    // Handle text only if no image was pasted
-    if (!isImagePasted) {
-      let text = clipboardData.getData('text/plain');
-      if (text) {
-        // setContent(text); // Set text content only if text is pasted
-      }
-    }
+    // 이미지가 없으면 브라우저의 기본 텍스트 붙여넣기를 유지합니다.
   };
 
   useEffect(() => {
     if (textareaRef && textareaRef.current) {
       textareaRef.current.style.height = 'inherit';
       textareaRef.current.style.height = `${textareaRef.current?.scrollHeight}px`;
-      textareaRef.current.style.overflow = `${
-        textareaRef?.current?.scrollHeight > 400 ? 'auto' : 'hidden'
-      }`;
+      textareaRef.current.style.overflow = `${textareaRef?.current?.scrollHeight > 400 ? 'auto' : 'hidden'
+        }`;
     }
   }, [content, textareaRef]);
 
-  const handleSpeechToText = useCallback(() => {
-    if (!recognitionRef.current) {
-      const SpeechRecognition =
-        window?.SpeechRecognition || window?.webkitSpeechRecognition;
-
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.lang = 'en-US';
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.continuous = true;
-
-      recognitionRef.current.onresult = (event) => {
-        let currentTranscript = '';
-        for (let i = 0; i < event.results.length; i++) {
-          currentTranscript += event.results[i][0].transcript;
+  const handleSpeechToText =
+    useCallback(() => {
+      if (!recognitionRef.current) {
+        const SpeechRecognition =
+          window.SpeechRecognition ||
+          window.webkitSpeechRecognition;
+      
+        if (!SpeechRecognition) {
+          toast.error(
+            '이 브라우저에서는 음성 입력을 지원하지 않습니다.',
+          );
+          return;
         }
-        setContent(currentTranscript);
-      };
-
-      recognitionRef.current.onend = () => {
-        if (isRecording) {
-          recognitionRef.current.start();
-        }
-      };
-    }
-
-    if (!isRecording) {
-      // Play sound when recording starts (only if audio file is available)
-      if (recordingStartSound) {
-        recordingStartSound.play().catch(error => {
-          console.log('Could not play recording sound:', error);
-        });
+      
+        const recognition =
+          new SpeechRecognition();
+      
+        recognition.lang = 'en-US';
+        recognition.interimResults = true;
+        recognition.continuous = true;
+      
+        recognition.onresult = (
+          event: SpeechRecognitionEventLike,
+        ) => {
+          let currentTranscript = '';
+        
+          for (
+            let i = 0;
+            i < event.results.length;
+            i++
+          ) {
+            const result =
+              event.results[i];
+          
+            currentTranscript +=
+              result?.[0]?.transcript ?? '';
+          }
+        
+          setContent(currentTranscript);
+        };
+      
+        recognition.onend = () => {
+          if (isRecording) {
+            recognition.start();
+          }
+        };
+      
+        recognitionRef.current =
+          recognition;
       }
-      recognitionRef.current.start();
-      setIsRecording(true);
-    } else {
-      recognitionRef.current.stop();
-      setIsRecording(false);
-    }
-  }, [isRecording]);
+    
+      if (!isRecording) {
+        if (recordingStartSound) {
+          recordingStartSound
+          .play()
+          .catch((error: unknown) => {
+            const errorMessage =
+              error instanceof Error
+                ? error.message
+                : String(error);
+          
+            console.log(
+              'Could not play recording sound:',
+              errorMessage,
+            );
+          });
+        }
+      
+        recognitionRef.current.start();
+        setIsRecording(true);
+      } else {
+        recognitionRef.current.stop();
+        setIsRecording(false);
+      }
+    }, [
+      isRecording,
+      recordingStartSound,
+    ]);
 
   useEffect(() => {
     return () => {
@@ -452,9 +786,8 @@ export const ChatInput = ({
 
   return (
     <div
-      className={`absolute bottom-0 left-0 w-full border-transparent bg-gradient-to-b from-transparent via-white to-white pt-6 dark:border-white/20 dark:via-black dark:to-black pointer-events-none ${
-        isMobile() ? 'pb-14' : 'pb-4'
-      }`}
+      className={`absolute bottom-0 left-0 w-full border-transparent bg-gradient-to-b from-transparent via-white to-white pt-6 dark:border-white/20 dark:via-black dark:to-black pointer-events-none ${isMobile() ? 'pb-14' : 'pb-4'
+        }`}
     >
       <div className="stretch mx-auto mt-4 flex flex-row gap-3 last:mb-2 md:mt-[52px] w-full max-w-[95%] pointer-events-auto">
         {messageIsStreaming && !chatBlocked && (
@@ -480,23 +813,25 @@ export const ChatInput = ({
           )}
 
         <div className="relative mx-2 flex w-full flex-grow flex-col rounded-md border border-black/10 bg-white shadow-[0_0_10px_rgba(0,0,0,0.10)] dark:border-neutral-700 dark:bg-black dark:text-white dark:shadow-[0_0_15px_rgba(0,0,0,0.10)] sm:mx-4">
-          {!content && !isRecording && queryContextItems.length === 0 && (
-            <div
-              data-testid="chat-input-placeholder"
-              className={`pointer-events-none absolute inset-0 flex items-center py-2 text-gray-500 dark:text-gray-400 md:py-3 ${leftPaddingClass} ${paramFields.length > 0 ? 'pr-20' : 'pr-12'}`}
-              aria-hidden
-            >
-              <span className="min-w-0 truncate">
-                Unlock {workflow} knowledge and expertise
-              </span>
-            </div>
-          )}
+          {!content &&
+            !inputFile &&
+            !isRecording &&
+            queryContextItems.length === 0 && (
+              <div
+                data-testid="chat-input-placeholder"
+                className={`pointer-events-none absolute inset-0 flex items-center py-2 text-gray-500 dark:text-gray-400 md:py-3 ${leftPaddingClass} ${paramFields.length > 0 ? 'pr-20' : 'pr-12'}`}
+                aria-hidden
+              >
+                <span className="min-w-0 truncate">
+                  Unlock {workflow} knowledge and expertise
+                </span>
+              </div>
+            )}
           {queryContextItems.length > 0 && (
-            <div className={`flex flex-wrap gap-1.5 pt-2 pr-12 ${
-              chatUploadFileEnabled
+            <div className={`flex flex-wrap gap-1.5 pt-2 pr-12 ${chatUploadFileEnabled
                 ? 'pl-12 sm:pl-18 md:pl-20'
                 : 'pl-10 sm:pl-12 md:pl-14'
-            }`}>
+              }`}>
               {queryContextItems.map((item) => (
                 <span
                   key={item.id}
@@ -526,11 +861,10 @@ export const ChatInput = ({
               bottom: `${textareaRef?.current?.scrollHeight}px`,
               minHeight: '44px',
               maxHeight: '400px',
-              overflow: `${
-                textareaRef.current && textareaRef.current.scrollHeight > 400
+              overflow: `${textareaRef.current && textareaRef.current.scrollHeight > 400
                   ? 'auto'
                   : 'hidden'
-              }`,
+                }`,
             }}
             placeholder={isRecording ? 'Listening...' : ''}
             aria-label={isRecording ? 'Listening...' : `Unlock ${workflow} knowledge and expertise`}
@@ -549,110 +883,106 @@ export const ChatInput = ({
             })}
           />
           {inputFile && inputFileContent && (
-            <div>
-              <div className="relative right-0 top-0 p-1 bg-[#91c438] dark:bg-green-700 text-black dark:text-white flex items-center justify-start gap-2 rounded-small">
-                <IconPhoto className="ml-8" size={16} />
-                <span>{inputFile}</span>
-                <IconTrash
-                  className="hover:text-[#ff1717e9] cursor-pointer"
-                  size={16}
-                  onClick={handleInputFileDelete}
+            <div className="px-2 pb-2">
+              <div className="flex items-center gap-2 rounded-md bg-gray-100 p-2 dark:bg-gray-700">
+                <img
+                  src={
+                    inputFileContentCompressed ||
+                    inputFileContent
+                  }
+                  alt={inputFile}
+                  className="h-14 w-20 rounded object-cover"
                 />
+
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm">
+                    {inputFile}
+                  </div>
+
+                  <div className="text-xs text-gray-500 dark:text-gray-300">
+                    {inputFileContentType}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleInputFileDelete}
+                  aria-label="Remove attached image"
+                >
+                  <IconTrash
+                    className="hover:text-red-500"
+                    size={16}
+                  />
+                </button>
               </div>
             </div>
           )}
-          {appConfig?.fileUploadEnabled && !inputFile && (
-            <>
-              <button
-                className="absolute right-10 top-2 rounded-sm p-1 text-neutral-800 opacity-60 hover:text-[#76b900] dark:bg-opacity-50 dark:text-neutral-100 dark:hover:text-neutral-200"
-                onClick={triggerFileUpload}
-              >
-                {messageIsStreaming ? (
-                  <></>
-                ) : (
-                  <>
-                    <IconPaperclip size={18} />
-                  </>
-                )}
-              </button>
-              <input
-                type="file"
-                ref={fileInputRef}
-                style={{ display: 'none' }}
-                onChange={handleFileChange}
-              />
-            </>
-          )}
           {hasLeftButtons && (
-          <div className="absolute left-2 top-2 flex gap-1">
-            {chatInputMicEnabled && (
-              <button
-                onClick={handleSpeechToText}
-                className={`rounded-sm p-[5px] text-neutral-800 opacity-60 dark:bg-opacity-50 dark:text-neutral-100 ${
-                  chatBlocked || messageIsStreaming
-                    ? 'text-neutral-400' // Disable hover and change color when streaming
-                    : 'hover:text-[#76b900] dark:hover:text-neutral-200' // Normal hover effect
-                }`}
-                disabled={chatBlocked || messageIsStreaming}
-              >
-                {isRecording ? (
-                  <IconPlayerStopFilled
-                    size={18}
-                    className="text-red-500 animate-blink"
-                  />
-                ) : (
-                  <IconMicrophone size={18} />
-                )}
-              </button>
-            )}
-            {chatUploadFileEnabled && (
-              <ChatFileUpload
-                uploadFlowSourceId="chat-input"
-                getActiveConversationId={getActiveConversationId}
-                onUploadFlowActiveChange={onUploadFlowActiveChange}
-                onSendHiddenMessage={(message, uploadConversationId) => {
-                  onSend(
-                    {
-                      role: 'user',
-                      content: message,
-                      hidden: true,
-                      uploadConversationId,
-                    },
-                    fieldsToParams(paramFields),
-                  );
-                }}
-                disabled={uploadDisabled}
-                onUploadBatchComplete={onChatVideoUploadComplete}
-              >
-                {({ triggerUpload }) => (
+            <div className="absolute left-2 top-2 flex gap-1">
+              {chatInputMicEnabled && (
+                <button
+                  onClick={handleSpeechToText}
+                  className={`rounded-sm p-[5px] text-neutral-800 opacity-60 dark:bg-opacity-50 dark:text-neutral-100 ${chatBlocked || messageIsStreaming
+                      ? 'text-neutral-400' // Disable hover and change color when streaming
+                      : 'hover:text-[#76b900] dark:hover:text-neutral-200' // Normal hover effect
+                    }`}
+                  disabled={chatBlocked || messageIsStreaming}
+                >
+                  {isRecording ? (
+                    <IconPlayerStopFilled
+                      size={18}
+                      className="text-red-500 animate-blink"
+                    />
+                  ) : (
+                    <IconMicrophone size={18} />
+                  )}
+                </button>
+              )}
+              {chatUploadFileEnabled && (
+                <>
                   <button
-                    onClick={triggerUpload}
-                    className={`rounded-sm p-[5px] text-neutral-800 opacity-60 dark:bg-opacity-50 dark:text-neutral-100 ${
-                      uploadDisabled
+                    type="button"
+                    className={`rounded-sm p-[5px] text-neutral-800 opacity-60 dark:bg-opacity-50 dark:text-neutral-100 ${uploadDisabled
                         ? 'text-neutral-400'
                         : 'hover:text-[#76b900] dark:hover:text-neutral-200'
-                    }`}
-                    disabled={uploadDisabled}
+                      }`}
+                    onClick={triggerFileUpload}
+                    disabled={
+                      chatBlocked ||
+                      messageIsStreaming
+                    }
+                    aria-label="Attach search image"
+                    title="이미지 기반 유사도 검색"
                   >
-                    <IconUpload size={18} />
+                    {!messageIsStreaming && (
+                      <IconPhoto size={18} />
+                    )}
                   </button>
-                )}
-              </ChatFileUpload>
-            )}
-          </div>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept="image/jpeg,image/png,image/webp"
+                    style={{ display: 'none' }}
+                    onChange={handleFileChange}
+                    disabled={
+                      chatBlocked ||
+                      messageIsStreaming
+                    }
+                  />
+                </>
+              )}
+            </div>
           )}
           {/* Settings Button - only show when there are enabled params */}
           {paramFields.length > 0 && (
             <div className="absolute right-10 top-2">
               <button
                 ref={settingsButtonRef}
-                className={`rounded-sm p-1 text-neutral-800 opacity-60 dark:bg-opacity-50 dark:text-neutral-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                  showCustomParams ? 'text-[#76b900] dark:text-[#76b900]' : ''
-                } ${
-                  paramsChangeDisabled
+                className={`rounded-sm p-1 text-neutral-800 opacity-60 dark:bg-opacity-50 dark:text-neutral-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${showCustomParams ? 'text-[#76b900] dark:text-[#76b900]' : ''
+                  } ${paramsChangeDisabled
                     ? 'text-neutral-400'
                     : 'hover:text-[#76b900] dark:hover:text-neutral-200'
-                }`}
+                  }`}
                 onClick={() => {
                   if (paramsChangeDisabled) return;
                   setShowCustomParams(!showCustomParams);

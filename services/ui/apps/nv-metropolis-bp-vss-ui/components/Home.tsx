@@ -311,7 +311,7 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
         icon: <IconSearch size={20} />,
         alt: 'Agent Search',
         enabled: true,
-        component: 'SearchComponent',
+        component: 'NemoAgentToolkitApp',
       },
       {
         id: 'report',

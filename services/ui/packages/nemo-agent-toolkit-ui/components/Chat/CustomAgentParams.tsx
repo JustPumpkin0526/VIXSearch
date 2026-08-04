@@ -19,7 +19,18 @@ export interface ParamField extends ParamFieldConfig {
   value: string | number | boolean;
 }
 
-export type CustomAgentParamsValues = Record<string, string | number | boolean>;
+export type CustomAgentParamValue =
+  | string
+  | number
+  | boolean
+  | string[]
+  | null
+  | undefined;
+
+export type CustomAgentParamsValues = Record<string, CustomAgentParamValue> & {
+  owned_video_ids?: string[];
+  search_source_type?: 'video_file' | 'rtsp';
+};
 
 interface CustomAgentParamsProps {
   isOpen: boolean;
