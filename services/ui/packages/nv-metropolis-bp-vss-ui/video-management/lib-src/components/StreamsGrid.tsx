@@ -13,7 +13,7 @@ const CARD_MIN_WIDTH = 240; // minmax(240px, 1fr)
 const GRID_GAP = 16; // gap: 16px
 const TARGET_ROWS = 4; // Target number of rows per page (reduced by ~25% from 5)
 const CONTEXT_MENU_WIDTH = 224;
-const CONTEXT_MENU_HEIGHT = 180;
+const CONTEXT_MENU_HEIGHT = 224;
 
 type ContextMenuState = {
   x: number;
@@ -42,6 +42,7 @@ interface StreamsGridProps {
   onDeleteSelected?: () => void | Promise<void>;
   currentGroupName?: string | null;
   onBackToGroups?: () => void;
+  onSearchGroup?: (groupId: string) => void;
 }
 
 const FolderCard: React.FC<{
@@ -173,6 +174,7 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
   onDeleteSelected,
   currentGroupName,
   onBackToGroups,
+  onSearchGroup,
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerRow, setItemsPerRow] = useState(0);
@@ -587,6 +589,44 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
               }}
             >
               Open Group
+            </button>
+          )}
+
+          {contextMenu.kind === 'group' && onSearchGroup && (
+            <button
+              type="button"
+              className="
+                flex w-full items-center gap-2
+                px-3 py-2 text-left text-sm
+                text-gray-700 hover:bg-gray-100
+                dark:text-gray-200
+                dark:hover:bg-gray-700
+              "
+              onClick={() => {
+                const groupId =
+                  contextMenu.id;
+              
+                setContextMenu(null);
+                onSearchGroup(groupId);
+              }}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <circle
+                  cx="11"
+                  cy="11"
+                  r="8"
+                />
+                <path d="m21 21-4.35-4.35" />
+              </svg>
+            
+              검색 창으로 이동
             </button>
           )}
 

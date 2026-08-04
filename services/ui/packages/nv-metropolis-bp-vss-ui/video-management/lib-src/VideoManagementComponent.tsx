@@ -32,6 +32,23 @@ import {
   AgentUploadDialog,
 } from './components';
 
+interface VideoGroupSearchScope {
+  groupId: string;
+  groupName: string;
+  sensorIds: string[];
+  videoCount: number;
+  totalDurationSeconds: number;
+}
+
+const GROUP_SEARCH_STORAGE_KEY =
+  'vixsearch:selected-video-group';
+
+const OPEN_SEARCH_TAB_EVENT =
+  'vss:open-search-tab';
+
+const GROUP_SEARCH_CHANGED_EVENT =
+  'vss:video-group-search-changed';
+
 async function waitForCanonicalStream(
   vstApiUrl: string,
   streamId: string,
@@ -208,7 +225,9 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   }, [isUploading]);
 
   const { streams, isLoading, error, refetch } = useStreams({ vstApiUrl });
-  const { getEndTimeForStream, getLastTimelineForStream, refetch: refetchTimelines } = useStorageTimelines({ vstApiUrl });
+  const {timelines, getEndTimeForStream, getLastTimelineForStream, refetch: refetchTimelines, } = useStorageTimelines({
+    vstApiUrl,
+  });
   const { videoModal, openVideoModal, closeVideoModal } = useVideoModal(vstApiUrl ?? undefined);
 
 
@@ -821,6 +840,140 @@ const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     setCurrentGroupId(groupId);
   }, []);
 
+  const handleSearchGroup =
+    useCallback(
+      (groupId: string) => {
+        const group =
+          videoGroups.find(
+            (item) =>
+              item.id === groupId,
+          );
+
+        if (
+          !group ||
+          typeof window ===
+            'undefined'
+        ) {
+          return;
+        }
+
+        const totalDurationSeconds =
+          group.sensorIds.reduce(
+            (
+              groupTotal,
+              sensorId,
+            ) => {
+              const stream =
+                streamsBySensorId.get(
+                  sensorId,
+                );
+
+              if (!stream) {
+                return groupTotal;
+              }
+
+              const storageInfo =
+                timelines.get(
+                  stream.streamId,
+                );
+
+              if (
+                !storageInfo ||
+                !Array.isArray(
+                  storageInfo.timelines,
+                )
+              ) {
+                return groupTotal;
+              }
+
+              const streamDuration =
+                storageInfo.timelines.reduce(
+                  (
+                    timelineTotal,
+                    timeline,
+                  ) => {
+                    const startTime =
+                      Date.parse(
+                        timeline.startTime,
+                      );
+
+                    const endTime =
+                      Date.parse(
+                        timeline.endTime,
+                      );
+
+                    if (
+                      !Number.isFinite(
+                        startTime,
+                      ) ||
+                      !Number.isFinite(
+                        endTime,
+                      ) ||
+                      endTime <= startTime
+                    ) {
+                      return timelineTotal;
+                    }
+
+                    return (
+                      timelineTotal +
+                      (endTime -
+                        startTime) /
+                        1000
+                    );
+                  },
+                  0,
+                );
+
+              return (
+                groupTotal +
+                streamDuration
+              );
+            },
+            0,
+          );
+
+        const searchScope:
+          VideoGroupSearchScope = {
+            groupId: group.id,
+            groupName: group.name,
+            sensorIds: [
+              ...group.sensorIds,
+            ],
+            videoCount:
+              group.sensorIds.length,
+            totalDurationSeconds,
+          };
+
+        sessionStorage.setItem(
+          GROUP_SEARCH_STORAGE_KEY,
+          JSON.stringify(
+            searchScope,
+          ),
+        );
+
+        window.dispatchEvent(
+          new CustomEvent(
+            GROUP_SEARCH_CHANGED_EVENT,
+            {
+              detail: searchScope,
+            },
+          ),
+        );
+
+        window.dispatchEvent(
+          new CustomEvent(
+            OPEN_SEARCH_TAB_EVENT,
+          ),
+        );
+      },
+      [
+        timelines,
+        streamsBySensorId,
+        videoGroups,
+      ],
+    );
+
+
   const handleOpenRenameGroupModal = useCallback(
     (groupId: string) => {
       const targetGroup = videoGroups.find(
@@ -1393,6 +1546,9 @@ const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
           setSelectedGroups(new Set());
           setCurrentGroupId(null);
         }}
+        onSearchGroup={
+          handleSearchGroup
+        }
       />
     );
   };

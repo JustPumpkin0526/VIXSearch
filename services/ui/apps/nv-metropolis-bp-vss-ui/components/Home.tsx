@@ -87,6 +87,8 @@ interface TabConfig {
   component?: string; // Component name to import from library
 }
 
+const OPEN_SEARCH_TAB_EVENT = 'vss:open-search-tab';
+
 // Dynamic component imports based on configuration
 // These are loaded at runtime only if the corresponding tab is enabled
 const dynamicComponents = {
@@ -594,6 +596,37 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
     };
   }, [setActiveTab, visibleTabs]);
 
+  React.useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const handleOpenSearchTab = () => {
+      const searchTabExists =
+        visibleTabs.some(
+          (tab) => tab.id === 'search',
+        );
+
+      if (!searchTabExists) {
+        return;
+      }
+
+      setActiveTab('search');
+    };
+
+    window.addEventListener(
+      OPEN_SEARCH_TAB_EVENT,
+      handleOpenSearchTab,
+    );
+
+    return () => {
+      window.removeEventListener(
+        OPEN_SEARCH_TAB_EVENT,
+        handleOpenSearchTab,
+      );
+    };
+  }, [setActiveTab, visibleTabs]);
+
   const renderAppSidebarChat = React.useCallback(
     () => (
       <RuntimeConfigProvider
@@ -715,6 +748,38 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
       videoManagementHandlersSetRef.current = false;
     }
   }, [activeTab, visibleTabs]);
+
+  useEffect(() => {
+    const handleOpenSearchTab =
+      () => {
+        const hasSearchTab =
+          visibleTabs.some(
+            (tab) =>
+              tab.id === 'search',
+          );
+
+        if (!hasSearchTab) {
+          return;
+        }
+
+        setActiveTab('search');
+      };
+
+    window.addEventListener(
+      OPEN_SEARCH_TAB_EVENT,
+      handleOpenSearchTab,
+    );
+
+    return () => {
+      window.removeEventListener(
+        OPEN_SEARCH_TAB_EVENT,
+        handleOpenSearchTab,
+      );
+    };
+  }, [
+    setActiveTab,
+    visibleTabs,
+  ]);
 
   // Render a single tab component with visibility control
   const renderTabComponent = (tabConfig: TabConfig) => {

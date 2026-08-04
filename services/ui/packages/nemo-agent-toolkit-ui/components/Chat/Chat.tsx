@@ -2,7 +2,10 @@
 'use client';
 
 import { ChatHeader } from './ChatHeader';
-import { ChatInput } from './ChatInput';
+import {
+  ChatInput,
+  type VideoGroupSearchScope,
+} from './ChatInput';
 import { ChatLoader } from './ChatLoader';
 import { MemoizedChatMessage } from './MemoizedChatMessage';
 import { CustomAgentParamsValues } from './CustomAgentParams';
@@ -65,8 +68,19 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { SESSION_COOKIE_NAME } from '@/constants/constants';
 
+interface VideoGroupSearchScope {
+  groupId: string;
+  groupName: string;
+  sensorIds: string[];
+  videoCount: number;
+  totalDurationSeconds: number;
+}
 
+const GROUP_SEARCH_STORAGE_KEY =
+  'vixsearch:selected-video-group';
 
+const GROUP_SEARCH_CHANGED_EVENT =
+  'vss:video-group-search-changed';
 
 // Streaming utilities for handling SSE and NDJSON safely
 function normalizeNewlines(s: string): string {
@@ -436,6 +450,131 @@ export const Chat = () => {
   const queryContextRef = useRef<QueryDataContext[]>([]);
   useEffect(() => { queryContextRef.current = queryContextItems; }, [queryContextItems]);
 
+  const [
+    selectedVideoGroup,
+    setSelectedVideoGroup,
+  ] =
+    useState<
+      VideoGroupSearchScope | null
+    >(null);
+
+  const readSelectedVideoGroup =
+    useCallback(() => {
+      if (
+        typeof window ===
+        'undefined'
+      ) {
+        return;
+      }
+
+      const storedValue =
+        window.sessionStorage.getItem(
+          GROUP_SEARCH_STORAGE_KEY,
+        );
+
+      if (!storedValue) {
+        setSelectedVideoGroup(null);
+        return;
+      }
+
+      try {
+        const parsed =
+          JSON.parse(
+            storedValue,
+          ) as VideoGroupSearchScope;
+
+        if (
+          typeof parsed.groupId !==
+            'string' ||
+          typeof parsed.groupName !==
+            'string' ||
+          !Array.isArray(
+            parsed.sensorIds,
+          )
+        ) {
+          throw new Error(
+            'Invalid group search scope',
+          );
+        }
+
+        setSelectedVideoGroup(parsed);
+      } catch (error) {
+        console.warn(
+          '[VIXSearch][Chat] invalid group search scope:',
+          error,
+        );
+
+        window.sessionStorage.removeItem(
+          GROUP_SEARCH_STORAGE_KEY,
+        );
+
+        setSelectedVideoGroup(null);
+      }
+    }, []);
+
+  useEffect(() => {
+    readSelectedVideoGroup();
+
+    const handleGroupSearchChanged =
+      (event: Event) => {
+        const customEvent =
+          event as CustomEvent<
+            VideoGroupSearchScope | null
+          >;
+
+        if (
+          customEvent.detail === null
+        ) {
+          setSelectedVideoGroup(null);
+          return;
+        }
+
+        if (customEvent.detail) {
+          setSelectedVideoGroup(
+            customEvent.detail,
+          );
+          return;
+        }
+
+        readSelectedVideoGroup();
+      };
+
+    window.addEventListener(
+      GROUP_SEARCH_CHANGED_EVENT,
+      handleGroupSearchChanged,
+    );
+
+    return () => {
+      window.removeEventListener(
+        GROUP_SEARCH_CHANGED_EVENT,
+        handleGroupSearchChanged,
+      );
+    };
+  }, [readSelectedVideoGroup]);
+
+  const handleClearSelectedVideoGroup =
+    useCallback(() => {
+      if (
+        typeof window !==
+        'undefined'
+      ) {
+        window.sessionStorage.removeItem(
+          GROUP_SEARCH_STORAGE_KEY,
+        );
+      }
+
+      setSelectedVideoGroup(null);
+
+      window.dispatchEvent(
+        new CustomEvent(
+          GROUP_SEARCH_CHANGED_EVENT,
+          {
+            detail: null,
+          },
+        ),
+      );
+    }, []);
+
   const getActiveConversationId = useCallback(
     () => selectedConversationRef.current?.id,
     [],
@@ -530,6 +669,31 @@ export const Chat = () => {
     }
   }, [isSearchSidebarContext]);
 
+  const getScopedVideoIds =
+    useCallback(
+      (
+        ownedVideoIds: string[],
+      ): string[] => {
+        if (!selectedVideoGroup) {
+          return ownedVideoIds;
+        }
+
+        const groupVideoIdSet =
+          new Set(
+            selectedVideoGroup
+              .sensorIds,
+          );
+
+        return ownedVideoIds.filter(
+          (sensorId) =>
+            groupVideoIdSet.has(
+              sensorId,
+            ),
+        );
+      },
+      [selectedVideoGroup],
+    );
+
   const buildSearchAwareCustomParams = useCallback(
     async (
       customParams?: CustomAgentParamsValues | null,
@@ -549,15 +713,31 @@ export const Chat = () => {
       });
 
       if (isSearchContext) {
-        const ownedVideoIds = await fetchOwnedVideoIdsForSearch();
+        const ownedVideoIds =
+          await fetchOwnedVideoIdsForSearch();
 
-        console.log('[VIXSearch][Chat] owned video ids resolved', {
-          ownedVideoIds,
-          count: ownedVideoIds.length,
-        });
-
-        nextCustomParams.owned_video_ids = ownedVideoIds;
-        nextCustomParams.search_source_type = 'video_file';
+        const scopedVideoIds =
+          getScopedVideoIds(
+            ownedVideoIds,
+          );
+        
+        console.log(
+          '[VIXSearch][Chat] scoped video ids resolved',
+          {
+            ownedVideoIds,
+            selectedGroupId:
+              selectedVideoGroup?.groupId ??
+              null,
+            scopedVideoIds,
+            count: scopedVideoIds.length,
+          },
+        );
+      
+        nextCustomParams.owned_video_ids =
+          scopedVideoIds;
+      
+        nextCustomParams.search_source_type =
+          'video_file';
       } else {
         console.warn('[VIXSearch][Chat] not search context, skip owned_video_ids', {
           storageKeyPrefix,
@@ -571,6 +751,8 @@ export const Chat = () => {
       storageKeyPrefix,
       getActiveMainTabId,
       fetchOwnedVideoIdsForSearch,
+      getScopedVideoIds,
+      selectedVideoGroup?.groupId,
     ],
   );
 
@@ -1412,9 +1594,16 @@ export const Chat = () => {
         const ownedVideoIds =
           await fetchOwnedVideoIdsForSearch();
 
-        if (ownedVideoIds.length === 0) {
+        const scopedVideoIds =
+          getScopedVideoIds(
+            ownedVideoIds,
+          );
+        
+        if (scopedVideoIds.length === 0) {
           throw new Error(
-            '검색 가능한 소유 영상이 없거나 영상 접근 권한을 확인하지 못했습니다.',
+            selectedVideoGroup
+              ? '선택한 그룹에 검색 가능한 영상이 없습니다.'
+              : '검색 가능한 소유 영상이 없거나 영상 접근 권한을 확인하지 못했습니다.',
           );
         }
 
@@ -1438,7 +1627,7 @@ export const Chat = () => {
               contentType,
               maxResults: 10,
               minSimilarity: 0.1,
-              sensorIds: ownedVideoIds,
+              sensorIds: scopedVideoIds,
             }),
           },
         );
@@ -1571,6 +1760,8 @@ export const Chat = () => {
     [
       homeDispatch,
       fetchOwnedVideoIdsForSearch,
+      getScopedVideoIds,
+      selectedVideoGroup,
       isSearchSidebarContext,
       onMessageSubmitted,
       onAnswerComplete,
@@ -2539,10 +2730,14 @@ export const Chat = () => {
           })}
           {loading && <ChatLoader statusUpdateText={`Thinking...`} />}
           <div
-            className={`bg-white dark:bg-black ${(selectedConversation?.messages?.length ?? 0) > 0 || loading
-                ? 'h-[162px]'
+            className={`bg-white dark:bg-black ${
+              (selectedConversation?.messages?.length ?? 0) > 0 ||
+              loading
+                ? selectedVideoGroup
+                  ? 'h-[230px]'
+                  : 'h-[162px]'
                 : 'h-0'
-              }`}
+            }`}
             ref={messagesEndRef}
           ></div>
         </div>
@@ -2551,6 +2746,12 @@ export const Chat = () => {
           queryContextItems={queryContextItems}
           onRemoveQueryContext={
             handleRemoveQueryContext
+          }
+          selectedVideoGroup={
+            selectedVideoGroup
+          }
+          onClearSelectedVideoGroup={
+            handleClearSelectedVideoGroup
           }
           chatBlocked={uploadFlowActive}
           getActiveConversationId={
