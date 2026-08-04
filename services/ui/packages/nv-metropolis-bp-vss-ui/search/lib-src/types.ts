@@ -43,6 +43,14 @@ export interface SearchData {
   critic_result?: CriticResult;
 }
 
+export interface VideoGroupSearchScope {
+  groupId: string;
+  groupName: string;
+  sensorIds: string[];
+  videoCount: number;
+  totalDurationSeconds: number;
+}
+
 /**
  * Control handlers interface for external rendering
  */

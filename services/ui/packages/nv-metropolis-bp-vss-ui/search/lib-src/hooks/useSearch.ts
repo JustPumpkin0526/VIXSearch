@@ -18,10 +18,12 @@ import { formatDateToLocalISO } from '../utils/Formatter';
 interface UseSearchOptions {
   agentApiUrl?: string;
   params?: SearchParams;
+  scopeVideoSources?: string[] | null;
 }
 
 function buildRequestBody(
-  searchParams: SearchParams
+  searchParams: SearchParams,
+  scopeVideoSources: string[] | null,
 ): Record<string, unknown> {
   const {
     query,
@@ -30,27 +32,34 @@ function buildRequestBody(
     videoSources,
     similarity,
     topK = 10,
-    agentMode = false
+    agentMode = false,
   } = searchParams;
 
-  if (agentMode) {
-    return {
-      agent_mode: agentMode,
-      query,
-      top_k: topK,
-      source_type: 'video_file'
-    };
-  }
+  /*
+   * 그룹 범위가 존재하면 일반 Video Source
+   * 필터보다 그룹 sensorIds를 우선합니다.
+   */
+  const effectiveVideoSources =
+    scopeVideoSources === null
+      ? videoSources || []
+      : scopeVideoSources;
 
   return {
     query,
-    video_sources: videoSources || [],
-    timestamp_start: formatDateToLocalISO(startDate || null),
-    timestamp_end: formatDateToLocalISO(endDate || null),
-    min_cosine_similarity: Number(similarity)?.toFixed(2),
+    video_sources: effectiveVideoSources,
+    timestamp_start:
+      formatDateToLocalISO(
+        startDate || null,
+      ),
+    timestamp_end:
+      formatDateToLocalISO(
+        endDate || null,
+      ),
+    min_cosine_similarity:
+      Number(similarity).toFixed(2),
     top_k: topK,
     agent_mode: agentMode,
-    source_type: 'video_file'
+    source_type: 'video_file',
   };
 }
 
@@ -172,11 +181,23 @@ async function getHttpErrorMessage(response: Response): Promise<string> {
  * Custom React hook for managing search data fetching and state management
  *
  */
-export const useSearch = ({ agentApiUrl, params = {} }: UseSearchOptions) => {
+export const useSearch = ({
+  agentApiUrl,
+  params = {},
+  scopeVideoSources = null,
+}: UseSearchOptions) => {
   const [searchResults, setSearchResults] = useState<SearchData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useState<SearchParams>(params);
+
+  const scopeVideoSourcesRef =
+    useRef<string[] | null>(
+      scopeVideoSources,
+    );
+
+  scopeVideoSourcesRef.current =
+    scopeVideoSources;
   
   // AbortController ref for canceling ongoing requests
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -212,15 +233,39 @@ export const useSearch = ({ agentApiUrl, params = {} }: UseSearchOptions) => {
         setLoading(false);
         return;
       }
-      const body = buildRequestBody(searchParams);
+
+      const rawScopeVideoSources =
+        scopeVideoSourcesRef.current;
+
+      const normalizedScopeVideoSources =
+        rawScopeVideoSources === null
+          ? null
+          : Array.from(
+              new Set(
+                rawScopeVideoSources
+                  .filter(
+                    (value) =>
+                      typeof value === 'string',
+                  )
+                  .map((value) => value.trim())
+                  .filter(Boolean),
+              ),
+            );
+          
+      const body = buildRequestBody(
+        searchParams,
+        normalizedScopeVideoSources,
+      );
       setLoading(true);
       setError(null);
       setSearchResults([]);
 
-      const ownedVideoLookup = await fetchOwnedVideoLookup();
+      const ownedVideoLookup =
+        await fetchOwnedVideoLookup();
 
       if (ownedVideoLookup !== null) {
-        const { ownedVideoIds } = ownedVideoLookup;
+        const { ownedVideoIds } =
+          ownedVideoLookup;
       
         if (ownedVideoIds.length === 0) {
           setSearchResults([]);
@@ -228,13 +273,39 @@ export const useSearch = ({ agentApiUrl, params = {} }: UseSearchOptions) => {
           return;
         }
       
-        body.owned_video_ids = ownedVideoIds;
+        body.owned_video_ids =
+          ownedVideoIds;
       
         if (
-          !Array.isArray(body.video_sources) ||
+          normalizedScopeVideoSources !== null
+        ) {
+          const ownedVideoIdSet =
+            new Set(ownedVideoIds);
+        
+          const allowedScopeVideoSources =
+            normalizedScopeVideoSources.filter(
+              (sensorId) =>
+                ownedVideoIdSet.has(sensorId),
+            );
+          
+          if (
+            allowedScopeVideoSources.length === 0
+          ) {
+            setSearchResults([]);
+            setLoading(false);
+            return;
+          }
+        
+          body.video_sources =
+            allowedScopeVideoSources;
+        } else if (
+          !Array.isArray(
+            body.video_sources,
+          ) ||
           body.video_sources.length === 0
         ) {
-          body.video_sources = ownedVideoIds;
+          body.video_sources =
+            ownedVideoIds;
         }
       }
 

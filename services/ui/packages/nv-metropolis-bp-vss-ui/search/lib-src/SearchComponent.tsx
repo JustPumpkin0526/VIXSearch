@@ -14,7 +14,11 @@ import { InfoRound as InfoRoundIcon } from '@rsuite/icons';
 import { VideoModalTooltip } from '@aiqtoolkit-ui/common';
 
 // Types
-import { SearchComponentProps, SearchData } from './types';
+import {
+  SearchComponentProps,
+  SearchData,
+  VideoGroupSearchScope,
+} from './types';
 
 // Hooks
 import {
@@ -32,6 +36,89 @@ import { VideoSearchList } from './components/VideoSearchList';
 import { SearchVideoModal } from './components/SearchVideoModal';
 import { SearchByImageOverlayInfo } from './components/SearchByImageOverlayInfo';
 import { useFilter } from './hooks/useFilter';
+
+const GROUP_SEARCH_STORAGE_KEY =
+  'vixsearch:selected-video-group';
+
+const GROUP_SEARCH_CHANGED_EVENT =
+  'vss:video-group-search-changed';
+
+function readVideoGroupSearchScope():
+  VideoGroupSearchScope | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const rawScope =
+      window.sessionStorage.getItem(
+        GROUP_SEARCH_STORAGE_KEY,
+      );
+
+    if (!rawScope) {
+      return null;
+    }
+
+    const parsed = JSON.parse(
+      rawScope,
+    ) as Partial<VideoGroupSearchScope>;
+
+    if (
+      typeof parsed.groupId !== 'string' ||
+      !parsed.groupId.trim() ||
+      typeof parsed.groupName !== 'string' ||
+      !Array.isArray(parsed.sensorIds)
+    ) {
+      return null;
+    }
+
+    const sensorIds = Array.from(
+      new Set(
+        parsed.sensorIds
+          .filter(
+            (value): value is string =>
+              typeof value === 'string',
+          )
+          .map((value) => value.trim())
+          .filter(Boolean),
+      ),
+    );
+
+    return {
+      groupId: parsed.groupId.trim(),
+      groupName:
+        parsed.groupName.trim() ||
+        'Unnamed group',
+      sensorIds,
+      videoCount:
+        typeof parsed.videoCount === 'number' &&
+        Number.isFinite(parsed.videoCount)
+          ? Math.max(
+              0,
+              Math.trunc(parsed.videoCount),
+            )
+          : sensorIds.length,
+      totalDurationSeconds:
+        typeof parsed.totalDurationSeconds ===
+          'number' &&
+        Number.isFinite(
+          parsed.totalDurationSeconds,
+        )
+          ? Math.max(
+              0,
+              parsed.totalDurationSeconds,
+            )
+          : 0,
+    };
+  } catch (error) {
+    console.warn(
+      '[SearchComponent] invalid group search scope:',
+      error,
+    );
+
+    return null;
+  }
+}
 
 const loadSearchByImageOverlay = () =>
   import('./components/SearchByImageOverlay').then((mod) => mod.SearchByImageOverlay);
@@ -64,6 +151,43 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
 }) => {
   const isDark = theme === 'dark';
   const [agentSearchResults, setAgentSearchResults] = React.useState<SearchData[] | null>(null);
+
+  const [groupSearchScope, setGroupSearchScope] =
+    React.useState<VideoGroupSearchScope | null>(
+      () => readVideoGroupSearchScope(),
+    );
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const syncGroupSearchScope = () => {
+      setGroupSearchScope(
+        readVideoGroupSearchScope(),
+      );
+    };
+
+    window.addEventListener(
+      GROUP_SEARCH_CHANGED_EVENT,
+      syncGroupSearchScope,
+    );
+
+    /*
+     * Search 컴포넌트가 이미 마운트된 상태뿐 아니라,
+     * Search 탭이 나중에 활성화되는 경우도 처리합니다.
+     */
+    if (isActive) {
+      syncGroupSearchScope();
+    }
+
+    return () => {
+      window.removeEventListener(
+        GROUP_SEARCH_CHANGED_EVENT,
+        syncGroupSearchScope,
+      );
+    };
+  }, [isActive]);
 
   const showFilenameLookupRef = React.useRef<OwnedVideoLookup | null>(null);
 
@@ -123,10 +247,65 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
 
   const { videoModal, openVideoModal, closeVideoModal } = useVideoModal(vstApiUrl);  
   const { streams, filterParams, setFilterParams, addFilter, removeFilterTag, filterTags, refetch: refetchStreams } = useFilter({vstApiUrl});
-  const { searchResults, loading, error, refetch, onUpdateSearchParams, cancelSearch, clearSearchResults } = useSearch({
-    agentApiUrl, 
-    params: filterParams
+  const {searchResults, loading, error, refetch, onUpdateSearchParams, cancelSearch, clearSearchResults, } = useSearch({
+    agentApiUrl,
+    params: filterParams,
+    scopeVideoSources:
+      groupSearchScope?.sensorIds ?? null,
   });
+
+  const handleClearGroupSearchScope =
+    React.useCallback(() => {
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.removeItem(
+          GROUP_SEARCH_STORAGE_KEY,
+        );
+
+        window.dispatchEvent(
+          new CustomEvent(
+            GROUP_SEARCH_CHANGED_EVENT,
+            {
+              detail: null,
+            },
+          ),
+        );
+      }
+
+      setGroupSearchScope(null);
+      setAgentSearchResults(null);
+      clearSearchResults();
+    }, [clearSearchResults]);
+
+  const groupSearchScopeKey =
+    groupSearchScope
+      ? [
+          groupSearchScope.groupId,
+          ...groupSearchScope.sensorIds,
+        ].join(':')
+      : null;
+
+  const previousGroupSearchScopeKeyRef =
+    React.useRef<string | null>(
+      groupSearchScopeKey,
+    );
+
+  React.useEffect(() => {
+    if (
+      previousGroupSearchScopeKeyRef.current ===
+      groupSearchScopeKey
+    ) {
+      return;
+    }
+
+    setAgentSearchResults(null);
+    clearSearchResults();
+
+    previousGroupSearchScopeKeyRef.current =
+      groupSearchScopeKey;
+  }, [
+    groupSearchScopeKey,
+    clearSearchResults,
+  ]);
 
   // Map streamId (UUID) -> sensor name for /frames API lookup
   const sensorIdToNameMap = React.useMemo(() => {
@@ -390,20 +569,36 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
       className={`flex min-h-0 min-w-0 max-w-full flex-col h-full max-h-full ${isDark ? 'bg-black text-gray-100' : 'bg-gray-50 text-gray-900'}`}
     >
       <div className={`flex-shrink-0 px-6 py-4 border-b ${isDark ? 'bg-black border-gray-700' : 'bg-white border-gray-200'}`}>
-        <SearchHeader 
-          theme={isDark ? 'dark' : 'light'} 
+        <SearchHeader
+          theme={isDark ? 'dark' : 'light'}
           streams={streams}
-          filterParams={filterParams} 
-          setFilterParams={setFilterParams} 
-          onUpdateSearchParams={onUpdateSearchParams} 
-          addFilter={addFilter} 
-          removeFilterTag={removeFilterTag} 
+          filterParams={filterParams}
+          setFilterParams={setFilterParams}
+          onUpdateSearchParams={
+            onUpdateSearchParams
+          }
+          addFilter={addFilter}
+          removeFilterTag={removeFilterTag}
           filterTags={filterTags}
+          groupSearchScope={
+            groupSearchScope
+          }
+          onClearGroupSearchScope={
+            handleClearGroupSearchScope
+          }
           isSearching={loading}
           onCancelSearch={cancelSearch}
-          onGetPendingQuery={handleGetPendingQuery}
-          submitChatMessage={wrappedSubmitChatMessage}
-          contentDisabled={!chatSidebarCollapsed || loading || chatSidebarBusy}
+          onGetPendingQuery={
+            handleGetPendingQuery
+          }
+          submitChatMessage={
+            wrappedSubmitChatMessage
+          }
+          contentDisabled={
+            !chatSidebarCollapsed ||
+            loading ||
+            chatSidebarBusy
+          }
         />
       </div>
       <div className="flex-1 overflow-auto">
