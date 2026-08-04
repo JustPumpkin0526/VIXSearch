@@ -6,30 +6,64 @@ import { IconX } from '@tabler/icons-react';
 import { Search as SearchIcon, Funnel as FunnelIcon, Close as CloseIcon, InfoRound as InfoRoundIcon } from '@rsuite/icons';
 import { IconRefresh } from '@tabler/icons-react';
 import { FilterDialog } from './FilterPopover';
-import { SearchParams, StreamInfo, FilterTag } from '../types';
+import {
+  SearchParams,
+  StreamInfo,
+  FilterTag,
+  VideoGroupSearchScope,
+} from '../types';
 import { DEFAULT_TOP_K } from '../hooks/useFilter';
 
 interface SearchHeaderProps {
-    onUpdateSearchParams: (params: SearchParams) => void;
-    theme: 'light' | 'dark';    
-    streams: StreamInfo[];
-    filterParams: any;
-    setFilterParams: (params: any) => void;
-    addFilter: (params?: any) => void;
-    removeFilterTag: (tag: FilterTag | null) => void;
-    filterTags: FilterTag[];
-    isSearching?: boolean;
-    onCancelSearch?: () => void;
-    onGetPendingQuery?: (getPendingFn: () => string) => void;
-    submitChatMessage?: (message: string) => void;
-    /** When true, disables search input, source type, filters, and tags (e.g. when Chat sidebar is open or query is running). */
-    contentDisabled?: boolean;
-  }
+  onUpdateSearchParams:
+    (params: SearchParams) => void;
+  theme: 'light' | 'dark';
+  streams: StreamInfo[];
+  filterParams: any;
+  setFilterParams:
+    (params: any) => void;
+  addFilter:
+    (params?: any) => void;
+  removeFilterTag:
+    (tag: FilterTag | null) => void;
+  filterTags: FilterTag[];
+
+  groupSearchScope?:
+    VideoGroupSearchScope | null;
+
+  onClearGroupSearchScope?:
+    () => void;
+
+  isSearching?: boolean;
+  onCancelSearch?: () => void;
+  onGetPendingQuery?:
+    (getPendingFn: () => string) => void;
+  submitChatMessage?:
+    (message: string) => void;
+  contentDisabled?: boolean;
+}
 
 const SEARCH_HEADER_SPIN_STYLE_ID = 'search-header-spin-keyframes';
 let searchHeaderSpinRefCount = 0;
 
-export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams, theme, streams, filterParams, setFilterParams, addFilter, removeFilterTag, filterTags, isSearching = false, onCancelSearch, onGetPendingQuery, submitChatMessage, contentDisabled = false }) => {
+export const SearchHeader:
+  React.FC<SearchHeaderProps> = ({
+    onUpdateSearchParams,
+    theme,
+    streams,
+    filterParams,
+    setFilterParams,
+    addFilter,
+    removeFilterTag,
+    filterTags,
+    groupSearchScope,
+    onClearGroupSearchScope,
+    isSearching = false,
+    onCancelSearch,
+    onGetPendingQuery,
+    submitChatMessage,
+    contentDisabled = false,
+  }) => {
     const [query, setQuery] = useState(filterParams.query || '');
     const [hasQueryError, setHasQueryError] = useState(false);
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
@@ -170,10 +204,25 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
       setFilterParams(newParams);
     }, [filterParams, removeFilterTag, setFilterParams]);
 
-    const visibleTags = useMemo(
-      () => (contentDisabled ? filterTags.filter((tag: FilterTag) => tag.key !== 'topK') : filterTags),
-      [contentDisabled, filterTags]
-    );
+    const visibleTags = useMemo(() => {
+      const tags = groupSearchScope
+        ? filterTags.filter(
+            (tag: FilterTag) =>
+              tag.key !== 'videoSources',
+          )
+        : filterTags;
+        
+      return contentDisabled
+        ? tags.filter(
+            (tag: FilterTag) =>
+              tag.key !== 'topK',
+          )
+        : tags;
+    }, [
+      contentDisabled,
+      filterTags,
+      groupSearchScope,
+    ]);
 
     return (
         <CustomProvider theme={theme}>
@@ -246,6 +295,50 @@ export const SearchHeader: React.FC<SearchHeaderProps> = ({ onUpdateSearchParams
                       triggerRef={filterButtonRef}
                     />
                 </div>
+
+                {groupSearchScope && (
+                  <KaizenTag
+                    data-testid="search-group-scope-tag"
+                    kind="outline"
+                    color="gray"
+                    readOnly={
+                      contentDisabled ||
+                      !onClearGroupSearchScope
+                    }
+                    style={{
+                      opacity:
+                        contentDisabled ? 0.5 : 1,
+                    }}
+                    onClick={
+                      !contentDisabled &&
+                      onClearGroupSearchScope
+                        ? onClearGroupSearchScope
+                        : undefined
+                    }
+                  >
+                    Group:{' '}
+                  
+                    <span
+                      style={{
+                        color:
+                          theme === 'dark'
+                            ? '#84E1BC'
+                            : 'green',
+                      }}
+                    >
+                      {groupSearchScope.groupName}
+                      {' ('}
+                      {groupSearchScope.sensorIds.length}
+                      {'개)'}
+                    </span>
+                    
+                    {!contentDisabled &&
+                      onClearGroupSearchScope && (
+                        <IconX size={14} />
+                      )}
+                  </KaizenTag>
+                )}
+
                 {visibleTags.length > 0 && (
                   <div data-testid="search-filter-tags" style={{ 
                     display: 'flex', 

@@ -244,7 +244,7 @@ export const useSearch = ({
               new Set(
                 rawScopeVideoSources
                   .filter(
-                    (value) =>
+                    (value): value is string =>
                       typeof value === 'string',
                   )
                   .map((value) => value.trim())
@@ -252,6 +252,16 @@ export const useSearch = ({
               ),
             );
           
+      if (
+        normalizedScopeVideoSources !== null &&
+        normalizedScopeVideoSources.length === 0
+      ) {
+        setSearchResults([]);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
       const body = buildRequestBody(
         searchParams,
         normalizedScopeVideoSources,
@@ -259,6 +269,9 @@ export const useSearch = ({
       setLoading(true);
       setError(null);
       setSearchResults([]);
+
+      let effectiveScopeVideoIds:string[] | null =
+          normalizedScopeVideoSources;
 
       const ownedVideoLookup =
         await fetchOwnedVideoLookup();
@@ -272,9 +285,6 @@ export const useSearch = ({
           setLoading(false);
           return;
         }
-      
-        body.owned_video_ids =
-          ownedVideoIds;
       
         if (
           normalizedScopeVideoSources !== null
@@ -295,17 +305,28 @@ export const useSearch = ({
             setLoading(false);
             return;
           }
-        
+          
+          effectiveScopeVideoIds =
+            allowedScopeVideoSources;
+
           body.video_sources =
             allowedScopeVideoSources;
-        } else if (
-          !Array.isArray(
-            body.video_sources,
-          ) ||
-          body.video_sources.length === 0
-        ) {
-          body.video_sources =
+        
+          body.owned_video_ids =
+            allowedScopeVideoSources;
+        } else {
+          body.owned_video_ids =
             ownedVideoIds;
+        
+          if (
+            !Array.isArray(
+              body.video_sources,
+            ) ||
+            body.video_sources.length === 0
+          ) {
+            body.video_sources =
+              ownedVideoIds;
+          }
         }
       }
 
@@ -343,8 +364,26 @@ export const useSearch = ({
           };
         },
       );
-      
-      setSearchResults(transformedSearchResults);
+            const effectiveScopeVideoIdSet =
+        effectiveScopeVideoIds === null
+          ? null
+          : new Set(
+              effectiveScopeVideoIds,
+            );
+
+      const scopedSearchResults =
+        effectiveScopeVideoIdSet === null
+          ? transformedSearchResults
+          : transformedSearchResults.filter(
+              (result) =>
+                effectiveScopeVideoIdSet.has(
+                  result.sensor_id,
+                ),
+            );
+
+      setSearchResults(
+        scopedSearchResults,
+      );
     } catch (err) {
       if (signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
         return;
