@@ -1153,9 +1153,6 @@ export const Chat = () => {
       return;
     }
 
-    // End loading indicators as messages arrive
-    homeDispatch({ field: 'loading', value: false });
-
     // Check if this is a completion message
     const isComplete = isSystemResponseComplete(message);
 
