@@ -39,7 +39,15 @@ export interface Props {
   message: Message;
   messageIndex: number;
   sourceQuery?: string;
-  onEdit?: (editedMessage: Message, deleteCount?: number) => void;
+
+  onSubmitMessage?: (
+    content: string,
+  ) => void | Promise<void>;
+
+  onEdit?: (
+    editedMessage: Message,
+    deleteCount?: number,
+  ) => void;
   onDelete?: (messageIndex: number) => void;
   totalMessageCount?: number;
   isStreaming?: boolean;
@@ -53,6 +61,7 @@ export const ChatMessage: FC<Props> = memo(
     message,
     messageIndex,
     sourceQuery = '',
+    onSubmitMessage,
     onEdit,
     onDelete,
     totalMessageCount = 0,
@@ -357,6 +366,7 @@ export const ChatMessage: FC<Props> = memo(
                           <SearchResultsMessage
                             results={parsedSearchResultsMessage.results}
                             sourceQuery={sourceQuery}
+                            onSubmitMessage={onSubmitMessage}
                           />
                         </div>
                       ) : (

@@ -17,11 +17,30 @@ export const MemoizedChatMessage: FC<Props> = memo(
     const showMessageSpeakerEqual = prevProps.showMessageSpeaker === nextProps.showMessageSpeaker;
     const showMessageCopyEqual = prevProps.showMessageCopy === nextProps.showMessageCopy;
 
+    const onSubmitMessageEqual =
+      prevProps.onSubmitMessage ===
+      nextProps.onSubmitMessage;
+
+    const sourceQueryEqual =
+      prevProps.sourceQuery ===
+      nextProps.sourceQuery;
+
     // Note: totalMessageCount is intentionally excluded from comparison
     // It's only used for edit actions (calculating deleteCount), not for rendering
     // Including it would cause all messages to re-render when a new message is added
 
     // Return true if all props are equal (don't re-render)
-    return messageEqual && messageIndexEqual && onEditEqual && onDeleteEqual && isStreamingEqual && showMessageEditEqual && showMessageSpeakerEqual && showMessageCopyEqual;
+    return (
+      messageEqual &&
+      messageIndexEqual &&
+      onEditEqual &&
+      onDeleteEqual &&
+      onSubmitMessageEqual &&
+      sourceQueryEqual &&
+      isStreamingEqual &&
+      showMessageEditEqual &&
+      showMessageSpeakerEqual &&
+      showMessageCopyEqual
+    );
   },
 );

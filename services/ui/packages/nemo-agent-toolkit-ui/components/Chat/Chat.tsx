@@ -2195,26 +2195,49 @@ export const Chat = () => {
     handleSendRef.current = handleSend;
   }, [handleSend]);
 
+  const submitMessageProgrammatically =
+  useCallback(
+    async (content: string) => {
+      if (uploadFlowActiveRef.current) {
+        return;
+      }
+
+      if (!selectedConversationRef.current) {
+        return;
+      }
+
+      customAgentParamsRef.current =
+        await buildSearchAwareCustomParams(
+          customAgentParamsRef.current,
+        );
+
+      await handleSendRef.current?.(
+        {
+          role: 'user',
+          content,
+        },
+        0,
+      );
+    },
+    [buildSearchAwareCustomParams],
+  );
+
   // Expose programmatic submit to embedder (send a message to the agent without user typing)
   useEffect(() => {
-    if (!onSubmitMessageReady || !selectedConversation) return;
-
-    const submitMessage = async (content: string) => {
-      if (uploadFlowActiveRef.current) return;
-
-      customAgentParamsRef.current = await buildSearchAwareCustomParams(
-        customAgentParamsRef.current,
-      );
-
-      const message: Message = { role: 'user', content };
-      handleSendRef.current?.(message, 0);
-    };
-
-    onSubmitMessageReady(submitMessage);
+    if (
+      !onSubmitMessageReady ||
+      !selectedConversation
+    ) {
+      return;
+    }
+  
+    onSubmitMessageReady(
+      submitMessageProgrammatically,
+    );
   }, [
     onSubmitMessageReady,
     selectedConversation?.id,
-    buildSearchAwareCustomParams,
+    submitMessageProgrammatically,
   ]);
 
   // Expose addQueryContext to embedder so external panels can add context items to the chat input
@@ -2498,13 +2521,22 @@ export const Chat = () => {
                 key={message.id ?? index}
                 message={message}
                 messageIndex={index}
+                onSubmitMessage={
+                  submitMessageProgrammatically
+                }
                 onEdit={handleEditMessage}
                 onDelete={handleDeleteMessage}
                 totalMessageCount={arr.length}
                 isStreaming={isStreamingMessage}
-                showMessageEdit={chatMessageEditEnabled !== false}
-                showMessageSpeaker={chatMessageSpeakerEnabled !== false}
-                showMessageCopy={chatMessageCopyEnabled !== false}
+                showMessageEdit={
+                  chatMessageEditEnabled !== false
+                }
+                showMessageSpeaker={
+                  chatMessageSpeakerEnabled !== false
+                }
+                showMessageCopy={
+                  chatMessageCopyEnabled !== false
+                }
               />
             );
           })}
