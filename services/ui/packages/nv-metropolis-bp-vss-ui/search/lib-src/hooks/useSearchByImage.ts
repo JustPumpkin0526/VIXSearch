@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
-import { useState, useCallback, useRef } from 'react';
-import { SearchByImageFrameData, BboxObject } from '../types';
+
+import { useCallback, useRef, useState } from 'react';
+
+import {
+  BboxObject,
+  SearchByImageFrameData,
+} from '../types';
 
 interface UseSearchByImageOptions {
   vstApiUrl?: string;
@@ -14,49 +19,6 @@ interface SearchByImageState {
   frameData: SearchByImageFrameData | null;
 }
 
-/**
- * Fetch the still-frame image from VST /picture API as an HTMLImageElement.
- */
-async function fetchFrameImage(
-  vstApiUrl: string,
-  sensorId: string,
-  timestamp: string,
-  signal: AbortSignal
-): Promise<HTMLImageElement> {
-  const params = new URLSearchParams({ startTime: timestamp });
-  const url = `${vstApiUrl}/v1/replay/stream/${sensorId}/picture?${params}`;
-  const response = await fetch(url, { signal, headers: { streamId: sensorId } });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch frame picture: ${response.status}`);
-  }
-
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const img = new Image();
-    const cleanup = () => URL.revokeObjectURL(objectUrl);
-
-    signal.addEventListener('abort', () => {
-      cleanup();
-      img.src = '';
-      reject(new DOMException('Aborted', 'AbortError'));
-    }, { once: true });
-
-    img.onload = () => { cleanup(); resolve(img); };
-    img.onerror = () => { cleanup(); reject(new Error('Failed to decode frame image')); };
-    img.src = objectUrl;
-  });
-}
-
-/**
- * Lookback window in ms assuming at least 10 fps. The /frames API is queried
- * with fromTimestamp = (t - 100ms) and toTimestamp = t (inclusive) so that at
- * least one indexed frame falls within the range.
- */
-const FRAME_LOOKBACK_MS = 200; // Even though 100ms would suffice, to be conservative setting 2x=200ms as lookback
-
 interface FrameApiBbox {
   leftX?: number;
   topY?: number;
@@ -69,8 +31,8 @@ interface FrameApiBbox {
 }
 
 interface FrameApiObject {
-  id?: string;
-  objectId?: string;
+  id?: string | number;
+  objectId?: string | number;
   bbox?: FrameApiBbox;
   type?: string;
   class?: string;
@@ -81,195 +43,820 @@ interface FrameApiObject {
 interface FrameDataItem {
   timestamp?: string;
   frame_timestamp?: string;
-  metadata?: { objects?: FrameApiObject[] };
+  frameTimestamp?: string;
+  metadata?: {
+    objects?: FrameApiObject[];
+  };
   objects?: FrameApiObject[];
 }
 
 interface FrameMetadataResult {
   objects: BboxObject[];
-  /** The actual indexed timestamp returned by the API (may differ from the requested one). */
   indexedTimestamp: string | null;
 }
 
-/**
- * Fetch bounding-box metadata for a frame from the /frames API.
- *
- * Uses a fromTimestamp/toTimestamp range (t-100ms .. t) so the API returns
- * the nearest indexed frame(s). Among those, the one closest to the requested
- * timestamp is selected for drawing bounding boxes.
- *
- * The /frames endpoint may not be deployed in all profiles. When unavailable
- * this returns an empty result so the overlay still shows the frame (without boxes).
- */
-async function fetchFrameMetadata(
-  mdxWebApiUrl: string,
+interface FrameImageResult {
+  frameImage: HTMLImageElement;
+  timestamp: string;
+}
+
+const FRAME_SEARCH_WINDOWS_MS = [
+  250,
+  1000,
+  3000,
+];
+
+const PICTURE_FALLBACK_OFFSETS_MS = [
+  0,
+  -100,
+  100,
+  -250,
+  250,
+];
+
+function parseTimestamp(value: unknown): number | null {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : null;
+}
+
+function getFrameTimestamp(
+  frame: FrameDataItem,
+): string | null {
+  return (
+    frame.timestamp ||
+    frame.frame_timestamp ||
+    frame.frameTimestamp ||
+    null
+  );
+}
+
+function normalizeFrames(
+  payload: unknown,
+): FrameDataItem[] {
+  if (Array.isArray(payload)) {
+    return payload as FrameDataItem[];
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const value = payload as Record<string, unknown>;
+
+  if (Array.isArray(value.frames)) {
+    return value.frames as FrameDataItem[];
+  }
+
+  if (Array.isArray(value.data)) {
+    return value.data as FrameDataItem[];
+  }
+
+  if (Array.isArray(value.items)) {
+    return value.items as FrameDataItem[];
+  }
+
+  return [payload as FrameDataItem];
+}
+
+function normalizeObjects(
+  frame: FrameDataItem | undefined,
+): BboxObject[] {
+  const rawObjects =
+    frame?.metadata?.objects ??
+    frame?.objects ??
+    [];
+
+  return rawObjects
+    .filter(
+      (object) =>
+        (object.id !== undefined ||
+          object.objectId !== undefined) &&
+        object.bbox,
+    )
+    .map((object) => ({
+      id: String(
+        object.id ??
+        object.objectId,
+      ),
+      type:
+        object.type ??
+        object.class ??
+        object.className ??
+        object.objectType,
+      bbox: {
+        leftX: Number(
+          object.bbox?.leftX ??
+          object.bbox?.left ??
+          0,
+        ),
+        topY: Number(
+          object.bbox?.topY ??
+          object.bbox?.top ??
+          0,
+        ),
+        rightX: Number(
+          object.bbox?.rightX ??
+          object.bbox?.right ??
+          0,
+        ),
+        bottomY: Number(
+          object.bbox?.bottomY ??
+          object.bbox?.bottom ??
+          0,
+        ),
+      },
+    }));
+}
+
+async function fetchNearestFrameMetadata(
+  mdxWebApiUrl: string | undefined,
   sensorName: string,
-  timestamp: string,
-  signal: AbortSignal
+  targetTimestamp: string,
+  signal: AbortSignal,
 ): Promise<FrameMetadataResult> {
-  const empty: FrameMetadataResult = { objects: [], indexedTimestamp: null };
-  try {
-    const tsMs = new Date(timestamp).getTime();
-    const fromTimestamp = new Date(tsMs - FRAME_LOOKBACK_MS).toISOString();
-    const toTimestamp = timestamp;
+  const empty: FrameMetadataResult = {
+    objects: [],
+    indexedTimestamp: null,
+  };
 
-    const params = new URLSearchParams({ sensorId: sensorName, fromTimestamp, toTimestamp });
-    const url = `${mdxWebApiUrl}/frames?${params}`;
-    const response = await fetch(url, { signal });
+  if (!mdxWebApiUrl || !sensorName) {
+    return empty;
+  }
 
-    if (!response.ok) {
-      console.warn(`/frames API returned ${response.status}, bbox overlay will be empty`);
-      return empty;
-    }
+  const targetMs = parseTimestamp(targetTimestamp);
 
-    const data = await response.json();
+  if (targetMs === null) {
+    return empty;
+  }
 
-    const frames: FrameDataItem[] = Array.isArray(data) ? data : data?.frames ? data.frames : [data];
-    let bestFrame: FrameDataItem | undefined = frames[0];
-    if (frames.length > 1) {
-      let bestDelta = Infinity;
+  for (const windowMs of FRAME_SEARCH_WINDOWS_MS) {
+    const fromTimestamp =
+      new Date(targetMs - windowMs).toISOString();
+
+    const toTimestamp =
+      new Date(targetMs + windowMs).toISOString();
+
+    const params = new URLSearchParams({
+      sensorId: sensorName,
+      fromTimestamp,
+      toTimestamp,
+    });
+
+    const url =
+      `${mdxWebApiUrl}/frames?${params.toString()}`;
+
+    try {
+      const response = await fetch(url, {
+        signal,
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        console.warn(
+          '[SearchByImage] /frames failed',
+          {
+            status: response.status,
+            url,
+          },
+        );
+
+        continue;
+      }
+
+      const payload = await response.json();
+      const frames = normalizeFrames(payload);
+
+      if (frames.length === 0) {
+        continue;
+      }
+
+      let bestFrame:
+        | FrameDataItem
+        | undefined;
+
+      let bestTimestamp:
+        | string
+        | null = null;
+
+      let bestDelta = Number.POSITIVE_INFINITY;
+
       for (const frame of frames) {
-        const frameTimestamp = frame.timestamp ?? frame.frame_timestamp;
-        if (!frameTimestamp) continue;
-        const delta = Math.abs(new Date(frameTimestamp).getTime() - tsMs);
+        const timestamp =
+          getFrameTimestamp(frame);
+
+        const timestampMs =
+          parseTimestamp(timestamp);
+
+        if (
+          !timestamp ||
+          timestampMs === null
+        ) {
+          continue;
+        }
+
+        const delta =
+          Math.abs(timestampMs - targetMs);
+
         if (delta < bestDelta) {
           bestDelta = delta;
           bestFrame = frame;
+          bestTimestamp = timestamp;
         }
       }
+
+      /*
+       * API가 timestamp 없이 단일 프레임을 반환하는
+       * 경우에 대한 fallback입니다.
+       */
+      if (!bestFrame) {
+        bestFrame = frames[0];
+      }
+
+      return {
+        objects: normalizeObjects(bestFrame),
+        indexedTimestamp: bestTimestamp,
+      };
+    } catch (error) {
+      if (
+        error instanceof DOMException &&
+        error.name === 'AbortError'
+      ) {
+        throw error;
+      }
+
+      console.warn(
+        '[SearchByImage] failed to fetch frame metadata',
+        error,
+      );
     }
-
-    const indexedTimestamp = bestFrame?.timestamp ?? bestFrame?.frame_timestamp ?? null;
-
-    const rawObjects = bestFrame?.metadata?.objects ?? bestFrame?.objects ?? [];
-    const objects: BboxObject[] = rawObjects
-      .filter((obj) => (obj.id != null || obj.objectId != null) && !!obj.bbox)
-      .map((obj) => ({
-        id: String(obj.id ?? obj.objectId),
-        type: obj.type ?? obj.class ?? obj.className ?? obj.objectType,
-        bbox: {
-          leftX: Number(obj.bbox?.leftX ?? obj.bbox?.left ?? 0),
-          topY: Number(obj.bbox?.topY ?? obj.bbox?.top ?? 0),
-          rightX: Number(obj.bbox?.rightX ?? obj.bbox?.right ?? 0),
-          bottomY: Number(obj.bbox?.bottomY ?? obj.bbox?.bottom ?? 0),
-        },
-      }));
-
-    return { objects, indexedTimestamp };
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') throw err;
-    console.warn('Failed to fetch frame metadata, bbox overlay will be empty:', err);
-    return empty;
   }
+
+  return empty;
 }
 
-/**
- * Extract the actual clip start time from a VST video URL.
- *
- * VST video URLs come in two flavours:
- *  1. Signed URL with query params: ...?startTime=2025-01-01T00:00:31.000Z&...
- *  2. Static file path with timestamp in filename:
- *     .../sample-warehouse-4min_20250101_000031_3945b.mp4
- *     The YYYYMMDD_HHMMSS portion encodes the actual keyframe-aligned start.
- *
- * The actual start can differ from the search-result start_time because the
- * video is cut at the nearest keyframe *before* the requested timestamp.
- */
-function extractStartTimeFromVideoUrl(videoUrl: string): string | null {
-  try {
-    const url = new URL(videoUrl);
-    const fromParams = url.searchParams.get('startTime');
-    if (fromParams) return fromParams;
-  } catch {
-    // not a valid URL, fall through to filename parsing
+async function decodeImageBlob(
+  blob: Blob,
+  signal: AbortSignal,
+): Promise<HTMLImageElement> {
+  if (blob.size === 0) {
+    throw new Error(
+      'VST returned an empty frame image',
+    );
   }
 
-  const match = videoUrl.match(/(\d{8})_(\d{6})_[0-9a-f]+\.mp4/i);
-  if (match) {
-    const [, date, time] = match;
-    const iso = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}` +
-      `T${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}.000Z`;
-    if (!isNaN(new Date(iso).getTime())) return iso;
+  if (
+    blob.type &&
+    !blob.type.startsWith('image/')
+  ) {
+    throw new Error(
+      `Unexpected frame content type: ${blob.type}`,
+    );
   }
 
-  return null;
+  const objectUrl =
+    URL.createObjectURL(blob);
+
+  return new Promise<HTMLImageElement>(
+    (resolve, reject) => {
+      const image = new Image();
+      image.decoding = 'async';
+
+      let settled = false;
+
+      const cleanup = () => {
+        signal.removeEventListener(
+          'abort',
+          handleAbort,
+        );
+
+        URL.revokeObjectURL(objectUrl);
+      };
+
+      const finishResolve = () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        cleanup();
+        resolve(image);
+      };
+
+      const finishReject = (
+        error: Error,
+      ) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+
+      const handleAbort = () => {
+        image.src = '';
+
+        finishReject(
+          new DOMException(
+            'Aborted',
+            'AbortError',
+          ),
+        );
+      };
+
+      signal.addEventListener(
+        'abort',
+        handleAbort,
+        { once: true },
+      );
+
+      image.onload = () => {
+        /*
+         * onload 이후에는 이미지 데이터가 브라우저에
+         * 디코딩되었으므로 object URL을 해제해도
+         * Konva에서 HTMLImageElement를 사용할 수 있습니다.
+         */
+        finishResolve();
+      };
+
+      image.onerror = () => {
+        finishReject(
+          new Error(
+            'Failed to decode frame image',
+          ),
+        );
+      };
+
+      image.src = objectUrl;
+    },
+  );
 }
 
-export const useSearchByImage = ({ vstApiUrl, mdxWebApiUrl }: UseSearchByImageOptions) => {
-  const [state, setState] = useState<SearchByImageState>({
-    active: false,
-    loading: false,
-    error: null,
-    frameData: null,
+async function fetchFrameImageAtTimestamp(
+  vstApiUrl: string,
+  sensorId: string,
+  timestamp: string,
+  signal: AbortSignal,
+): Promise<HTMLImageElement> {
+  const params = new URLSearchParams({
+    startTime: timestamp,
   });
 
-  const abortRef = useRef<AbortController | null>(null);
+  const url =
+    `${vstApiUrl}/v1/replay/stream/` +
+    `${encodeURIComponent(sensorId)}/picture?` +
+    params.toString();
 
-  const startSearchByImage = useCallback(
-    async (sensorId: string, sensorName: string, videoStartTime: string, pauseOffsetSeconds: number, videoUrl: string) => {
-      if (!vstApiUrl || !mdxWebApiUrl) {
-        setState((s) => ({ ...s, error: 'VST API URL or MDX Web API URL not configured', active: false }));
-        return;
+  const response = await fetch(url, {
+    signal,
+    cache: 'no-store',
+    headers: {
+      Accept: 'image/*',
+      streamId: sensorId,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch frame picture: ${response.status}`,
+    );
+  }
+
+  const blob = await response.blob();
+
+  return decodeImageBlob(
+    blob,
+    signal,
+  );
+}
+
+function buildPictureTimestampCandidates(
+  preferredTimestamp: string,
+  requestedTimestamp: string,
+): string[] {
+  const values: string[] = [];
+
+  const add = (value: string) => {
+    if (
+      value &&
+      !values.includes(value)
+    ) {
+      values.push(value);
+    }
+  };
+
+  add(preferredTimestamp);
+  add(requestedTimestamp);
+
+  const requestedMs =
+    parseTimestamp(requestedTimestamp);
+
+  if (requestedMs !== null) {
+    for (
+      const offsetMs of
+      PICTURE_FALLBACK_OFFSETS_MS
+    ) {
+      add(
+        new Date(
+          requestedMs + offsetMs,
+        ).toISOString(),
+      );
+    }
+  }
+
+  return values;
+}
+
+async function fetchFrameImageWithFallback(
+  vstApiUrl: string,
+  sensorId: string,
+  timestamps: string[],
+  signal: AbortSignal,
+): Promise<FrameImageResult> {
+  let lastError: unknown;
+
+  for (const timestamp of timestamps) {
+    try {
+      const frameImage =
+        await fetchFrameImageAtTimestamp(
+          vstApiUrl,
+          sensorId,
+          timestamp,
+          signal,
+        );
+
+      return {
+        frameImage,
+        timestamp,
+      };
+    } catch (error) {
+      if (
+        error instanceof DOMException &&
+        error.name === 'AbortError'
+      ) {
+        throw error;
       }
 
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
+      lastError = error;
 
-      setState({ active: true, loading: true, error: null, frameData: null });
+      console.warn(
+        '[SearchByImage] picture request failed',
+        {
+          sensorId,
+          timestamp,
+          error,
+        },
+      );
+    }
+  }
 
-      try {
-        const actualStart = extractStartTimeFromVideoUrl(videoUrl);
-        const baseTime = actualStart || videoStartTime;
-        const startMs = new Date(baseTime).getTime();
-        if (isNaN(startMs)) {
-          throw new Error(`Invalid video start time: ${baseTime}`);
+  throw (
+    lastError instanceof Error
+      ? lastError
+      : new Error(
+          'Failed to load the nearest frame image',
+        )
+  );
+}
+
+function extractStartTimeFromVideoUrl(
+  videoUrl: string,
+): string | null {
+  if (!videoUrl) {
+    return null;
+  }
+
+  try {
+    const baseUrl =
+      typeof window !== 'undefined'
+        ? window.location.href
+        : 'http://localhost';
+
+    const url = new URL(
+      videoUrl,
+      baseUrl,
+    );
+
+    const possibleParams = [
+      'startTime',
+      'start_time',
+      'fromTimestamp',
+    ];
+
+    for (const key of possibleParams) {
+      const value =
+        url.searchParams.get(key);
+
+      const timestampMs =
+        parseTimestamp(value);
+
+      if (
+        value &&
+        timestampMs !== null
+      ) {
+        return new Date(
+          timestampMs,
+        ).toISOString();
+      }
+    }
+  } catch {
+    // 파일명 파싱으로 fallback
+  }
+
+  /*
+   * 예:
+   * video_20260101_120031_a83fd.mp4
+   */
+  const match = videoUrl.match(
+    /(\d{8})_(\d{6})(?:_[^/?]+)?\.mp4/i,
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const [, date, time] = match;
+
+  const iso =
+    `${date.slice(0, 4)}-` +
+    `${date.slice(4, 6)}-` +
+    `${date.slice(6, 8)}T` +
+    `${time.slice(0, 2)}:` +
+    `${time.slice(2, 4)}:` +
+    `${time.slice(4, 6)}.000Z`;
+
+  const timestampMs =
+    parseTimestamp(iso);
+
+  return timestampMs === null
+    ? null
+    : new Date(timestampMs).toISOString();
+}
+
+export const useSearchByImage = ({
+  vstApiUrl,
+  mdxWebApiUrl,
+}: UseSearchByImageOptions) => {
+  const [state, setState] =
+    useState<SearchByImageState>({
+      active: false,
+      loading: false,
+      error: null,
+      frameData: null,
+    });
+
+  const abortRef =
+    useRef<AbortController | null>(null);
+
+  const startSearchByImage =
+    useCallback(
+      async (
+        sensorId: string,
+        sensorName: string,
+        videoStartTime: string,
+        pauseOffsetSeconds: number,
+        videoUrl: string,
+      ) => {
+        if (!vstApiUrl) {
+          setState({
+            active: true,
+            loading: false,
+            error:
+              'VST API URL is not configured',
+            frameData: null,
+          });
+
+          return;
         }
-        const offsetMs = Math.round(pauseOffsetSeconds * 1000);
-        const timestamp = new Date(startMs + offsetMs).toISOString();
 
-        const [frameImage, frameResult] = await Promise.all([
-          fetchFrameImage(vstApiUrl, sensorId, timestamp, controller.signal),
-          fetchFrameMetadata(mdxWebApiUrl, sensorName, timestamp, controller.signal),
-        ]);
+        if (!sensorId) {
+          setState({
+            active: true,
+            loading: false,
+            error:
+              'Sensor ID is missing',
+            frameData: null,
+          });
 
-        if (controller.signal.aborted) return;
+          return;
+        }
+
+        abortRef.current?.abort();
+
+        const controller =
+          new AbortController();
+
+        abortRef.current = controller;
 
         setState({
           active: true,
-          loading: false,
+          loading: true,
           error: null,
-          frameData: {
-            frameImage,
-            objects: frameResult.objects,
-            sensorId,
-            sensorName,
-            timestamp: frameResult.indexedTimestamp || timestamp,
-          },
+          frameData: null,
         });
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return;
-        console.error('Search by Image fetch error:', err);
-        setState((s) => ({
-          ...s,
-          loading: false,
-          error: err instanceof Error ? err.message : 'Failed to load Search by Image data',
-        }));
-      }
-    },
-    [vstApiUrl, mdxWebApiUrl]
-  );
 
-  const cancelSearchByImage = useCallback(() => {
-    abortRef.current?.abort();
-    setState({ active: false, loading: false, error: null, frameData: null });
-  }, []);
+        try {
+          const actualStart =
+            extractStartTimeFromVideoUrl(
+              videoUrl,
+            );
+
+          const baseTime =
+            actualStart ||
+            videoStartTime;
+
+          const startMs =
+            parseTimestamp(baseTime);
+
+          if (startMs === null) {
+            throw new Error(
+              `Invalid video start time: ${baseTime}`,
+            );
+          }
+
+          const safePauseSeconds =
+            Number.isFinite(
+              pauseOffsetSeconds,
+            )
+              ? Math.max(
+                  0,
+                  pauseOffsetSeconds,
+                )
+              : 0;
+
+          const requestedTimestamp =
+            new Date(
+              startMs +
+              Math.round(
+                safePauseSeconds *
+                1000,
+              ),
+            ).toISOString();
+
+          /*
+           * 먼저 가장 가까운 분석 프레임을 찾습니다.
+           */
+          const metadataResult =
+            await fetchNearestFrameMetadata(
+              mdxWebApiUrl,
+              sensorName,
+              requestedTimestamp,
+              controller.signal,
+            );
+
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          /*
+           * 찾은 인덱싱 시각을 실제 picture 요청에 사용합니다.
+           */
+          const preferredTimestamp =
+            metadataResult.indexedTimestamp ||
+            requestedTimestamp;
+
+          const timestampCandidates =
+            buildPictureTimestampCandidates(
+              preferredTimestamp,
+              requestedTimestamp,
+            );
+
+          const imageResult =
+            await fetchFrameImageWithFallback(
+              vstApiUrl,
+              sensorId,
+              timestampCandidates,
+              controller.signal,
+            );
+
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          /*
+           * 이미지와 bbox의 시각이 크게 다르면 잘못된
+           * bbox가 표시되지 않도록 객체 목록을 비웁니다.
+           */
+          let objects =
+            metadataResult.objects;
+
+          if (
+            metadataResult.indexedTimestamp
+          ) {
+            const metadataMs =
+              parseTimestamp(
+                metadataResult.indexedTimestamp,
+              );
+
+            const imageMs =
+              parseTimestamp(
+                imageResult.timestamp,
+              );
+
+            if (
+              metadataMs !== null &&
+              imageMs !== null &&
+              Math.abs(
+                metadataMs - imageMs,
+              ) > 500
+            ) {
+              objects = [];
+            }
+          }
+
+          console.info(
+            '[SearchByImage] frame loaded',
+            {
+              sensorId,
+              sensorName,
+              videoStartTime,
+              actualStart,
+              pauseOffsetSeconds:
+                safePauseSeconds,
+              requestedTimestamp,
+              indexedTimestamp:
+                metadataResult.indexedTimestamp,
+              imageTimestamp:
+                imageResult.timestamp,
+              objectCount:
+                objects.length,
+            },
+          );
+
+          setState({
+            active: true,
+            loading: false,
+            error: null,
+            frameData: {
+              frameImage:
+                imageResult.frameImage,
+              objects,
+              sensorId,
+              sensorName,
+              timestamp:
+                imageResult.timestamp,
+            },
+          });
+        } catch (error) {
+          if (
+            error instanceof DOMException &&
+            error.name === 'AbortError'
+          ) {
+            return;
+          }
+
+          console.error(
+            '[SearchByImage] fetch failed',
+            error,
+          );
+
+          setState({
+            active: true,
+            loading: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : 'Failed to load Search by Image frame',
+            frameData: null,
+          });
+        }
+      },
+      [
+        vstApiUrl,
+        mdxWebApiUrl,
+      ],
+    );
+
+  const cancelSearchByImage =
+    useCallback(() => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+
+      setState({
+        active: false,
+        loading: false,
+        error: null,
+        frameData: null,
+      });
+    }, []);
 
   return {
-    searchByImageActive: state.active,
-    searchByImageLoading: state.loading,
-    searchByImageError: state.error,
-    searchByImageFrameData: state.frameData,
+    searchByImageActive:
+      state.active,
+    searchByImageLoading:
+      state.loading,
+    searchByImageError:
+      state.error,
+    searchByImageFrameData:
+      state.frameData,
     startSearchByImage,
     cancelSearchByImage,
   };

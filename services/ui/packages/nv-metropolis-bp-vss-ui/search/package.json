@@ -13,6 +13,11 @@
       "import": "./lib/server.js",
       "require": "./lib/server.js",
       "types": "./lib/server.d.ts"
+    },
+    "./components/SearchByImageOverlay": {
+      "import": "./lib/components/SearchByImageOverlay.js",
+      "require": "./lib/components/SearchByImageOverlay.js",
+      "types": "./lib/components/SearchByImageOverlay.d.ts"
     }
   },
   "files": [

@@ -19,17 +19,20 @@ type CriticResult = {
   criteria_met: Record<string, boolean>;
 };
 
+const loadSearchByImageOverlay = () =>
+  import(
+    '@nv-metropolis-bp-vss-ui/search/components/SearchByImageOverlay'
+  ).then((module) => module.SearchByImageOverlay);
+
 const SearchByImageOverlayComponent = dynamic(
-  () =>
-    import('@nv-metropolis-bp-vss-ui/search').then(
-      (module) => module.SearchByImageOverlay,
-    ),
+  loadSearchByImageOverlay,
   {
     ssr: false,
     loading: () => (
       <div className="flex h-full min-h-[400px] items-center justify-center bg-black text-white">
         <div className="flex flex-col items-center gap-3">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-white border-t-transparent" />
+
           <span className="text-sm">
             Preparing Search by Image overlay...
           </span>
@@ -413,7 +416,6 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
   const canSearchByImage =
     searchByImageConfigured &&
     Boolean(vstApiUrl) &&
-    Boolean(mdxWebApiUrl) &&
     Boolean(onSubmitMessage);
 
   const searchData = React.useMemo<SearchData[]>(
@@ -500,14 +502,27 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
   const handleSearchByImageRequest =
   React.useCallback(
     (pauseOffsetSeconds: number) => {
-      if (!activeVideoData) {
+      if (
+        !activeVideoData ||
+        !videoModal.videoUrl
+      ) {
+        console.error(
+          '[SearchByImage] active video data or video URL is missing',
+          {
+            activeVideoData,
+            videoUrl:
+              videoModal.videoUrl,
+          },
+        );
+
         return;
       }
 
       const sensorName =
         sensorIdToNameMap.get(
           activeVideoData.sensor_id,
-        ) || activeVideoData.sensor_id;
+        ) ||
+        activeVideoData.sensor_id;
 
       void startSearchByImage(
         activeVideoData.sensor_id,
