@@ -142,6 +142,8 @@ export const ChatInput = ({
     onChatVideoUploadComplete,
   } = useContext(HomeContext);
 
+  const sendingRef = useRef(false);
+
   const workflow = useWorkflowName();
   const uploadDisabled = chatBlocked || isQueryProcessing(loading, messageIsStreaming);
   const paramsChangeDisabled = uploadDisabled;
@@ -271,126 +273,133 @@ export const ChatInput = ({
   };
 
   const handleSend = async () => {
-    if (
-      chatBlocked ||
-      messageIsStreaming
-    ) {
-      return;
-    }
+  if (
+    chatBlocked ||
+    messageIsStreaming ||
+    sendingRef.current
+  ) {
+    return;
+  }
 
-    if (
-      isRecording &&
-      recognitionRef.current
-    ) {
-      recognitionRef.current.stop();
-      setIsRecording(false);
-    }
+  if (
+    isRecording &&
+    recognitionRef.current
+  ) {
+    recognitionRef.current.stop();
+    setIsRecording(false);
+  }
 
-    const imageContentToSend =
-      inputFileContentCompressed ||
-      inputFileContent;
+  const imageContentToSend =
+    inputFileContentCompressed ||
+    inputFileContent;
 
-    const imageContentTypeToSend =
-      extractDataUriContentType(
-        imageContentToSend,
-        inputFileContentType,
+  const imageContentTypeToSend =
+    extractDataUriContentType(
+      imageContentToSend,
+      inputFileContentType,
+    );
+
+  const trimmedContent =
+    content.trim();
+
+  const hasImage =
+    Boolean(
+      inputFile &&
+      (
+        inputFileContentCompressed ||
+        inputFileContent
+      ),
+    );
+
+  const hasContext =
+    queryContextItems.length > 0;
+
+  if (
+    !trimmedContent &&
+    !hasImage &&
+    !hasContext
+  ) {
+    toast.error(
+      t('Please enter a message'),
+    );
+    return;
+  }
+
+  const customParams =
+    fieldsToParams(paramFields);
+
+  /*
+   * 요청에 사용할 값을 먼저 저장합니다.
+   */
+  const submittedContent = content;
+
+  /*
+   * 서버 응답을 기다리기 전에 입력창을 즉시 비웁니다.
+   */
+  setContent('');
+  sendingRef.current = true;
+
+  try {
+    if (hasImage) {
+      await onSend(
+        {
+          role: 'user',
+          content:
+            trimmedContent ||
+            '업로드한 이미지와 유사한 장면을 검색해줘',
+          attachments: [
+            {
+              content: imageContentToSend,
+              type: 'image',
+              contentType:
+                imageContentTypeToSend,
+              mimeType:
+                imageContentTypeToSend,
+              name:
+                inputFile || undefined,
+            },
+          ],
+        } as Message,
+        customParams,
       );
-
-    const trimmedContent =
-      content.trim();
-
-    const hasImage =
-      Boolean(
-        inputFile &&
-        (
-          inputFileContentCompressed ||
-          inputFileContent
-        ),
-      );
-
-    const hasContext =
-      queryContextItems.length > 0;
-
-    if (
-      !trimmedContent &&
-      !hasImage &&
-      !hasContext
-    ) {
-      toast.error(
-        t('Please enter a message'),
-      );
-      return;
-    }
-
-    const customParams =
-      fieldsToParams(paramFields);
-
-    try {
-      if (hasImage) {
-        const imageContentToSend =
-          inputFileContentCompressed ||
-          inputFileContent;
-        await onSend(
-          {
-            role: 'user',
-            content:
-              trimmedContent ||
-              '업로드한 이미지와 유사한 장면을 검색해줘',
-            attachments: [
-              {
-                content: imageContentToSend,
-                type: 'image',
-                contentType:
-                  imageContentTypeToSend,
-                mimeType:
-                  imageContentTypeToSend,
-                name:
-                  inputFile || undefined,
-              },
-            ],
-          } as Message,
-          customParams,
-        );
-
-      } else {
-        await onSend(
-          {
-            role: 'user',
-            content: trimmedContent,
-          },
-          customParams,
-        );
-      }
-
-      setContent('');
-      setInputFile(null);
-      setInputFileContent('');
-      setInputFileContentCompressed('');
-      setInputFileContentType('');
-        
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    
-      if (
-        window.innerWidth < 640 &&
-        textareaRef.current
-      ) {
-        textareaRef.current.blur();
-      }
-    } catch (error) {
-      console.error(
-        'Failed to send chat message:',
-        error,
-      );
-    
-      toast.error(
-        '메시지를 전송하지 못했습니다.',
+    } else {
+      await onSend(
+        {
+          role: 'user',
+          content: trimmedContent,
+        },
+        customParams,
       );
     }
+
+    setInputFile(null);
+    setInputFileContent('');
+    setInputFileContentCompressed('');
+    setInputFileContentType('');
+
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  } catch (error) {
+    console.error(
+      'Failed to send chat message:',
+      error,
+    );
+
+    /*
+     * 사용자가 검색 중 새 문장을 작성했다면 덮어쓰지 않습니다.
+     */
+    setContent(currentContent =>
+      currentContent
+        ? currentContent
+        : submittedContent,
+    );
+
+    toast.error(
+      '메시지를 전송하지 못했습니다.',
+    );
+  } finally {
+    sendingRef.current = false;
 
     if (
       window.innerWidth < 640 &&
@@ -398,7 +407,8 @@ export const ChatInput = ({
     ) {
       textareaRef.current.blur();
     }
-  };
+  }
+};
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (chatBlocked) return;
