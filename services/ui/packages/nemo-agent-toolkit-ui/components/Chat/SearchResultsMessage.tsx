@@ -358,31 +358,6 @@ function getResultKey(
   ].join('::');
 }
 
-function resolveDirectVideoUrl(
-  rawUrl: string,
-  vstApiUrl: string,
-): string {
-  const trimmed = rawUrl.trim();
-
-  if (!trimmed) {
-    return '';
-  }
-
-  try {
-    const baseUrl =
-      vstApiUrl ||
-      (typeof window !== 'undefined'
-        ? window.location.origin
-        : undefined);
-
-    return baseUrl
-      ? new URL(trimmed, baseUrl).toString()
-      : trimmed;
-  } catch {
-    return trimmed;
-  }
-}
-
 function useDarkTheme(): boolean {
   const [isDark, setIsDark] = React.useState(false);
 
@@ -459,12 +434,6 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
     [results],
   );
 
-  const originalResultMap = React.useMemo(() => {
-    return new Map(
-      results.map((item) => [getResultKey(item), item]),
-    );
-  }, [results]);
-
   const [activeVideoData, setActiveVideoData] = React.useState<SearchData | null>(null);
 
   const [
@@ -506,39 +475,21 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
   const {
     videoModal,
     openVideoModal,
-    openVideoModalFromUrl,
     closeVideoModal,
   } = useVideoModal(vstApiUrl);
 
   const handlePlayVideo = React.useCallback(
     (item: SearchData, showObjectsBbox: boolean) => {
+      cancelSearchByImage();
+      setSearchByImageSelectedObjectId(null);
+
       setActiveVideoData(item);
-
-      const original = originalResultMap.get(
-        getResultKey(item),
-      );
-
-      const directUrl =
-        original?.clip_url ||
-        original?.video_url ||
-        original?.url ||
-        '';
-
-      if (directUrl) {
-        openVideoModalFromUrl(
-          item.video_name,
-          resolveDirectVideoUrl(directUrl, vstApiUrl),
-        );
-        return;
-      }
 
       void openVideoModal(item, showObjectsBbox);
     },
     [
-      originalResultMap,
+      cancelSearchByImage,
       openVideoModal,
-      openVideoModalFromUrl,
-      vstApiUrl,
     ],
   );
 
