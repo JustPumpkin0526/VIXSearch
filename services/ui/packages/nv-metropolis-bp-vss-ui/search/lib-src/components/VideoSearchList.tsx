@@ -560,23 +560,38 @@ const VideoCard: React.FC<VideoCardProps> = ({
 
   const videoTitle = displayVideoName || item.video_name || '';
 
+  const cardBorderClass = selected
+  ? 'border-2 border-[#76b900] dark:border-[#76b900]'
+  : item.critic_result?.result === 'confirmed'
+    ? 'border border-green-500 dark:border-green-400'
+    : item.critic_result?.result === 'rejected'
+      ? 'border border-red-500 dark:border-red-400'
+      : item.critic_result?.result === 'unverified'
+        ? 'border border-yellow-500 dark:border-yellow-400'
+        : 'border border-gray-200 dark:border-gray-600';
+
   return (
     <div
       onClick={() => onToggleSelection(item)}
-      onContextMenu={(event) => onContextMenu(event, item)}
+      onContextMenu={(event) =>
+        onContextMenu(event, item)
+      }
       data-testid="search-result-card"
       key={`${videoTitle}-${index}`}
-      className={`rounded-lg overflow-hidden bg-white shadow-sm dark:bg-neutral-900 w-[280px] min-w-[280px] max-w-[280px] box-border border ${
-        selected ? 'ring-2 ring-green-500 ring-offset-2 dark:ring-offset-neutral-950 ' : ''
-      }${
-        item.critic_result?.result === 'confirmed'
-          ? 'border-green-500 dark:border-green-400'
-          : item.critic_result?.result === 'rejected'
-          ? 'border-red-500 dark:border-red-400'
-          : item.critic_result?.result === 'unverified'
-          ? 'border-yellow-500 dark:border-yellow-400'
-          : 'border-gray-200 dark:border-gray-600'
-      }`}
+      aria-selected={selected}
+      className={`
+        rounded-lg
+        overflow-hidden
+        bg-white
+        shadow-sm
+        dark:bg-neutral-900
+        w-[280px]
+        min-w-[280px]
+        max-w-[280px]
+        box-border
+        transition-colors
+        ${cardBorderClass}
+      `}
     >
       <div className="p-4 pb-0 space-y-3">
         <div className="flex items-center gap-2">

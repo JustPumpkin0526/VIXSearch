@@ -118,7 +118,7 @@ class CriticAgentConfig(FunctionBaseConfig, name="critic_agent"):
         description="The prompt that is used to evaluate the video against the user prompt.",
     )
     max_concurrent_verifications: int = Field(
-        default=5,
+        default=10,
         description="Maximum number of concurrent VLM calls",
         ge=1,
     )
@@ -133,7 +133,7 @@ class CriticAgentConfig(FunctionBaseConfig, name="critic_agent"):
         "Must match across video_understanding, vst.video_clip, vst.snapshot, and critic_agent configs.",
     )
     num_videos_to_evaluate: int | None = Field(
-        default=None,
+        default=10,
         description="The number of videos to evaluate. If None, all videos will be evaluated.",
         ge=1,
     )
