@@ -58,19 +58,6 @@ type ParsedSearchResultsMessage = {
   results: SearchResultItem[];
 };
 
-type ReportSceneItem = {
-  id: string;
-  videoName: string;
-  description: string;
-  screenshotUrl?: string;
-
-  // 기존 보고서 데이터와의 호환성을 위해 optional로 유지
-  startTime?: string;
-  endTime?: string;
-  sensorId?: string;
-  similarity?: number;
-};
-
 function tryParseJson<T>(value: string): T | null {
   try {
     return JSON.parse(value) as T;
