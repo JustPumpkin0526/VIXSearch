@@ -9,7 +9,7 @@
  */
 import React from 'react';
 import dynamic from 'next/dynamic';
-import { useVideoModal } from '@nemo-agent-toolkit/ui';
+import { useVideoModal } from '@aiqtoolkit-ui/common';
 import { InfoRound as InfoRoundIcon } from '@rsuite/icons';
 import { VideoModalTooltip } from '@aiqtoolkit-ui/common';
 

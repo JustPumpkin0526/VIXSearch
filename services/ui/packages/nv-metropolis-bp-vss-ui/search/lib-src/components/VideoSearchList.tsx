@@ -402,7 +402,7 @@ async function appendItemsToExistingReport(
   );
 }
 
-interface VideoSearchListProps {
+export interface VideoSearchListProps {
   data: SearchData[];
   loading: boolean;
   error: string | null;
