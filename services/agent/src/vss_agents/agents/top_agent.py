@@ -99,6 +99,13 @@ class TopAgentRequest(ChatRequestOrMessage):
         default="video_file", description="Video source type for search: 'video_file' or 'rtsp'"
     )
     use_critic: bool | None = Field(default=None, description="Whether to verify search results with VLM critic agent")
+    owned_video_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Uploaded video sensor IDs allowed "
+            "for the current UI request."
+        ),
+    )
 
 
 def _extract_text_content(message: "Message") -> dict:
@@ -1540,6 +1547,9 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
             vlm_reasoning=typed_request.vlm_reasoning if typed_request.vlm_reasoning is not None else None,
             search_source_type=typed_request.search_source_type or "video_file",
             use_critic=typed_request.use_critic if typed_request.use_critic is not None else True,
+            owned_video_ids=(
+                typed_request.owned_video_ids
+            ),
         )
 
         # Override with WebSocket payload values if present (WebSocket requests don't pass params through request object)
@@ -1555,6 +1565,18 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                 options_payload["search_source_type"] = payload["search_source_type"]
             if "use_critic" in payload:
                 options_payload["use_critic"] = bool(payload["use_critic"])
+            if "owned_video_ids" in payload:
+                raw_owned_video_ids = (payload.get("owned_video_ids"))
+                if isinstance( raw_owned_video_ids, list,): options_payload[ "owned_video_ids"] = [
+                        str(video_id).strip()
+                        for video_id
+                        in raw_owned_video_ids
+                        if str(video_id).strip()
+                    ]
+                else:
+                    options_payload[
+                        "owned_video_ids"
+                    ] = []
             options = AgentRequestOptions.model_validate(options_payload)
             logger.info(f"Extracted from WebSocket payload - {options}")
 
