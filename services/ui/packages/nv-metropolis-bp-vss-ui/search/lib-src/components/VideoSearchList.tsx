@@ -172,6 +172,16 @@ function getAuthHeaders(): HeadersInit {
   return headers;
 }
 
+export type UploadedVideoMetadata = {
+  video_id?: string;
+  sensor_id?: string;
+  filename?: string;
+  show_filename?: string;
+  storage_filename?: string;
+  video_url?: string;
+  group_id?: string | null;
+};
+
 type VideoFilenameLookup = {
   showFilenameBySensorId: Map<string, string>;
   showFilenameByStorageFilename: Map<string, string>;
@@ -190,30 +200,32 @@ function normalizeLookupKey(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-async function fetchVideoFilenameLookup(): Promise<VideoFilenameLookup> {
-  const lookup = createEmptyVideoFilenameLookup();
+function createVideoFilenameLookup(
+  videos: UploadedVideoMetadata[],
+): VideoFilenameLookup {
+  const lookup =
+    createEmptyVideoFilenameLookup();
 
-  if (typeof window === 'undefined') {
-    return lookup;
-  }
+  for (const video of videos) {
+    const sensorId =
+      normalizeLookupKey(
+        video.sensor_id,
+      );
 
-  const response = await fetch('/api/videos/list', {
-    method: 'GET',
-    headers: getAuthHeaders(),
-  });
+    const filename =
+      normalizeLookupKey(
+        video.filename,
+      );
 
-  if (!response.ok) {
-    return lookup;
-  }
+    const showFilename =
+      normalizeLookupKey(
+        video.show_filename,
+      );
 
-  const payload = await response.json();
-  const videos = Array.isArray(payload?.videos) ? payload.videos : [];
-
-  videos.forEach((video: any) => {
-    const sensorId = normalizeLookupKey(video?.sensor_id);
-    const filename = normalizeLookupKey(video?.filename);
-    const showFilename = normalizeLookupKey(video?.show_filename);
-    const storageFilename = normalizeLookupKey(video?.storage_filename);
+    const storageFilename =
+      normalizeLookupKey(
+        video.storage_filename,
+      );
 
     const displayName =
       showFilename ||
@@ -222,41 +234,69 @@ async function fetchVideoFilenameLookup(): Promise<VideoFilenameLookup> {
       sensorId;
 
     if (!displayName) {
-      return;
+      continue;
     }
 
     if (sensorId) {
-      lookup.showFilenameBySensorId.set(sensorId, displayName);
+      lookup.showFilenameBySensorId.set(
+        sensorId,
+        displayName,
+      );
     }
 
     if (storageFilename) {
-      lookup.showFilenameByStorageFilename.set(storageFilename, displayName);
+      lookup.showFilenameByStorageFilename.set(
+        storageFilename,
+        displayName,
+      );
     }
 
     if (filename) {
-      lookup.showFilenameByFilename.set(filename, displayName);
+      lookup.showFilenameByFilename.set(
+        filename,
+        displayName,
+      );
     }
-  });
+  }
 
   return lookup;
 }
 
 function resolveDisplayVideoName(
   item: SearchData,
-  lookup: VideoFilenameLookup | null,
+  lookup: VideoFilenameLookup,
 ): string {
-  const rawVideoName = normalizeLookupKey(item.video_name);
-  const sensorId = normalizeLookupKey(item.sensor_id);
+  const rawVideoName =
+    normalizeLookupKey(
+      item.video_name,
+    );
 
-  if (!lookup) {
-    return rawVideoName;
-  }
+  const sensorId =
+    normalizeLookupKey(
+      item.sensor_id,
+    );
 
   return (
-    (sensorId && lookup.showFilenameBySensorId.get(sensorId)) ||
-    (rawVideoName && lookup.showFilenameByStorageFilename.get(rawVideoName)) ||
-    (rawVideoName && lookup.showFilenameByFilename.get(rawVideoName)) ||
-    rawVideoName
+    (
+      sensorId &&
+      lookup
+        .showFilenameBySensorId
+        .get(sensorId)
+    ) ||
+    (
+      rawVideoName &&
+      lookup
+        .showFilenameByStorageFilename
+        .get(rawVideoName)
+    ) ||
+    (
+      rawVideoName &&
+      lookup
+        .showFilenameByFilename
+        .get(rawVideoName)
+    ) ||
+    rawVideoName ||
+    sensorId
   );
 }
 
@@ -407,10 +447,21 @@ export interface VideoSearchListProps {
   loading: boolean;
   error: string | null;
   isDark: boolean;
+
+  uploadedVideos?: UploadedVideoMetadata[];
+
   onRefresh: () => void;
-  onPlayVideo: (data: SearchData, showObjectsBbox: boolean) => void;
+
+  onPlayVideo: (
+    data: SearchData,
+    showObjectsBbox: boolean,
+  ) => void;
+
   showObjectsBbox?: boolean;
-  onAddContext?: (ctx: QueryDataContext) => void;
+
+  onAddContext?: (
+    ctx: QueryDataContext,
+  ) => void;
 }
 
 const EmptyState: React.FC<{ isDark: boolean }> = ({ isDark }) => (
@@ -749,48 +800,32 @@ const VideoCard: React.FC<VideoCardProps> = ({
   );
 };
 
-export const VideoSearchList: React.FC<VideoSearchListProps> = ({
-  data,
-  loading,
-  error,
-  isDark,
-  onRefresh,
-  onPlayVideo,
-  showObjectsBbox = false,
-  onAddContext,
-}) => {
+export const VideoSearchList:
+  React.FC<VideoSearchListProps> = ({
+    data,
+    loading,
+    error,
+    isDark,
+    uploadedVideos = [],
+    onRefresh,
+    onPlayVideo,
+    showObjectsBbox = false,
+    onAddContext,
+  }) => {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [creatingReport, setCreatingReport] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [existingReports, setExistingReports] = useState<GeneratedReportItem[]>([]);
   const [loadingReports, setLoadingReports] = useState(false);
-  const [filenameLookup, setFilenameLookup] = useState<VideoFilenameLookup | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadFilenameLookup() {
-      try {
-        const lookup = await fetchVideoFilenameLookup();
-
-        if (!cancelled) {
-          setFilenameLookup(lookup);
-        }
-      } catch (error) {
-        console.warn('[VideoSearchList] Failed to fetch video filename lookup:', error);
-
-        if (!cancelled) {
-          setFilenameLookup(createEmptyVideoFilenameLookup());
-        }
-      }
-    }
-
-    loadFilenameLookup();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [data]);
+  const filenameLookup =
+    useMemo(
+      () =>
+        createVideoFilenameLookup(
+          uploadedVideos,
+        ),
+      [uploadedVideos],
+    );
 
   const toDisplaySearchItem = useCallback(
     (item: SearchData): SearchData => ({

@@ -68,14 +68,6 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { SESSION_COOKIE_NAME } from '@/constants/constants';
 
-interface VideoGroupSearchScope {
-  groupId: string;
-  groupName: string;
-  sensorIds: string[];
-  videoCount: number;
-  totalDurationSeconds: number;
-}
-
 const GROUP_SEARCH_STORAGE_KEY =
   'vixsearch:selected-video-group';
 
@@ -619,55 +611,92 @@ export const Chat = () => {
     return activeMainTabId === 'search';
   }, [getActiveMainTabId]);
 
-  const fetchOwnedVideoIdsForSearch = useCallback(async (): Promise<string[]> => {
-    if (!isSearchSidebarContext() || typeof window === 'undefined') {
-      return [];
-    }
-
-    const token = window.localStorage.getItem('vss.auth.token');
-
-    if (!token) {
-      return [];
-    }
-
-    try {
-      const response = await fetch('/api/videos/list', {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        console.warn(
-          'Failed to fetch owned uploaded videos for search:',
-          response.status,
-        );
+  const fetchOwnedVideoIdsForSearch =
+    useCallback(async (): Promise<string[]> => {
+      if (
+        !isSearchSidebarContext() ||
+        typeof window === 'undefined'
+      ) {
         return [];
       }
 
-      const payload = await response.json();
-      const videos: Array<{ sensor_id?: string }> = Array.isArray(payload?.videos)
-        ? payload.videos
-        : [];
+      const token =
+        window.localStorage.getItem(
+          'vss.auth.token',
+        );
 
-      const ownedVideoIds: string[] = [];
-
-      for (const video of videos) {
-        const sensorId =
-          typeof video?.sensor_id === 'string' ? video.sensor_id.trim() : '';
-
-        if (sensorId) {
-          ownedVideoIds.push(sensorId);
-        }
+      if (!token) {
+        return [];
       }
 
-      return ownedVideoIds;
-    } catch (error) {
-      console.warn('Failed to resolve owned uploaded videos for search:', error);
-      return [];
-    }
-  }, [isSearchSidebarContext]);
+      try {
+        const groupId =
+          selectedVideoGroup?.groupId?.trim() ||
+          '';
+
+        const queryString = groupId
+          ? new URLSearchParams({
+              group_id: groupId,
+            }).toString()
+          : '';
+
+        const endpoint = queryString
+          ? `/api/videos/list?${queryString}`
+          : '/api/videos/list';
+
+        const response = await fetch(endpoint, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          cache: 'no-store',
+        });
+
+        if (!response.ok) {
+          console.warn(
+            'Failed to fetch owned uploaded videos for search:',
+            response.status,
+          );
+
+          return [];
+        }
+
+        const payload = await response.json();
+
+        const videos: Array<{
+          sensor_id?: string;
+        }> = Array.isArray(payload?.videos)
+          ? payload.videos
+          : [];
+
+        const ownedVideoIds: string[] = [];
+
+        for (const video of videos) {
+          const sensorId =
+            typeof video?.sensor_id === 'string'
+              ? video.sensor_id.trim()
+              : '';
+
+          if (sensorId) {
+            ownedVideoIds.push(sensorId);
+          }
+        }
+
+        return Array.from(
+          new Set(ownedVideoIds),
+        );
+      } catch (error) {
+        console.warn(
+          'Failed to resolve owned uploaded videos for search:',
+          error,
+        );
+
+        return [];
+      }
+    }, [
+      isSearchSidebarContext,
+      selectedVideoGroup?.groupId,
+    ]);
 
   const getScopedVideoIds =
     useCallback(
@@ -680,15 +709,12 @@ export const Chat = () => {
 
         const groupVideoIdSet =
           new Set(
-            selectedVideoGroup
-              .sensorIds,
+            selectedVideoGroup.sensorIds,
           );
 
         return ownedVideoIds.filter(
-          (sensorId) =>
-            groupVideoIdSet.has(
-              sensorId,
-            ),
+          sensorId =>
+            groupVideoIdSet.has(sensorId),
         );
       },
       [selectedVideoGroup],
