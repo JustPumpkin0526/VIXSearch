@@ -91,14 +91,28 @@ _REQUEST_OPTIONS_CONTEXT_MARKERS = ("current_request_options", "previous_request
 
 
 class TopAgentRequest(ChatRequestOrMessage):
-    """Extended ChatRequestOrMessage with reasoning parameters."""
+    """Extended ChatRequestOrMessage with per-request options."""
 
     llm_reasoning: bool | None = Field(default=None, description="Enable LLM reasoning mode")
+
     vlm_reasoning: bool | None = Field(default=None, description="Enable VLM reasoning mode")
+
     search_source_type: Literal["video_file", "rtsp"] | None = Field(
-        default="video_file", description="Video source type for search: 'video_file' or 'rtsp'"
+        default=None,
+        description=(
+            "Video source type for search: "
+            "'video_file' or 'rtsp'"
+        ),
     )
-    use_critic: bool | None = Field(default=None, description="Whether to verify search results with VLM critic agent")
+
+    use_critic: bool | None = Field(
+        default=None,
+        description=(
+            "Whether to verify search results "
+            "with VLM critic agent"
+        ),
+    )
+
     owned_video_ids: list[str] | None = Field(
         default=None,
         description=(
@@ -106,9 +120,24 @@ class TopAgentRequest(ChatRequestOrMessage):
             "for the current UI request."
         ),
     )
-    max_results: int = Field(default=None, ge=1, le=100)
-    result_min_similarity: float = Field(default=None, ge=0.0, le=1.0)
-    critic_max_results: int = Field(default=None, ge=1, le=100)
+
+    max_results: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+    )
+
+    result_min_similarity: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+    )
+
+    critic_max_results: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+    )
 
 
 def _extract_text_content(message: "Message") -> dict:
@@ -1536,18 +1565,16 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
     async def _response_fn(
         request: ChatRequestOrMessage,
     ) -> AsyncGenerator[str]:
-        """Streaming top agent response.
+        """Streaming top agent response."""
 
-        Args:
-            request: ChatRequestOrMessage with messages and optional reasoning parameters
-        """
-        # Validate as TopAgentRequest for typed access to per-request option fields
-        typed_request = TopAgentRequest.model_validate(request.model_dump())
+        typed_request = TopAgentRequest.model_validate(
+            request.model_dump()
+        )
+
         options = AgentRequestOptions(
             llm_reasoning=(
                 typed_request.llm_reasoning
-                if typed_request.llm_reasoning
-                is not None
+                if typed_request.llm_reasoning is not None
                 else config.llm_reasoning
             ),
             vlm_reasoning=typed_request.vlm_reasoning,
@@ -1557,28 +1584,23 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
             ),
             use_critic=(
                 typed_request.use_critic
-                if typed_request.use_critic
-                is not None
+                if typed_request.use_critic is not None
                 else True
             ),
-            owned_video_ids=
-                typed_request.owned_video_ids,
+            owned_video_ids=typed_request.owned_video_ids,
             max_results=(
                 typed_request.max_results
-                if typed_request.max_results
-                is not None
+                if typed_request.max_results is not None
                 else 10
             ),
             result_min_similarity=(
                 typed_request.result_min_similarity
-                if typed_request.result_min_similarity
-                is not None
+                if typed_request.result_min_similarity is not None
                 else 0.1
             ),
             critic_max_results=(
                 typed_request.critic_max_results
-                if typed_request.critic_max_results
-                is not None
+                if typed_request.critic_max_results is not None
                 else 5
             ),
         )
@@ -1612,14 +1634,14 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                 options_payload["max_results"] = int(
                     payload["max_results"]
                 )
-            
+
             if "result_min_similarity" in payload:
                 options_payload[
                     "result_min_similarity"
                 ] = float(
                     payload["result_min_similarity"]
                 )
-            
+
             if "critic_max_results" in payload:
                 options_payload[
                     "critic_max_results"
@@ -1686,10 +1708,19 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
             logger.exception("Agent failed with exception")
             yield f"I seem to be having a problem. {ex}"
 
-    async def _single_fn(request: ChatRequestOrMessage) -> str:
+    async def _single_fn(
+        request: ChatRequestOrMessage,
+    ) -> str:
         message = ""
+
         async for chunk in _response_fn(request):
             message += chunk
+
         return message
 
-    yield FunctionInfo.create(stream_fn=_response_fn, single_fn=_single_fn, input_schema=ChatRequestOrMessage)
+
+    yield FunctionInfo.create(
+        stream_fn=_response_fn,
+        single_fn=_single_fn,
+        input_schema=ChatRequestOrMessage
+    )
