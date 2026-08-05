@@ -2703,8 +2703,35 @@ export const Chat = () => {
   }, [autoScrollEnabled, messageIsStreaming]);
 
   /** Matches ChatHeader: welcome vs conversation layout */
+  const conversationMessages =
+    selectedConversation?.messages ?? [];
+
   const hasConversationMessages =
-    (selectedConversation?.messages?.length ?? 0) > 0;
+    conversationMessages.length > 0;
+
+  const lastConversationMessage =
+    conversationMessages.length > 0
+      ? conversationMessages[conversationMessages.length - 1]
+      : undefined;
+
+  const hasActiveIntermediateSteps =
+    lastConversationMessage?.role === 'assistant' &&
+    Array.isArray(lastConversationMessage.intermediateSteps) &&
+    lastConversationMessage.intermediateSteps.length > 0;
+
+  const hasVisibleAssistantOutput =
+    lastConversationMessage?.role === 'assistant' &&
+    (
+      hasActiveIntermediateSteps ||
+      (
+        typeof lastConversationMessage.content === 'string' &&
+        lastConversationMessage.content.trim().length > 0
+      ) ||
+      (
+        Array.isArray(lastConversationMessage.searchResults) &&
+        lastConversationMessage.searchResults.length > 0
+      )
+    );
 
   return (
     <div className="relative flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden bg-white dark:bg-black transition-all duration-300 ease-in-out">
@@ -2777,7 +2804,9 @@ export const Chat = () => {
               />
             );
           })}
-          {loading && <ChatLoader statusUpdateText={`Thinking...`} />}
+          {messageIsStreaming && !hasVisibleAssistantOutput && (
+            <ChatLoader statusUpdateText="Thinking..." />
+          )}
           <div
             className={`bg-white dark:bg-black ${
               (selectedConversation?.messages?.length ?? 0) > 0 ||

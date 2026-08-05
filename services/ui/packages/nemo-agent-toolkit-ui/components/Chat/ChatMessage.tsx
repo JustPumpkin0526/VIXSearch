@@ -35,6 +35,20 @@ import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 
+function extractReasoningTraceContent(
+  content: string,
+): string {
+  if (!content) {
+    return '';
+  }
+
+  const matches = content.match(
+    /<agent-think(?:\s[^>]*)?>[\s\S]*?<\/agent-think>/g,
+  );
+
+  return matches?.join('\n\n') ?? '';
+}
+
 export interface Props {
   message: Message;
   messageIndex: number;
@@ -236,7 +250,7 @@ export const ChatMessage: FC<Props> = memo(
       });
     }, [message]);
 
-    const reasoningTraceContent = useMemo(() => {
+    const intermediateStepsContent = useMemo(() => {
       if (
         message.role !== 'assistant' ||
         !message.intermediateSteps?.length
@@ -251,6 +265,19 @@ export const ChatMessage: FC<Props> = memo(
         responseContent: false,
       });
     }, [message]);
+
+    const reasoningTraceContent = useMemo(() => {
+      if (message.role !== 'assistant') {
+        return '';
+      }
+    
+      return extractReasoningTraceContent(
+        assistantResponseContent,
+      );
+    }, [
+      assistantResponseContent,
+      message.role,
+    ]);
 
     const parsedSearchResultsMessage = useMemo(() => {
       if (message.role !== 'assistant') {
@@ -377,13 +404,34 @@ export const ChatMessage: FC<Props> = memo(
                       className="w-full overflow-x-hidden overflow-y-auto prose dark:prose-invert max-w-none break-words"
                       style={{ fontSize: '18px' }}
                     >
+                      {intermediateStepsContent && (
+                        <div className="mb-4">
+                          <MemoizedReactMarkdown
+                            rehypePlugins={[rehypeRaw] as any}
+                            remarkPlugins={[
+                              remarkGfm,
+                              [
+                                remarkMath,
+                                {
+                                  singleDollarTextMath: false,
+                                },
+                              ],
+                            ]}
+                            components={markdownComponents}
+                          >
+                            {intermediateStepsContent}
+                          </MemoizedReactMarkdown>
+                        </div>
+                      )}
+                    
                       {parsedSearchResultsMessage ? (
                         <div className="w-full">
                           <SearchResultsMessage
                             results={parsedSearchResultsMessage.results}
                             sourceQuery={sourceQuery}
+                            onSubmitMessage={onSubmitMessage}
                           />
-                      
+                    
                           {reasoningTraceContent && (
                             <section className="not-prose mt-5 overflow-hidden rounded-lg border border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900">
                               <div className="border-b border-neutral-200 px-4 py-3 text-sm font-semibold text-neutral-800 dark:border-neutral-700 dark:text-neutral-100">
@@ -411,21 +459,23 @@ export const ChatMessage: FC<Props> = memo(
                           )}
                         </div>
                       ) : (
-                        <MemoizedReactMarkdown
-                          rehypePlugins={[rehypeRaw] as any}
-                          remarkPlugins={[
-                            remarkGfm,
-                            [
-                              remarkMath,
-                              {
-                                singleDollarTextMath: false,
-                              },
-                            ],
-                          ]}
-                          components={markdownComponents}
-                        >
-                          {assistantResponseContent}
-                        </MemoizedReactMarkdown>
+                        assistantResponseContent && (
+                          <MemoizedReactMarkdown
+                            rehypePlugins={[rehypeRaw] as any}
+                            remarkPlugins={[
+                              remarkGfm,
+                              [
+                                remarkMath,
+                                {
+                                  singleDollarTextMath: false,
+                                },
+                              ],
+                            ]}
+                            components={markdownComponents}
+                          >
+                            {assistantResponseContent}
+                          </MemoizedReactMarkdown>
+                        )
                       )}
                     </div>
                     {message.callerInfo && (
