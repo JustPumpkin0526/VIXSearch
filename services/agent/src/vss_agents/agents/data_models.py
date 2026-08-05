@@ -65,6 +65,9 @@ class AgentRequestOptions(BaseModel):
             "for the current UI request."
         ),
     )
+    max_results: int = Field(default=10, ge=1, le=100)
+    result_min_similarity: float = Field(default=0.1, ge=0.0, le=1.0)
+    critic_max_results: int = Field(default=5, ge=1, le=100)
 
 
 class AgentOutput(BaseModel):

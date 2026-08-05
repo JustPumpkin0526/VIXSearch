@@ -1447,6 +1447,36 @@ async def execute_core_search(
         # Merge consecutive chunks from the same sensor into single results
         search_results = _merge_consecutive_results(search_results)
 
+        # Apply the absolute minimum similarity threshold configured
+        # from the Search settings dialog.
+        min_similarity = search_input.result_min_similarity
+        
+        if min_similarity > 0.0 and search_results:
+            before_count = len(search_results)
+        
+            search_results = [
+                result
+                for result in search_results
+                if result.similarity >= min_similarity
+            ]
+        
+            logger.info(
+                "[Search] Final similarity filter: "
+                "kept %d/%d result(s), threshold=%.4f",
+                len(search_results),
+                before_count,
+                min_similarity,
+            )
+        
+            yield AgentMessageChunk(
+                type=AgentMessageChunkType.THOUGHT,
+                content=(
+                    f"Similarity filtering complete: "
+                    f"{len(search_results)}/{before_count} results retained "
+                    f"with threshold {min_similarity:.2f}"
+                ),
+            )
+
         # Step 3: If critic enabled and configured, verify results with VLM
         if (
             config.enable_critic
@@ -1771,6 +1801,26 @@ class SearchInput(BaseModel):
         default=True,
         description="""Request-level flag to enable/disable critic agent for this search request.
         `critic_agent` must be set and `enable_critic` must be True in the config.""",
+    )
+
+    result_min_similarity: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum final similarity score required for a "
+            "search result to be displayed."
+        ),
+    )
+
+    critic_max_results: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description=(
+            "Maximum number of search results submitted to "
+            "the critic agent."
+        ),
     )
 
 

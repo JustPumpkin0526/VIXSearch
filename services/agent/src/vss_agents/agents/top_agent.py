@@ -106,6 +106,9 @@ class TopAgentRequest(ChatRequestOrMessage):
             "for the current UI request."
         ),
     )
+    max_results: int = Field(default=None, ge=1, le=100)
+    result_min_similarity: float = Field(default=None, ge=0.0, le=1.0)
+    critic_max_results: int = Field(default=None, ge=1, le=100)
 
 
 def _extract_text_content(message: "Message") -> dict:
@@ -1541,14 +1544,42 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
         # Validate as TopAgentRequest for typed access to per-request option fields
         typed_request = TopAgentRequest.model_validate(request.model_dump())
         options = AgentRequestOptions(
-            llm_reasoning=typed_request.llm_reasoning
-            if typed_request.llm_reasoning is not None
-            else config.llm_reasoning,
-            vlm_reasoning=typed_request.vlm_reasoning if typed_request.vlm_reasoning is not None else None,
-            search_source_type=typed_request.search_source_type or "video_file",
-            use_critic=typed_request.use_critic if typed_request.use_critic is not None else True,
-            owned_video_ids=(
-                typed_request.owned_video_ids
+            llm_reasoning=(
+                typed_request.llm_reasoning
+                if typed_request.llm_reasoning
+                is not None
+                else config.llm_reasoning
+            ),
+            vlm_reasoning=typed_request.vlm_reasoning,
+            search_source_type=(
+                typed_request.search_source_type
+                or "video_file"
+            ),
+            use_critic=(
+                typed_request.use_critic
+                if typed_request.use_critic
+                is not None
+                else True
+            ),
+            owned_video_ids=
+                typed_request.owned_video_ids,
+            max_results=(
+                typed_request.max_results
+                if typed_request.max_results
+                is not None
+                else 10
+            ),
+            result_min_similarity=(
+                typed_request.result_min_similarity
+                if typed_request.result_min_similarity
+                is not None
+                else 0.1
+            ),
+            critic_max_results=(
+                typed_request.critic_max_results
+                if typed_request.critic_max_results
+                is not None
+                else 5
             ),
         )
 
@@ -1577,6 +1608,24 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                     options_payload[
                         "owned_video_ids"
                     ] = []
+            if "max_results" in payload:
+                options_payload["max_results"] = int(
+                    payload["max_results"]
+                )
+            
+            if "result_min_similarity" in payload:
+                options_payload[
+                    "result_min_similarity"
+                ] = float(
+                    payload["result_min_similarity"]
+                )
+            
+            if "critic_max_results" in payload:
+                options_payload[
+                    "critic_max_results"
+                ] = int(
+                    payload["critic_max_results"]
+                )
             options = AgentRequestOptions.model_validate(options_payload)
             logger.info(f"Extracted from WebSocket payload - {options}")
 

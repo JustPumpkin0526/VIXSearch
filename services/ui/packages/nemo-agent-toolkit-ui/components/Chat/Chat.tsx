@@ -66,6 +66,8 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'r
 import toast from 'react-hot-toast';
 import { v4 as uuidv4 } from 'uuid';
 
+import {loadSearchSettings} from '@/utils/app/searchSettings';
+
 import { SESSION_COOKIE_NAME } from '@/constants/constants';
 
 const GROUP_SEARCH_STORAGE_KEY =
@@ -762,6 +764,9 @@ export const Chat = () => {
       });
 
       if (isSearchContext) {
+        const searchSettings =
+          loadSearchSettings();
+
         const ownedVideoIds =
           await fetchOwnedVideoIdsForSearch();
 
@@ -770,23 +775,23 @@ export const Chat = () => {
             ownedVideoIds,
           );
         
-        console.log(
-          '[VIXSearch][Chat] scoped video ids resolved',
-          {
-            ownedVideoIds,
-            selectedGroupId:
-              selectedVideoGroup?.groupId ??
-              null,
-            scopedVideoIds,
-            count: scopedVideoIds.length,
-          },
-        );
-      
         nextCustomParams.owned_video_ids =
           scopedVideoIds;
-      
+        
         nextCustomParams.search_source_type =
           'video_file';
+        
+        nextCustomParams.max_results =
+          searchSettings.maxResults;
+        
+        nextCustomParams.result_min_similarity =
+          searchSettings.minSimilarity;
+        
+        nextCustomParams.use_critic =
+          searchSettings.useCritic;
+        
+        nextCustomParams.critic_max_results =
+          searchSettings.criticMaxResults;
       } else {
         console.warn('[VIXSearch][Chat] not search context, skip owned_video_ids', {
           storageKeyPrefix,
@@ -1660,6 +1665,8 @@ export const Chat = () => {
          * /api/image-search는 앞서 추가한
          * Next.js API route입니다.
          */
+        const searchSettings = loadSearchSettings();
+        
         const response = await fetch(
           '/api/image-search',
           {
@@ -1671,11 +1678,14 @@ export const Chat = () => {
             credentials: 'include',
             signal:
               controllerRef.current.signal,
+
             body: JSON.stringify({
               imageBase64,
               contentType,
-              maxResults: 10,
-              minSimilarity: 0.1,
+              maxResults:
+                searchSettings.maxResults,
+              minSimilarity:
+                searchSettings.minSimilarity,
               sensorIds: scopedVideoIds,
             }),
           },

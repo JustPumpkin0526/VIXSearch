@@ -27,10 +27,15 @@ export type CustomAgentParamValue =
   | null
   | undefined;
 
-export type CustomAgentParamsValues = Record<string, CustomAgentParamValue> & {
-  owned_video_ids?: string[];
-  search_source_type?: 'video_file' | 'rtsp';
-};
+export type CustomAgentParamsValues =
+  Record<string, CustomAgentParamValue> & {
+    owned_video_ids?: string[];
+    search_source_type?: 'video_file' | 'rtsp';
+    max_results?: number;
+    result_min_similarity?: number;
+    use_critic?: boolean;
+    critic_max_results?: number;
+  };
 
 interface CustomAgentParamsProps {
   isOpen: boolean;
