@@ -857,6 +857,59 @@ async def execute_core_search(
     """
     decomposed: DecomposedQuery | None = None
     original_query = search_input.query
+
+    owned_video_ids: set[str] | None = None
+
+    if search_input.owned_video_ids is not None:
+        owned_video_ids = {
+            video_id.strip()
+            for video_id
+            in search_input.owned_video_ids
+            if (
+                isinstance(
+                    video_id,
+                    str,
+                )
+                and video_id.strip()
+            )
+        }
+
+        logger.info(
+            "Applying video ownership filter: "
+            "source_type=%s, "
+            "allowed_count=%d, "
+            "allowed_ids=%s",
+            search_input.source_type,
+            len(owned_video_ids),
+            sorted(owned_video_ids),
+        )
+
+        if (
+            search_input.source_type
+            == "video_file"
+            and not owned_video_ids
+        ):
+            message = (
+                "No uploaded videos are "
+                "available for the current "
+                "user or selected group."
+            )
+
+            yield AgentMessageChunk(
+                type=(
+                    AgentMessageChunkType
+                    .THOUGHT
+                ),
+                content=message,
+            )
+
+            yield SearchOutput(
+                data=[],
+                search_messages=[message],
+            )
+
+            return
+
     if search_input.agent_mode and agent_llm:
         try:
             yield AgentMessageChunk(
@@ -876,12 +929,37 @@ async def execute_core_search(
                     # used for two-tier video source filtering. Only include names
                     # matching the query's source_type so names that collide across
                     # RTSP and video_file sources don't overwrite each other.
-                    for stream_id, stream_info in streams_info.items():
+                    for (stream_id, stream_info, ) in streams_info.items():
+                        if (source_type == "video_file" and owned_video_ids is not None and stream_id not in owned_video_ids):
+                            continue
+
                         name = stream_info.get("name", "")
-                        url = stream_info.get("url", "")
+                        url = stream_info.get("url","")
+
+                        if not name:
+                            continue
+
+                        is_rtsp = (bool(url) and url.startswith("rtsp://"))
+
+                        if (source_type == "rtsp" and is_rtsp):
+                            video_stream_names.append(name)
+                            name_to_uuid[name] = (stream_id)
+
+                        elif (source_type == "video_file" and not is_rtsp):
+                            video_file_names.append(name)
+                            name_to_uuid[name] = (stream_id)
+
+                        elif source_type is None:
+                            name_to_uuid[name] = (stream_id)
+
+                            if is_rtsp:
+                                video_stream_names.append(name)
+                            else:
+                                video_file_names.append(name)
                         if not name:
                             continue
                         is_rtsp = url and url.startswith("rtsp://")
+                        
                         if source_type == "rtsp" and is_rtsp:
                             video_stream_names.append(name)
                             name_to_uuid[name] = stream_id
@@ -967,6 +1045,49 @@ async def execute_core_search(
             yield AgentMessageChunk(
                 type=AgentMessageChunkType.ERROR,
                 content=f"Decomposition failed, using original query: {e!s}",
+            )
+
+    if (search_input.source_type == "video_file" and owned_video_ids is not None):
+        if search_input.video_sources:
+            requested_sources = list(search_input.video_sources)
+
+            search_input.video_sources = [source for source in search_input.video_sources if source in owned_video_ids]
+
+            logger.info(
+                "Filtered requested sources: "
+                "requested=%s, allowed=%s",
+                requested_sources,
+                search_input.video_sources,
+            )
+
+            if not search_input.video_sources:
+                message = (
+                    "The requested video "
+                    "sources are outside the "
+                    "current user or group scope."
+                )
+
+                yield AgentMessageChunk(
+                    type=(AgentMessageChunkType .THOUGHT),
+                    content=message,
+                )
+
+                yield SearchOutput(
+                    data=[],
+                    search_messages=[message],
+                )
+
+                return
+
+        else:
+            search_input.video_sources = (
+                sorted(owned_video_ids)
+            )
+
+            logger.info(
+                "Using ownership-scoped "
+                "video sources: %s",
+                search_input.video_sources,
             )
 
     # ===== OBJECT_ID PATH: Direct behavior KNN (bypasses embed_search + fusion) =====
@@ -1293,6 +1414,24 @@ async def execute_core_search(
                         )
                         # Fall through to return original embed_search results
 
+        if (search_input.source_type == "video_file" and owned_video_ids is not None):
+            before_count = len(search_results)
+
+            search_results = [result for result in search_results if result.sensor_id in owned_video_ids]
+
+            removed_count = (
+                before_count
+                - len(search_results)
+            )
+
+            if removed_count > 0:
+                logger.warning(
+                    "Removed %d result(s) "
+                    "outside the current "
+                    "user/group scope",
+                    removed_count,
+                )
+
         # Percentage-based filtering: keep results with similarity >= max_similarity * top_percent_filter
         top_pct = getattr(config, "top_percent_filter", None)
         if top_pct and 0 < top_pct < 1.0 and search_results:
@@ -1586,6 +1725,16 @@ class SearchInput(BaseModel):
     video_sources: list[str] | None = Field(
         default=None,
         description="A list of video names to search from. In DevEx, these are VST sensor-names. Defaults to search from all videos.",
+    )
+
+    owned_video_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Uploaded video sensor IDs that the current user "
+            "or selected group is allowed to search. "
+            "None means no ownership restriction. "
+            "An empty list means no videos are allowed."
+        ),
     )
 
     description: str | None = Field(

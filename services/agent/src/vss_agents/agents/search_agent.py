@@ -134,16 +134,6 @@ class SearchAgentInput(BaseModel):
         description="List of uploaded video sensor IDs owned by the currently logged-in user",
     )
 
-    class_only_search: bool | None = Field(
-        default=None,
-        description="If True, bypass embed/fusion and run attribute-search-only.",
-    )
-
-    class_names: list[str] | None = Field(
-        default=None,
-        description="Optional exact object.type filters to use in class-only mode.",
-    )
-
 
 def _effective_search_runtime_options(
     search_agent_input: SearchAgentInput,
@@ -631,12 +621,6 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             timestamp_end=timestamp_end,
             owned_video_ids=owned_video_ids,
             use_critic=use_critic,
-            class_only_search=(
-                search_agent_input.class_only_search
-                if search_agent_input.class_only_search is not None
-                else class_only_search_default
-            ),
-            class_names=search_agent_input.class_names,
         )
 
         # Use shared core search function (async generator, collect all progress and return final result)
@@ -732,12 +716,6 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             timestamp_end=timestamp_end,
             owned_video_ids=owned_video_ids,
             use_critic=use_critic,
-            class_only_search=(
-                search_agent_input.class_only_search
-                if search_agent_input.class_only_search is not None
-                else class_only_search_default
-            ),
-            class_names=search_agent_input.class_names,
         )
 
         try:
