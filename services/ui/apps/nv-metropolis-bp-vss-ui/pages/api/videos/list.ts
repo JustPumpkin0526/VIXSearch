@@ -47,19 +47,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const conditions: string[] = [
         'username = $1',
       ];
-
-      console.log(
-        '[api/videos/list] request',
-        {
-          method: req.method,
-          url: req.url,
-          query: req.query,
-          rawGroupId,
-          groupId,
-          referer: req.headers.referer,
-          username,
-        },
-      );
       
       if (groupId) {
         queryParams.push(groupId);
@@ -68,8 +55,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           `group_id = $${queryParams.length}`,
         );
       }
-
-      console.log('conditions: ',conditions)
 
       const q = `
         SELECT
@@ -87,8 +72,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         WHERE ${conditions.join('\n    AND ')}
         ORDER BY uploaded_at DESC
       `;
-
-      console.log("query: ", q) 
 
       const result =
         await client.query(

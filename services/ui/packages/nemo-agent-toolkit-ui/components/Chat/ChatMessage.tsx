@@ -236,6 +236,22 @@ export const ChatMessage: FC<Props> = memo(
       });
     }, [message]);
 
+    const reasoningTraceContent = useMemo(() => {
+      if (
+        message.role !== 'assistant' ||
+        !message.intermediateSteps?.length
+      ) {
+        return '';
+      }
+    
+      return prepareContent({
+        message,
+        role: 'assistant',
+        intermediateStepsContent: true,
+        responseContent: false,
+      });
+    }, [message]);
+
     const parsedSearchResultsMessage = useMemo(() => {
       if (message.role !== 'assistant') {
         return null;
@@ -366,8 +382,33 @@ export const ChatMessage: FC<Props> = memo(
                           <SearchResultsMessage
                             results={parsedSearchResultsMessage.results}
                             sourceQuery={sourceQuery}
-                            onSubmitMessage={onSubmitMessage}
                           />
+                      
+                          {reasoningTraceContent && (
+                            <section className="not-prose mt-5 overflow-hidden rounded-lg border border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900">
+                              <div className="border-b border-neutral-200 px-4 py-3 text-sm font-semibold text-neutral-800 dark:border-neutral-700 dark:text-neutral-100">
+                                Reasoning Trace
+                              </div>
+                          
+                              <div className="prose max-w-none px-4 py-3 text-sm dark:prose-invert">
+                                <MemoizedReactMarkdown
+                                  rehypePlugins={[rehypeRaw] as any}
+                                  remarkPlugins={[
+                                    remarkGfm,
+                                    [
+                                      remarkMath,
+                                      {
+                                        singleDollarTextMath: false,
+                                      },
+                                    ],
+                                  ]}
+                                  components={markdownComponents}
+                                >
+                                  {reasoningTraceContent}
+                                </MemoizedReactMarkdown>
+                              </div>
+                            </section>
+                          )}
                         </div>
                       ) : (
                         <MemoizedReactMarkdown
