@@ -35,6 +35,7 @@ export type CustomAgentParamsValues =
     result_min_similarity?: number;
     use_critic?: boolean;
     critic_max_results?: number;
+    user_mode?: 'search' | 'debug';
   };
 
 interface CustomAgentParamsProps {

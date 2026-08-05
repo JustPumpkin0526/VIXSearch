@@ -792,6 +792,8 @@ export const Chat = () => {
         
         nextCustomParams.critic_max_results =
           searchSettings.criticMaxResults;
+        nextCustomParams.user_mode =
+          searchSettings.userMode;
       } else {
         console.warn('[VIXSearch][Chat] not search context, skip owned_video_ids', {
           storageKeyPrefix,
@@ -1440,9 +1442,17 @@ export const Chat = () => {
     }
 
     // Respect intermediate-steps toggle
+    const shouldShowIntermediateSteps =
+      isSearchSidebarContext()
+        ? loadSearchSettings().userMode ===
+          'debug'
+        : sessionStorage.getItem(
+            'enableIntermediateSteps',
+          ) !== 'false';
+        
     if (
-      sessionStorage.getItem('enableIntermediateSteps') === 'false' &&
-      isSystemIntermediateMessage(message)
+      isSystemIntermediateMessage(message) &&
+      !shouldShowIntermediateSteps
     ) {
       return;
     }
@@ -1666,7 +1676,7 @@ export const Chat = () => {
          * Next.js API route입니다.
          */
         const searchSettings = loadSearchSettings();
-        
+
         const response = await fetch(
           '/api/image-search',
           {
@@ -2008,20 +2018,44 @@ export const Chat = () => {
           };
         });
 
+        const searchUserMode =
+          isSearchSidebarContext()
+            ? loadSearchSettings().userMode
+            : null;
+
+        const shouldEnableIntermediateSteps =
+          searchUserMode !== null
+            ? searchUserMode === 'debug'
+            : (
+                sessionStorage.getItem(
+                  'enableIntermediateSteps',
+                )
+                  ? sessionStorage.getItem(
+                      'enableIntermediateSteps',
+                    ) === 'true'
+                  : enableIntermediateSteps
+              );
+            
         const chatBody: ChatBody = {
-          // Spread custom params first so fixed fields take precedence
           ...(customAgentParamsRef.current || {}),
+        
           messages: shouldSendChatHistory
             ? messagesCleaned
-            : [{ role: 'user', content: message?.content }],
+            : [
+                {
+                  role: 'user',
+                  content: message?.content,
+                },
+              ],
+            
           chatCompletionURL:
-            sessionStorage.getItem('chatCompletionURL') || chatCompletionURL,
+            sessionStorage.getItem(
+              'chatCompletionURL',
+            ) || chatCompletionURL,
+          
           additionalProps: {
-            enableIntermediateSteps: sessionStorage.getItem(
-              'enableIntermediateSteps'
-            )
-              ? sessionStorage.getItem('enableIntermediateSteps') === 'true'
-              : enableIntermediateSteps,
+            enableIntermediateSteps:
+              shouldEnableIntermediateSteps,
           },
         };
 

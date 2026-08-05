@@ -93,6 +93,14 @@ _REQUEST_OPTIONS_CONTEXT_MARKERS = ("current_request_options", "previous_request
 class TopAgentRequest(ChatRequestOrMessage):
     """Extended ChatRequestOrMessage with per-request options."""
 
+    user_mode: Literal["search","debug"] | None = Field(
+        default=None,
+        description=(
+            "User-facing response mode: "
+            "'search' or 'debug'."
+        ),
+    )
+
     llm_reasoning: bool | None = Field(default=None, description="Enable LLM reasoning mode")
 
     vlm_reasoning: bool | None = Field(default=None, description="Enable VLM reasoning mode")
@@ -1572,6 +1580,11 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
         )
 
         options = AgentRequestOptions(
+            user_mode=(
+                typed_request.user_mode
+                if typed_request.user_mode is not None
+                else "search"
+            ),
             llm_reasoning=(
                 typed_request.llm_reasoning
                 if typed_request.llm_reasoning is not None
@@ -1610,6 +1623,16 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
         if hasattr(context.metadata, "payload") and isinstance(context.metadata.payload, dict):
             payload = context.metadata.payload
             options_payload = options.model_dump(mode="json")
+            if "user_mode" in payload:
+                raw_user_mode = str(payload["user_mode"]).strip().lower()
+                if raw_user_mode in {"search","debug"}:
+                    options_payload["user_mode"] = raw_user_mode
+                else:
+                    logger.warning(
+                        "Invalid user_mode received: %r. "
+                        "Using the current/default value.",
+                        raw_user_mode,
+                    )
             if "llm_reasoning" in payload:
                 options_payload["llm_reasoning"] = bool(payload["llm_reasoning"])
             if "vlm_reasoning" in payload:
@@ -1660,42 +1683,191 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
             # Extract only the latest message. Conversation history is managed by agent state
             current_message = HumanMessage(content=_extract_text_content(chat_request.messages[-1]).get("content", ""))
             # Collect all steps for unified trace
+            debug_mode = (
+                options.user_mode == "debug"
+            )
+
             steps = []
             final_content = []
             step_num = 0
 
+            if debug_mode:
+                request_debug_info = {
+                    "user_mode":
+                        options.user_mode,
+
+                    "search_source_type":
+                        options.search_source_type,
+
+                    "owned_video_ids":
+                        options.owned_video_ids
+                        or [],
+
+                    "owned_video_count":
+                        len(
+                            options.owned_video_ids
+                            or []
+                        ),
+
+                    "max_results":
+                        options.max_results,
+
+                    "result_min_similarity":
+                        options
+                        .result_min_similarity,
+
+                    "use_critic":
+                        options.use_critic,
+
+                    "critic_max_results":
+                        options
+                        .critic_max_results,
+
+                    "llm_reasoning":
+                        options.llm_reasoning,
+
+                    "vlm_reasoning":
+                        options.vlm_reasoning,
+                }
+
+                request_debug_json = (
+                    json.dumps(
+                        request_debug_info,
+                        ensure_ascii=False,
+                        indent=2,
+                        default=str,
+                    )
+                )
+
+                steps.append(
+                    '<agent-think-step '
+                    'title="0 - Request Options">'
+                    f"```json\n"
+                    f"{request_debug_json}\n"
+                    f"```"
+                    "</agent-think-step>"
+                )
+
             # Stream agent responses
             async for chunk in agent.astream(
-                input_messages=[current_message],
+                input_messages=[
+                    current_message,
+                ],
                 options=options,
             ):
-                if chunk.type == AgentMessageChunkType.THOUGHT:
-                    step_num += 1
-                    # Replace \n with spaces to clean up the display
-                    clean_content = chunk.content.replace("\\n", " ").replace("\n", " ")
-                    steps.append(f'<agent-think-step title="{step_num} - Thought">{clean_content}</agent-think-step>')
-                elif chunk.type == AgentMessageChunkType.TOOL_CALL:
-                    step_num += 1
-                    clean_content = chunk.content.replace("\\n", " ").replace("\n", " ")
-                    steps.append(f'<agent-think-step title="{step_num} - Tool Call">{clean_content}</agent-think-step>')
-                elif chunk.type == AgentMessageChunkType.SUBAGENT_CALL:
-                    step_num += 1
-                    clean_content = chunk.content.replace("\\n", " ").replace("\n", " ")
-                    steps.append(
-                        f'<agent-think-step title="{step_num} - Sub-Agent Call">{clean_content}</agent-think-step>'
+                if (
+                    chunk.type ==
+                    AgentMessageChunkType.FINAL
+                ):
+                    final_content.append(
+                        chunk.content,
                     )
-                elif chunk.type == AgentMessageChunkType.FINAL:
-                    final_content.append(chunk.content)
-                elif chunk.type == AgentMessageChunkType.ERROR:
+                    continue
+                
+                if (
+                    chunk.type ==
+                    AgentMessageChunkType.ERROR
+                ):
+                    logger.error(
+                        "Agent error chunk: %s",
+                        chunk.content,
+                    )
+
+                    if debug_mode:
+                        step_num += 1
+
+                        clean_content = (
+                            chunk.content
+                            .replace("\\n", " ")
+                            .replace("\n", " ")
+                        )
+
+                        steps.append(
+                            '<agent-think-step '
+                            f'title="{step_num} - Error">'
+                            f"{clean_content}"
+                            "</agent-think-step>"
+                        )
+
+                    continue
+                
+                if not debug_mode:
+                    continue
+                
+                if (
+                    chunk.type ==
+                    AgentMessageChunkType.THOUGHT
+                ):
                     step_num += 1
-                    clean_content = chunk.content.replace("\\n", " ").replace("\n", " ")
-                    steps.append(f'<agent-think-step title="{step_num} - Error">{clean_content}</agent-think-step>')
+
+                    clean_content = (
+                        chunk.content
+                        .replace("\\n", " ")
+                        .replace("\n", " ")
+                    )
+
+                    steps.append(
+                        '<agent-think-step '
+                        f'title="{step_num} - Thought">'
+                        f"{clean_content}"
+                        "</agent-think-step>"
+                    )
+
+                elif (
+                    chunk.type ==
+                    AgentMessageChunkType.TOOL_CALL
+                ):
+                    step_num += 1
+
+                    clean_content = (
+                        chunk.content
+                        .replace("\\n", " ")
+                        .replace("\n", " ")
+                    )
+
+                    steps.append(
+                        '<agent-think-step '
+                        f'title="{step_num} - Tool Call">'
+                        f"{clean_content}"
+                        "</agent-think-step>"
+                    )
+
+                elif (
+                    chunk.type ==
+                    AgentMessageChunkType.SUBAGENT_CALL
+                ):
+                    step_num += 1
+
+                    clean_content = (
+                        chunk.content
+                        .replace("\\n", " ")
+                        .replace("\n", " ")
+                    )
+
+                    steps.append(
+                        '<agent-think-step '
+                        f'title="{step_num} - Sub-Agent Call">'
+                        f"{clean_content}"
+                        "</agent-think-step>"
+                    )
 
             # Yield all steps wrapped in unified agent-think
-            if steps:
-                steps_content = "\n".join(steps)
-                agent_think_block = f"\n\n<agent-think>{steps_content}</agent-think>\n\n"
-                logger.debug(f"Agent think block: {agent_think_block}")
+            if debug_mode and steps:
+                steps_content = "\n".join(
+                    steps,
+                )
+            
+                agent_think_block = (
+                    "\n\n<agent-think>"
+                    f"{steps_content}"
+                    "</agent-think>\n\n"
+                )
+            
+                logger.debug(
+                    "Agent debug trace: %s",
+                    agent_think_block,
+                )
+            
                 yield agent_think_block
 
             # Yield final content

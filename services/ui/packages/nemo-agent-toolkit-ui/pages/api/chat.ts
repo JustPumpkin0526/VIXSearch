@@ -15,7 +15,19 @@ const chatStreamEndpoint = 'chat/stream';
 const generateStreamEndpoint = 'generate/stream';
 
 // Dynamic custom agent params - can contain any key-value pairs
-type CustomAgentParams = Record<string, string | number | boolean>;
+type CustomAgentParamValue =
+  | string
+  | number
+  | boolean
+  | string[]
+  | null
+  | undefined;
+
+type CustomAgentParams =
+  Record<
+    string,
+    CustomAgentParamValue
+  >;
 
 function buildGeneratePayload(messages: any[], customAgentParams?: CustomAgentParams) {
   const userMessage = messages?.at(-1)?.content;
@@ -126,7 +138,13 @@ async function processGenerateStream(response: Response, encoder: TextEncoder, d
               additionalProps.enableIntermediateSteps
             ) {
               controller.enqueue(encoder.encode(line));
-            } else if (line.startsWith('intermediate_data: ')) {
+            } else if (
+              line.startsWith(
+                'intermediate_data: ',
+              ) &&
+              additionalProps
+                .enableIntermediateSteps
+            ) {
               try {
                 const data = line.split('intermediate_data: ')[1];
                 const payload = JSON.parse(data);

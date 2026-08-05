@@ -5,15 +5,27 @@ export interface SearchSettings {
   criticMaxResults: number;
 }
 
-export const SEARCH_SETTINGS_STORAGE_KEY =
-  'vixsearch:search-settings';
+export type SearchUserMode =
+  | 'search'
+  | 'debug';
+
+export interface SearchSettings {
+  userMode: SearchUserMode;
+  maxResults: number;
+  minSimilarity: number;
+  useCritic: boolean;
+  criticMaxResults: number;
+}
 
 export const DEFAULT_SEARCH_SETTINGS: SearchSettings = {
+  userMode: 'search',
   maxResults: 10,
   minSimilarity: 0.1,
   useCritic: true,
   criticMaxResults: 5,
 };
+
+export const SEARCH_SETTINGS_STORAGE_KEY = 'vixsearch:search-settings';
 
 function clamp(
   value: number,
@@ -30,6 +42,11 @@ export function normalizeSearchSettings(
   value?: Partial<SearchSettings> | null,
 ): SearchSettings {
   return {
+    userMode:
+      value?.userMode === 'debug'
+        ? 'debug'
+        : 'search',
+
     maxResults: Math.round(
       clamp(
         Number(value?.maxResults) ||
@@ -38,16 +55,19 @@ export function normalizeSearchSettings(
         100,
       ),
     ),
+
     minSimilarity: clamp(
       Number(value?.minSimilarity) ||
         DEFAULT_SEARCH_SETTINGS.minSimilarity,
       0,
       1,
     ),
+
     useCritic:
       typeof value?.useCritic === 'boolean'
         ? value.useCritic
         : DEFAULT_SEARCH_SETTINGS.useCritic,
+
     criticMaxResults: Math.round(
       clamp(
         Number(value?.criticMaxResults) ||

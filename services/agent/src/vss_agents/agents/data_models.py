@@ -52,6 +52,14 @@ class AgentMessageChunk(BaseModel):
 class AgentRequestOptions(BaseModel):
     """Per-request options passed from the UI/client through the agent pipeline."""
 
+    user_mode: Literal["search", "debug"] = Field(
+        default="search",
+        description=(
+            "Controls user-visible agent trace output. "
+            "'search' returns final results only; "
+            "'debug' includes structured execution details."
+        ),
+    )
     llm_reasoning: bool = Field(default=False, description="Enable LLM reasoning mode")
     vlm_reasoning: bool | None = Field(default=None, description="Enable VLM reasoning mode (None = use tool default)")
     search_source_type: Literal["video_file", "rtsp"] = Field(

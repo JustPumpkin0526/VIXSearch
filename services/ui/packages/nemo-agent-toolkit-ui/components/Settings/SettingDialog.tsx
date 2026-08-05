@@ -171,7 +171,12 @@ export const SettingDialog: FC<Props> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
       <div
         ref={modalRef}
-        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-black"
+        className={[
+          'w-full max-w-md rounded-2xl',
+          'max-h-[90vh] overflow-y-auto',
+          'bg-white p-6 shadow-xl',
+          'dark:bg-black',
+        ].join(' ')}
       >
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
           검색 설정
@@ -180,6 +185,128 @@ export const SettingDialog: FC<Props> = ({
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           Search 메뉴에서 실행되는 영상 검색에 적용됩니다.
         </p>
+
+        <div className="mt-5">
+          <div className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            사용자 모드
+          </div>
+
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            채팅 화면에 표시할 검색 및 디버그 정보의 범위를 선택합니다.
+          </p>
+
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() =>
+                setSettings(current => ({
+                  ...current,
+                  userMode: 'search',
+                }))
+              }
+              className={[
+                'rounded-xl border px-4 py-4 text-left',
+                'transition-colors duration-150',
+                settings.userMode === 'search'
+                  ? [
+                      'border-[#76b900]',
+                      'bg-[#76b900]/10',
+                      'ring-1 ring-[#76b900]',
+                    ].join(' ')
+                  : [
+                      'border-gray-200',
+                      'bg-white',
+                      'hover:border-gray-300',
+                      'dark:border-neutral-700',
+                      'dark:bg-neutral-900',
+                      'dark:hover:border-neutral-600',
+                    ].join(' '),
+              ].join(' ')}
+              aria-pressed={
+                settings.userMode === 'search'
+              }
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className={[
+                    'flex h-4 w-4 items-center justify-center',
+                    'rounded-full border',
+                    settings.userMode === 'search'
+                      ? 'border-[#76b900]'
+                      : 'border-gray-400',
+                  ].join(' ')}
+                >
+                  {settings.userMode === 'search' && (
+                    <span className="h-2 w-2 rounded-full bg-[#76b900]" />
+                  )}
+                </span>
+                
+                <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                  Search Mode
+                </span>
+              </div>
+                
+              <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                최종 검색 결과만 채팅에 표시합니다.
+              </p>
+            </button>
+                
+            <button
+              type="button"
+              onClick={() =>
+                setSettings(current => ({
+                  ...current,
+                  userMode: 'debug',
+                }))
+              }
+              className={[
+                'rounded-xl border px-4 py-4 text-left',
+                'transition-colors duration-150',
+                settings.userMode === 'debug'
+                  ? [
+                      'border-[#76b900]',
+                      'bg-[#76b900]/10',
+                      'ring-1 ring-[#76b900]',
+                    ].join(' ')
+                  : [
+                      'border-gray-200',
+                      'bg-white',
+                      'hover:border-gray-300',
+                      'dark:border-neutral-700',
+                      'dark:bg-neutral-900',
+                      'dark:hover:border-neutral-600',
+                    ].join(' '),
+              ].join(' ')}
+              aria-pressed={
+                settings.userMode === 'debug'
+              }
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className={[
+                    'flex h-4 w-4 items-center justify-center',
+                    'rounded-full border',
+                    settings.userMode === 'debug'
+                      ? 'border-[#76b900]'
+                      : 'border-gray-400',
+                  ].join(' ')}
+                >
+                  {settings.userMode === 'debug' && (
+                    <span className="h-2 w-2 rounded-full bg-[#76b900]" />
+                  )}
+                </span>
+                
+                <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                  Debug Mode
+                </span>
+              </div>
+                
+              <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                요청값과 Agent의 중간 처리 단계를 함께 표시합니다.
+              </p>
+            </button>
+          </div>
+        </div>
 
         <div className="mt-5">
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
