@@ -1,9 +1,11 @@
 import {
   IconArrowDown,
   IconFile,
+  IconFolder,
   IconPaperclip,
   IconPhoto,
   IconPlayerStop,
+  IconRefresh,
   IconRepeat,
   IconSend,
   IconTrash,
@@ -112,6 +114,18 @@ export interface VideoGroupSearchScope {
   totalDurationSeconds: number;
 }
 
+interface VideoGroupApiItem {
+  id: string;
+  name: string;
+  sensorIds: string[];
+  createdAt?: string;
+}
+
+interface VideoGroupsApiResponse {
+  groups?: unknown[];
+  error?: unknown;
+}
+
 function formatVideoDuration(
   durationSeconds: number,
 ): string {
@@ -161,9 +175,10 @@ interface Props {
   onStopConversation: () => void;
   queryContextItems?: QueryDataContext[];
   onRemoveQueryContext?: (itemId: string) => void;
-  selectedVideoGroup?:VideoGroupSearchScope | null;
+  selectedVideoGroup?: VideoGroupSearchScope | null;
   onClearSelectedVideoGroup?: () => void;
-  /** True while any upload dialog ... */
+  showVideoGroupSelector?: boolean;
+  onSelectVideoGroup?: (group: VideoGroupSearchScope) => void;
   chatBlocked?: boolean;
   getActiveConversationId?: () => string | undefined;
   onUploadFlowActiveChange?: (sourceId: string, active: boolean) => void;
@@ -180,15 +195,14 @@ export const ChatInput = ({
   onRemoveQueryContext,
   selectedVideoGroup = null,
   onClearSelectedVideoGroup,
+  showVideoGroupSelector = false,
+  onSelectVideoGroup,
   chatBlocked = false,
-  getActiveConversationId,
-  onUploadFlowActiveChange,
 }: Props) => {
   const { t } = useTranslation('chat');
 
   const {
-    state: { selectedConversation, messageIsStreaming, loading, customAgentParamsJson, chatUploadFileEnabled, chatInputMicEnabled },
-    onChatVideoUploadComplete,
+    state: { selectedConversation, messageIsStreaming, loading, customAgentParamsJson, chatUploadFileEnabled, chatInputMicEnabled }
   } = useContext(HomeContext);
 
   const sendingRef = useRef(false);
@@ -204,7 +218,7 @@ export const ChatInput = ({
   }, [paramsChangeDisabled]);
 
   // Create audio only when the file is present
-  const [recordingStartSound, setRecordingStartSound] = useState<Audio | null>(null);
+  const [recordingStartSound, setRecordingStartSound] = useState<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     const checkAudioFile = async () => {
@@ -251,6 +265,152 @@ export const ChatInput = ({
   const [showCustomParams, setShowCustomParams] = useState(false);
   const [paramFields, setParamFields] = useInitialParamFields(customAgentParamsJson);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const groupSelectorRef = useRef<HTMLDivElement>(null);
+  const [showGroupSelector, setShowGroupSelector] = useState(false);
+  const [videoGroups, setVideoGroups] = useState<VideoGroupApiItem[]>([]);
+  const [groupLoading, setGroupLoading] = useState(false);
+  const [groupError, setGroupError] = useState('');
+
+  const loadVideoGroups = useCallback(async () => {
+    const token = window.localStorage.getItem('vss.auth.token');
+
+    if (!token) {
+      setVideoGroups([]);
+      setGroupLoading(false);
+      setGroupError('로그인 토큰을 찾을 수 없습니다.');
+      return;
+    }
+
+    setGroupLoading(true);
+    setGroupError('');
+
+    try {
+      const response = await fetch('/api/videos/groups', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        cache: 'no-store',
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as VideoGroupsApiResponse;
+
+      if (!response.ok) {
+        throw new Error(
+          typeof payload?.error === 'string'
+            ? payload.error
+            : '그룹 목록을 불러오지 못했습니다.',
+        );
+      }
+
+      const groups = (
+        Array.isArray(payload?.groups)
+          ? payload.groups
+          : []
+      )
+        .filter(
+          (group: unknown): group is Record<string, unknown> =>
+            typeof group === 'object' && group !== null,
+        )
+        .map(group => ({
+          id: typeof group.id === 'string' ? group.id : '',
+          name: typeof group.name === 'string' ? group.name : '',
+          sensorIds: Array.isArray(group.sensorIds)
+            ? Array.from(new Set(
+                group.sensorIds
+                  .filter(
+                    (sensorId: unknown): sensorId is string =>
+                      typeof sensorId === 'string' &&
+                      sensorId.trim().length > 0,
+                  )
+                  .map(sensorId => sensorId.trim()),
+              ))
+            : [],
+          createdAt:
+            typeof group.createdAt === 'string'
+              ? group.createdAt
+              : undefined,
+        }))
+        .filter(group => group.id && group.name);
+
+      setVideoGroups(groups);
+    } catch (error) {
+      setVideoGroups([]);
+      setGroupError(
+        error instanceof Error
+          ? error.message
+          : '그룹 목록을 불러오지 못했습니다.',
+      );
+    } finally {
+      setGroupLoading(false);
+    }
+  }, []);
+
+  const handleToggleGroupSelector = () => {
+    if (uploadDisabled) {
+      return;
+    }
+
+    const nextOpen = !showGroupSelector;
+    setShowGroupSelector(nextOpen);
+
+    if (nextOpen) {
+      void loadVideoGroups();
+    }
+  };
+
+  const handleSelectGroup = (group: VideoGroupApiItem) => {
+    onSelectVideoGroup?.({
+      groupId: group.id,
+      groupName: group.name,
+      sensorIds: group.sensorIds,
+      videoCount: group.sensorIds.length,
+      totalDurationSeconds: 0,
+    });
+
+    setShowGroupSelector(false);
+  };
+
+  useEffect(() => {
+    if (!showGroupSelector) {
+      return;
+    }
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (
+        groupSelectorRef.current &&
+        !groupSelectorRef.current.contains(event.target as Node)
+      ) {
+        setShowGroupSelector(false);
+      }
+    };
+
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowGroupSelector(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [showGroupSelector]);
+
+  useEffect(() => {
+    if (!showVideoGroupSelector) {
+      setShowGroupSelector(false);
+    }
+  }, [showVideoGroupSelector]);
+
+  useEffect(() => {
+    if (uploadDisabled) {
+      setShowGroupSelector(false);
+    }
+  }, [uploadDisabled]);
 
   const triggerFileUpload = () => {
     if (
@@ -837,11 +997,21 @@ export const ChatInput = ({
     };
   }, []);
 
-  const leftButtonCount = (chatInputMicEnabled ? 1 : 0) + (chatUploadFileEnabled ? 1 : 0);
+  const leftButtonCount =
+    (chatInputMicEnabled ? 1 : 0) +
+    (chatUploadFileEnabled ? 1 : 0) +
+    (showVideoGroupSelector ? 1 : 0);
+
   const hasLeftButtons = leftButtonCount > 0;
-  // Padding so 8px gap between last icon and text: 0 = minimal, 1 = pl-11 (44px), 2 = pl-[76px]
+
   const leftPaddingClass =
-    leftButtonCount === 0 ? 'pl-3 sm:pl-4' : leftButtonCount === 2 ? 'pl-[76px]' : 'pl-11';
+    leftButtonCount === 0
+      ? 'pl-3 sm:pl-4'
+      : leftButtonCount === 1
+        ? 'pl-11'
+        : leftButtonCount === 2
+          ? 'pl-[76px]'
+          : 'pl-[108px]';
 
   return (
     <div
@@ -849,7 +1019,7 @@ export const ChatInput = ({
         }`}
     >
       <div className="stretch mx-auto mt-4 flex flex-col gap-2 last:mb-2 md:mt-[52px] w-full max-w-[95%] pointer-events-auto">
-        {selectedVideoGroup && (
+        {selectedVideoGroup && selectedVideoGroup && (
           <div
             className={[
               'mx-2 flex items-center justify-between gap-4',
@@ -881,13 +1051,14 @@ export const ChatInput = ({
                 {selectedVideoGroup.videoCount}개
               </span>
               
-              <span>
-                총 길이{' '}
-                {formatVideoDuration(
-                  selectedVideoGroup
-                    .totalDurationSeconds,
-                )}
-              </span>
+              {selectedVideoGroup.totalDurationSeconds > 0 && (
+                <span>
+                  총 길이{' '}
+                  {formatVideoDuration(
+                    selectedVideoGroup.totalDurationSeconds,
+                  )}
+                </span>
+              )}
               
               <button
                 type="button"
@@ -947,10 +1118,7 @@ export const ChatInput = ({
               </div>
             )}
           {queryContextItems.length > 0 && (
-            <div className={`flex flex-wrap gap-1.5 pt-2 pr-12 ${chatUploadFileEnabled
-                ? 'pl-12 sm:pl-18 md:pl-20'
-                : 'pl-10 sm:pl-12 md:pl-14'
-              }`}>
+            <div className={`flex flex-wrap gap-1.5 pt-2 pr-12 ${leftPaddingClass}`}>
               {queryContextItems.map((item) => (
                 <span
                   key={item.id}
@@ -1090,6 +1258,118 @@ export const ChatInput = ({
                   />
                 </>
               )}
+
+              {showVideoGroupSelector && (
+                <div ref={groupSelectorRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={handleToggleGroupSelector}
+                    disabled={uploadDisabled}
+                    className={`rounded-sm p-[5px] text-neutral-800 opacity-60 dark:text-neutral-100 ${
+                      uploadDisabled
+                        ? 'text-neutral-400'
+                        : selectedVideoGroup || showGroupSelector
+                          ? 'text-[#76b900] opacity-100'
+                          : 'hover:text-[#76b900] dark:hover:text-neutral-200'
+                    }`}
+                    aria-label="검색 그룹 선택"
+                    title={
+                      selectedVideoGroup
+                        ? `검색 그룹: ${selectedVideoGroup.groupName}`
+                        : '검색 그룹 선택'
+                    }
+                  >
+                    <IconFolder size={18} />
+                  </button>
+                  
+                  {showGroupSelector && (
+                      <div className="absolute bottom-9 left-0 z-50 w-72 overflow-hidden rounded-md border border-neutral-200 bg-white shadow-xl dark:border-neutral-700 dark:bg-neutral-900 sm:w-80">                      <div className="flex items-center justify-between border-b border-neutral-200 px-3 py-2 dark:border-neutral-700">
+                        <span className="text-sm font-semibold">검색 그룹 선택</span>
+                        <button
+                          type="button"
+                          onClick={() => void loadVideoGroups()}
+                          disabled={groupLoading}
+                          className="rounded p-1 text-neutral-500 hover:bg-neutral-100 hover:text-[#76b900] disabled:opacity-40 dark:hover:bg-neutral-800"
+                          title="그룹 목록 새로고침"
+                        >
+                          <IconRefresh
+                            size={16}
+                            className={groupLoading ? 'animate-spin' : ''}
+                          />
+                        </button>
+                      </div>
+                  
+                      <div className="max-h-72 overflow-y-auto p-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onClearSelectedVideoGroup?.();
+                            setShowGroupSelector(false);
+                          }}
+                          className={`mb-1 w-full rounded-md px-3 py-2 text-left text-sm ${
+                            !selectedVideoGroup
+                              ? 'bg-[#76b900]/10 font-semibold text-[#5d9200]'
+                              : 'hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                          }`}
+                        >
+                          <div>전체 영상</div>
+                          <div className="text-xs font-normal text-neutral-500">
+                            그룹 제한 없이 검색
+                          </div>
+                        </button>
+                        
+                        {groupLoading && (
+                          <div className="px-3 py-6 text-center text-sm text-neutral-500">
+                            그룹 목록을 불러오는 중입니다.
+                          </div>
+                        )}
+
+                        {!groupLoading && groupError && (
+                          <div className="px-3 py-4 text-sm text-red-500">
+                            {groupError}
+                          </div>
+                        )}
+
+                        {!groupLoading &&
+                          !groupError &&
+                          videoGroups.length === 0 && (
+                            <div className="px-3 py-6 text-center text-sm text-neutral-500">
+                              선택할 수 있는 그룹이 없습니다.
+                            </div>
+                          )}
+
+                        {!groupLoading &&
+                          !groupError &&
+                          videoGroups.map(group => {
+                            const selected =
+                              selectedVideoGroup?.groupId === group.id;
+                          
+                            return (
+                              <button
+                                key={group.id}
+                                type="button"
+                                onClick={() => handleSelectGroup(group)}
+                                className={`mb-1 w-full rounded-md px-3 py-2 text-left ${
+                                  selected
+                                    ? 'bg-[#76b900]/10 text-[#5d9200]'
+                                    : 'hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                                }`}
+                              >
+                                <div className="truncate text-sm font-medium">
+                                  {group.name}
+                                </div>
+                                <div className="text-xs text-neutral-500">
+                                  영상 {group.sensorIds.length}개
+                                </div>
+                              </button>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
             </div>
           )}
           {/* Settings Button - only show when there are enabled params */}

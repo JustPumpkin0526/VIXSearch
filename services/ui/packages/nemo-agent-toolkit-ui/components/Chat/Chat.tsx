@@ -544,6 +544,29 @@ export const Chat = () => {
     };
   }, [readSelectedVideoGroup]);
 
+  const handleSelectVideoGroup =
+    useCallback((group: VideoGroupSearchScope) => {
+      if (typeof window === 'undefined') {
+        return;
+      }
+
+      window.sessionStorage.setItem(
+        GROUP_SEARCH_STORAGE_KEY,
+        JSON.stringify(group),
+      );
+
+      setSelectedVideoGroup(group);
+
+      window.dispatchEvent(
+        new CustomEvent<VideoGroupSearchScope>(
+          GROUP_SEARCH_CHANGED_EVENT,
+          {
+            detail: group,
+          },
+        ),
+      );
+    }, []);
+
   const handleClearSelectedVideoGroup =
     useCallback(() => {
       if (
@@ -2770,57 +2793,32 @@ export const Chat = () => {
         <ChatInput
           textareaRef={textareaRef}
           queryContextItems={queryContextItems}
-          onRemoveQueryContext={
-            handleRemoveQueryContext
-          }
-          selectedVideoGroup={
-            selectedVideoGroup
-          }
-          onClearSelectedVideoGroup={
-            handleClearSelectedVideoGroup
-          }
+          onRemoveQueryContext={handleRemoveQueryContext}
+          selectedVideoGroup={selectedVideoGroup}
+          onClearSelectedVideoGroup={handleClearSelectedVideoGroup}
+          showVideoGroupSelector={isSearchSidebarContext()}
+          onSelectVideoGroup={handleSelectVideoGroup}
           chatBlocked={uploadFlowActive}
-          getActiveConversationId={
-            getActiveConversationId
-          }
-          onUploadFlowActiveChange={
-            reportUploadFlowActive
-          }
-          onSend={async (
-            message,
-            customParams,
-          ) => {
-            const imageAttachmentContent =
-              getImageAttachmentContent(message);
-          
-            const items =
-              queryContextRef.current;
+          getActiveConversationId={getActiveConversationId}
+          onUploadFlowActiveChange={reportUploadFlowActive}
+          onSend={async (message,customParams) => {
+            const imageAttachmentContent = getImageAttachmentContent(message);
+            const items = queryContextRef.current;
           
             if (items.length > 0) {
-              const contextJson =
-                JSON.stringify(
+              const contextJson = JSON.stringify(
                   items.map(({ data }) => {
-                    const {
-                      contextType:
-                        _omitUiContextType,
-                      ...payload
-                    } = {
-                      ...(data as Record<
-                        string,
-                        unknown
-                      >),
+                    const {contextType:_omitUiContextType, ...payload} = {
+                      ...(data as Record<string, unknown>)
                     };
                   
                     return payload;
                   }),
                 );
               
-              const prefix =
-                `[Context: ${contextJson}]`;
+              const prefix = `[Context: ${contextJson}]`;
               
-              message = {
-                ...message,
-                content: message.content
+              message = {...message, content: message.content
                   ? `${prefix}\n\n${message.content}`
                   : prefix,
               };
