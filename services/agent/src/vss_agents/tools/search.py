@@ -144,6 +144,7 @@ async def _run_attribute_only_search(
     attribute_search_fn: Any,
     top_k: int,
     min_similarity: float | None,
+    attribute_video_sources: list[str] | None = None,
     exclude_videos: list[dict[str, str]] | None = None,
 ) -> list["SearchResult"]:
     """
@@ -154,17 +155,39 @@ async def _run_attribute_only_search(
     logger.info(f"Running attribute-only search (append mode), input: {search_input.model_dump_json()}")
     exclude_videos = exclude_videos or []
     try:
+        # 소유권 제한이 있는데 UUID→sensor name 변환 결과가 없으면
+        # video_sources=None으로 전체 영상을 검색하면 안 됩니다.
+        if (search_input.source_type == "video_file" and search_input.owned_video_ids is not None and attribute_video_sources == []):
+            logger.warning(
+                "Attribute search skipped because no owned video UUID "
+                "could be resolved to a behavior sensor name."
+            )
+            return []
+
+        effective_video_sources = (attribute_video_sources if attribute_video_sources is not None else search_input.video_sources)
+
         attr_params = {
             "query": attribute_list,
             "source_type": search_input.source_type,
-            "video_sources": search_input.video_sources,
+            "video_sources": effective_video_sources,
             "timestamp_start": search_input.timestamp_start,
             "timestamp_end": search_input.timestamp_end,
             "top_k": top_k,
-            "min_similarity": min_similarity if min_similarity is not None else 0.3,
-            "fuse_multi_attribute": False,  # Append mode - no fusion
+            "min_similarity": (
+                min_similarity
+                if min_similarity is not None
+                else 0.3
+            ),
+            "fuse_multi_attribute": False,
             "exclude_videos": exclude_videos,
         }
+
+        logger.info(
+            "Attribute search request: "
+            "uuid_sources=%s, attribute_sources=%s",
+            search_input.video_sources,
+            effective_video_sources,
+        )
 
         attribute_results = await attribute_search_fn.ainvoke(attr_params)
 
@@ -860,6 +883,13 @@ async def execute_core_search(
 
     owned_video_ids: set[str] | None = None
 
+    # VST video name <-> stream UUID mapping
+    name_to_uuid: dict[str, str] = {}
+    uuid_to_name: dict[str, str] = {}
+
+    # Attribute Search에서 사용할 mdx-behavior sensor.id 값
+    attribute_video_sources: list[str] | None = None
+
     if search_input.owned_video_ids is not None:
         owned_video_ids = {
             video_id.strip()
@@ -919,7 +949,6 @@ async def execute_core_search(
             # Fetch sensor names from VST based on source_type
             video_file_names: list[str] = []
             video_stream_names: list[str] = []
-            name_to_uuid: dict[str, str] = {}
             try:
                 vst_url = getattr(config, "vst_internal_url", None)
                 if vst_url:
@@ -929,55 +958,75 @@ async def execute_core_search(
                     # used for two-tier video source filtering. Only include names
                     # matching the query's source_type so names that collide across
                     # RTSP and video_file sources don't overwrite each other.
-                    for (stream_id, stream_info, ) in streams_info.items():
-                        if (source_type == "video_file" and owned_video_ids is not None and stream_id not in owned_video_ids):
+                    for stream_id, stream_info in streams_info.items():
+                        stream_uuid = str(stream_id).strip()
+
+                        name = str(
+                            stream_info.get("name", "")
+                        ).strip()
+
+                        url = str(
+                            stream_info.get("url", "")
+                        ).strip()
+
+                        if not stream_uuid or not name:
                             continue
-
-                        name = stream_info.get("name", "")
-                        url = stream_info.get("url","")
-
-                        if not name:
-                            continue
-
-                        is_rtsp = (bool(url) and url.startswith("rtsp://"))
-
-                        if (source_type == "rtsp" and is_rtsp):
-                            video_stream_names.append(name)
-                            name_to_uuid[name] = (stream_id)
-
-                        elif (source_type == "video_file" and not is_rtsp):
-                            video_file_names.append(name)
-                            name_to_uuid[name] = (stream_id)
-
-                        elif source_type is None:
-                            name_to_uuid[name] = (stream_id)
-
-                            if is_rtsp:
-                                video_stream_names.append(name)
-                            else:
-                                video_file_names.append(name)
-                        if not name:
-                            continue
-                        is_rtsp = url and url.startswith("rtsp://")
                         
-                        if source_type == "rtsp" and is_rtsp:
+                        is_rtsp = url.startswith("rtsp://")
+
+                        # video_file 검색에서는 현재 사용자/그룹 소유 영상만 매핑
+                        if (
+                            source_type == "video_file"
+                            and owned_video_ids is not None
+                            and stream_uuid not in owned_video_ids
+                        ):
+                            continue
+                        
+                        if source_type == "rtsp":
+                            if not is_rtsp:
+                                continue
+                            
                             video_stream_names.append(name)
-                            name_to_uuid[name] = stream_id
-                        elif source_type == "video_file" and not is_rtsp:
+
+                        elif source_type == "video_file":
+                            if is_rtsp:
+                                continue
+                            
                             video_file_names.append(name)
-                            name_to_uuid[name] = stream_id
-                        elif source_type is None:
-                            # source_type unspecified — include all, matching existing
-                            # behavior for the name lists
-                            name_to_uuid[name] = stream_id
+
+                        else:
                             if is_rtsp:
                                 video_stream_names.append(name)
                             else:
                                 video_file_names.append(name)
-                    logger.info(
-                        f"Fetched sensor names from VST (source_type={source_type}): "
-                        f"{len(video_file_names)} video files, {len(video_stream_names)} streams"
+
+                        # 양방향 매핑
+                        name_to_uuid[name] = stream_uuid
+                        uuid_to_name[stream_uuid] = name
+
+                    # 혹시 모를 중복 제거
+                    video_file_names = list(
+                        dict.fromkeys(video_file_names)
                     )
+
+                    video_stream_names = list(
+                        dict.fromkeys(video_stream_names)
+                    )
+
+                    logger.info(
+                        "Fetched sensor names from VST "
+                        "(source_type=%s): %d video files, %d streams",
+                        source_type,
+                        len(video_file_names),
+                        len(video_stream_names),
+                    )
+
+                    logger.info(
+                        "VST source mappings: name_to_uuid=%s, uuid_to_name=%s",
+                        name_to_uuid,
+                        uuid_to_name,
+                    )
+
             except (aiohttp.ClientError, TimeoutError) as e:
                 logger.warning(f"Network error fetching sensor names from VST ({vst_url}): {e}")
             except (ValueError, KeyError, TypeError) as e:
@@ -1090,10 +1139,86 @@ async def execute_core_search(
                 search_input.video_sources,
             )
 
+        # UUID 기반 video_sources를 mdx-behavior의 sensor.id 이름으로 변환
+        if (
+            search_input.source_type == "video_file"
+            and search_input.video_sources
+        ):
+            resolved_attribute_sources: list[str] = []
+            unresolved_sources: list[str] = []
+
+            for source in search_input.video_sources:
+                source_value = str(source).strip()
+
+                if not source_value:
+                    continue
+                
+                # VST UUID → mdx-behavior sensor name
+                if source_value in uuid_to_name:
+                    resolved_attribute_sources.append(
+                        uuid_to_name[source_value]
+                    )
+
+                # 이미 이름 형식이라면 그대로 사용
+                elif source_value in name_to_uuid:
+                    resolved_attribute_sources.append(
+                        source_value
+                    )
+
+                else:
+                    unresolved_sources.append(
+                        source_value
+                    )
+
+            attribute_video_sources = list(
+                dict.fromkeys(
+                    resolved_attribute_sources
+                )
+            )
+
+            logger.info(
+                "Resolved Attribute Search sources: "
+                "uuid_sources=%s, sensor_names=%s, unresolved=%s",
+                search_input.video_sources,
+                attribute_video_sources,
+                unresolved_sources,
+            )
+
     # ===== OBJECT_ID PATH: Direct behavior KNN (bypasses embed_search + fusion) =====
     if decomposed and decomposed.object_ids:
-        if not getattr(config, "behavior_es_endpoint", None):
-            raise ValueError("behavior_es_endpoint config is required for object_id re-search")
+        if (
+            search_input.source_type == "video_file"
+            and owned_video_ids is not None
+            and attribute_video_sources == []
+        ):
+            message = (
+                "Owned video UUIDs could not be resolved "
+                "to behavior sensor names."
+            )
+
+            logger.warning(message)
+
+            yield AgentMessageChunk(
+                type=AgentMessageChunkType.THOUGHT,
+                content=message,
+            )
+
+            yield SearchOutput(
+                data=[],
+                search_messages=[message],
+            )
+
+            return
+
+        if not getattr(
+            config,
+            "behavior_es_endpoint",
+            None,
+        ):
+            raise ValueError(
+                "behavior_es_endpoint config is required "
+                "for object_id re-search"
+            )
 
         top_k = search_input.top_k if search_input.top_k is not None else config.default_max_results
 
@@ -1121,21 +1246,34 @@ async def execute_core_search(
             f"Object-id behavior search index(es): {object_search_index} (source_type={search_input.source_type})"
         )
 
-        async def _safe_object_search(oid: int) -> list[AttributeSearchResult]:
+        async def _safe_object_search(
+            oid: int,
+        ) -> list[AttributeSearchResult]:
             try:
+                behavior_video_sources = (
+                    attribute_video_sources
+                    if attribute_video_sources is not None
+                    else search_input.video_sources
+                )
+
                 return await search_by_object_embedding(
                     object_id=str(oid),
                     behavior_index=object_search_index,
                     es=es,
                     top_k=top_k,
                     min_similarity=0.0,
-                    video_sources=search_input.video_sources if search_input.video_sources else None,
+                    video_sources=behavior_video_sources,
                     timestamp_start=search_input.timestamp_start,
                     timestamp_end=search_input.timestamp_end,
                     source_type=search_input.source_type,
                 )
+
             except Exception as e:
-                logger.warning(f"Object ID {oid} search failed: {e}")
+                logger.warning(
+                    "Object ID %s search failed: %s",
+                    oid,
+                    e,
+                )
                 return []
 
         with TimeMeasure("search: object_ids behavior KNN"):
@@ -1262,6 +1400,7 @@ async def execute_core_search(
                     attribute_search_fn=attribute_search_fn,
                     top_k=original_top_k,
                     min_similarity=0.0,
+                    attribute_video_sources=(attribute_video_sources),
                 )
 
             yield AgentMessageChunk(
@@ -1354,6 +1493,7 @@ async def execute_core_search(
                             attribute_search_fn=attribute_search_fn,
                             top_k=top_k,
                             min_similarity=0.0,
+                            attribute_video_sources=(attribute_video_sources),
                         )
 
                     yield AgentMessageChunk(
@@ -1450,16 +1590,16 @@ async def execute_core_search(
         # Apply the absolute minimum similarity threshold configured
         # from the Search settings dialog.
         min_similarity = search_input.result_min_similarity
-        
+
         if min_similarity > 0.0 and search_results:
             before_count = len(search_results)
-        
+
             search_results = [
                 result
                 for result in search_results
                 if result.similarity >= min_similarity
             ]
-        
+
             logger.info(
                 "[Search] Final similarity filter: "
                 "kept %d/%d result(s), threshold=%.4f",
@@ -1467,7 +1607,7 @@ async def execute_core_search(
                 before_count,
                 min_similarity,
             )
-        
+
             yield AgentMessageChunk(
                 type=AgentMessageChunkType.THOUGHT,
                 content=(
@@ -1491,13 +1631,6 @@ async def execute_core_search(
                 from vss_agents.agents.critic_agent import VideoResult as CriticVideoResult
 
                 critic_results: dict[VideoInfo, CriticVideoResult] = {}
-
-                yield AgentMessageChunk(
-                    type=AgentMessageChunkType.THOUGHT,
-                    content=f"Verifying {len(search_results)} results with critic agent",
-                )
-
-                logger.info(f"[Search] Calling critic agent to verify {len(search_results)} results")
 
                 # Call critic agent - use screenshot_url as video_url for critic
                 search_videos: list[VideoInfo] = []
@@ -1582,17 +1715,26 @@ async def execute_core_search(
                 )
 
     # Yield final results summary
+    # Apply final user-facing result limit.
+    if original_top_k is not None:
+        search_results = search_results[
+            :original_top_k
+        ]
+    
     result_count = len(search_results)
+    
     yield AgentMessageChunk(
         type=AgentMessageChunkType.THOUGHT,
-        content=f"Found {result_count} result{'s' if result_count != 1 else ''}",
+        content=(
+            f"Found {result_count} "
+            f"result{'s' if result_count != 1 else ''}"
+        ),
     )
-
-    # Yield final result, truncated to original top_k to undo any critic-loop inflation
-    if original_top_k is not None:
-        search_results = search_results[:original_top_k]
-
-    yield SearchOutput(data=search_results, search_messages=search_messages)
+    
+    yield SearchOutput(
+        data=search_results,
+        search_messages=search_messages,
+    )
 
 
 async def execute_core_search_wrapper(
