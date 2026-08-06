@@ -21,18 +21,13 @@ import {
 } from '@/types/chat';
 import {
   WebSocketInbound,
-  validateWebSocketMessage,
   validateWebSocketMessageWithConversationId,
-  validateConversationId,
   isSystemResponseMessage,
   isSystemIntermediateMessage,
   isSystemInteractionMessage,
   isErrorMessage,
-  isSystemResponseInProgress,
   isSystemResponseComplete,
-  isOAuthConsentMessage,
   extractOAuthUrl,
-  shouldAppendResponseContent,
 } from '@/types/websocket';
 import { getEndpoint } from '@/utils/app/api';
 import { webSocketMessageTypes } from '@/utils/app/const';
@@ -44,7 +39,6 @@ import {
 import {
   fetchLastMessage,
   processIntermediateMessage,
-  updateConversationTitle,
 } from '@/utils/app/helper';
 import {
   shouldAppendResponse,
@@ -66,7 +60,11 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'r
 import toast from 'react-hot-toast';
 import { v4 as uuidv4 } from 'uuid';
 
-import {loadSearchSettings} from '@/utils/app/searchSettings';
+import {
+  loadSearchSettings,
+  SEARCH_SETTINGS_CHANGED_EVENT,
+  type SearchSettings,
+} from '@/utils/app/searchSettings';
 
 import { SESSION_COOKIE_NAME } from '@/constants/constants';
 
@@ -920,6 +918,55 @@ export const Chat = () => {
 
   // Store custom agent params for use in handleSend
   const customAgentParamsRef = useRef<CustomAgentParamsValues | null>(null);
+
+  useEffect(() => {
+    const handleSearchSettingsChanged = (
+      event: Event,
+    ) => {
+      const customEvent =
+        event as CustomEvent<SearchSettings>;
+
+      const settings =
+        customEvent.detail ??
+        loadSearchSettings();
+    
+      customAgentParamsRef.current = {
+        ...(customAgentParamsRef.current || {}),
+
+        max_results:
+          settings.maxResults,
+
+        result_min_similarity:
+          settings.minSimilarity,
+
+        use_critic:
+          settings.useCritic,
+
+        critic_max_results:
+          settings.criticMaxResults,
+
+        user_mode:
+          settings.userMode,
+      };
+
+      console.log(
+        '[VIXSearch][Chat] search settings updated',
+        customAgentParamsRef.current,
+      );
+    };
+
+    window.addEventListener(
+      SEARCH_SETTINGS_CHANGED_EVENT,
+      handleSearchSettingsChanged,
+    );
+
+    return () => {
+      window.removeEventListener(
+        SEARCH_SETTINGS_CHANGED_EVENT,
+        handleSearchSettingsChanged,
+      );
+    };
+  }, []);
 
   // Ref to store the latest handleSend function for stable callbacks
   // This prevents unnecessary re-renders of memoized chat messages
@@ -1840,19 +1887,32 @@ export const Chat = () => {
   );
 
   const handleSend = useCallback(
-    async (message: Message, deleteCount = 0, retry = false) => {
+    async (
+      message: Message,
+      deleteCount = 0,
+      retry = false,
+    ) => {
       if (
         !shouldAllowChatMessageSend({
           hidden: message.hidden,
-          uploadConversationId: message.uploadConversationId,
-          uploadFlowActive: uploadFlowActiveRef.current,
-          activeConversationId: selectedConversationRef.current?.id,
+          uploadConversationId:
+            message.uploadConversationId,
+          uploadFlowActive:
+            uploadFlowActiveRef.current,
+          activeConversationId:
+            selectedConversationRef.current?.id,
         })
       ) {
         return;
       }
 
-      // DON'T mutate the original message - create a new one with a new ID
+      if (isSearchSidebarContext()) {
+        customAgentParamsRef.current =
+          await buildSearchAwareCustomParams(
+            customAgentParamsRef.current,
+          );
+      }
+
       const messageWithNewId = {
         ...stripUploadConversationScope(message),
         id: uuidv4(),
@@ -2467,6 +2527,7 @@ export const Chat = () => {
       handleCompletedAnswerWithContent,
       onMessageSubmitted,
       isSearchSidebarContext,
+      buildSearchAwareCustomParams,
     ]
   );
 

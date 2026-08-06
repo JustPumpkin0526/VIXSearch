@@ -20,6 +20,8 @@ export const DEFAULT_SEARCH_SETTINGS: SearchSettings = {
 
 export const SEARCH_SETTINGS_STORAGE_KEY = 'vixsearch:search-settings';
 
+export const SEARCH_SETTINGS_CHANGED_EVENT = 'vixsearch:search-settings-changed';
+
 function clamp(
   value: number,
   min: number,
@@ -125,8 +127,8 @@ export function saveSearchSettings(
     );
 
     window.dispatchEvent(
-      new CustomEvent(
-        'vixsearch:search-settings-changed',
+      new CustomEvent<SearchSettings>(
+        SEARCH_SETTINGS_CHANGED_EVENT,
         {
           detail: normalized,
         },
