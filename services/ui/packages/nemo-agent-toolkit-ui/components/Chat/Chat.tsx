@@ -411,7 +411,6 @@ export const Chat = () => {
       conversations,
       messageIsStreaming,
       loading,
-      chatHistory,
       webSocketConnected,
       webSocketMode,
       webSocketURL,
@@ -1906,11 +1905,19 @@ export const Chat = () => {
         return;
       }
 
+      let requestCustomParams:
+        CustomAgentParamsValues = {
+          ...(customAgentParamsRef.current || {}),
+        };
+      
       if (isSearchSidebarContext()) {
-        customAgentParamsRef.current =
+        requestCustomParams =
           await buildSearchAwareCustomParams(
-            customAgentParamsRef.current,
+            requestCustomParams,
           );
+        
+        customAgentParamsRef.current =
+          requestCustomParams;
       }
 
       const messageWithNewId = {
@@ -1926,7 +1933,7 @@ export const Chat = () => {
 
       // chat with bot
       if (selectedConversation) {
-        const shouldSendChatHistory = chatHistory && !isSearchSidebarContext();
+        const shouldSendChatHistory = false;
         let updatedConversation: Conversation;
         if (deleteCount) {
           const updatedMessages = [...selectedConversation.messages];
@@ -2049,17 +2056,13 @@ export const Chat = () => {
           }
 
           const wsMessage = {
-            // Spread custom params first so fixed fields take precedence
-            ...(customAgentParamsRef.current || {}),
-            type: webSocketMessageTypes.userMessage,
-            schema_type:
-              sessionStorage.getItem('webSocketSchema') || webSocketSchema,
-            id: messageWithNewId?.id,
-            conversation_id: selectedConversation.id,
-            content: {
-              messages: chatMessages,
-            },
-            timestamp: new Date().toISOString(),
+            ...requestCustomParams,
+            type:webSocketMessageTypes.userMessage,
+            schema_type:sessionStorage.getItem('webSocketSchema',) || webSocketSchema,
+            id:messageWithNewId?.id,
+            conversation_id:selectedConversation.id,
+            content: {messages: chatMessages},
+            timestamp:new Date().toISOString(),
           };
 
           // console.log('Sent message via websocket', wsMessage)
@@ -2097,26 +2100,16 @@ export const Chat = () => {
               );
             
         const chatBody: ChatBody = {
-          ...(customAgentParamsRef.current || {}),
+          ...requestCustomParams,
+          messages: [
+            {
+              role: 'user',
+              content: message?.content,
+            },
+          ],
         
-          messages: shouldSendChatHistory
-            ? messagesCleaned
-            : [
-                {
-                  role: 'user',
-                  content: message?.content,
-                },
-              ],
-            
-          chatCompletionURL:
-            sessionStorage.getItem(
-              'chatCompletionURL',
-            ) || chatCompletionURL,
-          
-          additionalProps: {
-            enableIntermediateSteps:
-              shouldEnableIntermediateSteps,
-          },
+          chatCompletionURL:sessionStorage.getItem('chatCompletionURL') || chatCompletionURL,
+          additionalProps: {enableIntermediateSteps:shouldEnableIntermediateSteps},
         };
 
         const endpoint = getEndpoint({ service: 'chat' });
@@ -2515,7 +2508,6 @@ export const Chat = () => {
       conversations,
       selectedConversation,
       homeDispatch,
-      chatHistory,
       webSocketConnected,
       webSocketSchema,
       chatCompletionURL,

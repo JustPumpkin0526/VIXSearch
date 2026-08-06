@@ -187,7 +187,7 @@ workflow:
   llm_name: ${LLM_MODEL_TYPE:-nim}_llm
   llm_reasoning: false
   max_iterations: 20
-  max_history: 10
+  max_history: 0
   subagent_names:
   - search_agent
   prompt: |

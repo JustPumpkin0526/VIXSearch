@@ -280,9 +280,13 @@ class TopAgentConfig(FunctionBaseConfig, name="top_agent"):
     log_level: str = Field(default="INFO", description="Logging level for the agent (DEBUG, INFO, WARNING, ERROR).")
     max_iterations: int = Field(default=10, description="Maximum number of iterations for the agent.")
     max_history: int = Field(
-        default=10,
+        default=0,
         ge=0,
-        description="Maximum number of messages to keep in the conversation history. Set to 0 to disable.",
+        description=(
+            "Maximum number of messages to keep in "
+            "the conversation history. "
+            "Set to 0 to disable."
+        ),
     )
     prompt: str = Field(..., description="The prompt to use for the top agent.")
     llm_reasoning: bool = Field(default=False, description="Enable LLM reasoning mode.")
@@ -320,7 +324,7 @@ class TopAgent(AsyncMixin):
     plan_exec_prompt: ChatPromptTemplate | None
     tools_dict: dict[str, BaseTool]
     graph: CompiledStateGraph
-    checkpointer: InMemorySaver
+    checkpointer: InMemorySaver | None
     planning_enabled: bool
     plan_prompt: str | None
     plan_system_prompt: str
@@ -338,7 +342,7 @@ class TopAgent(AsyncMixin):
         subagent_functions: dict[str, Any] | None = None,
         callbacks: list[BaseCallbackHandler] | None = None,
         max_iterations: int = 10,
-        max_history: int = 3,
+        max_history: int = 0,
         postprocessing_config: PostprocessingConfig | None = None,
         postprocessing_llm: BaseChatModel | None = None,
         planning_enabled: bool = False,
@@ -559,10 +563,14 @@ class TopAgent(AsyncMixin):
         logger.info(f"Current message: {current_message.content[:50] if current_message.content else '(empty)'}...")
 
         # Get conversation_id from ContextVar
-        thread_id = ContextState.get().conversation_id.get()
-        previous_state = self.graph.get_state({"configurable": {"thread_id": thread_id}}).values
+        thread_id: str | None = None
+        previous_state: dict[str, Any] = {}
 
-        if previous_state and self.max_history > 0:
+        if (self.max_history > 0 and self.checkpointer is not None):
+            thread_id = (ContextState.get().conversation_id.get())
+            previous_state = (self.graph.get_state({"configurable": {"thread_id":thread_id}}).values)
+
+        if previous_state:
             # Follow up question, add previous messages to the current messages
             logger.info("Follow a previous conversation %s: %s", thread_id, previous_state)
             # Retrieve conversation history from previous state
@@ -643,12 +651,20 @@ class TopAgent(AsyncMixin):
             )
 
         try:
-            config: RunnableConfig = RunnableConfig(
-                configurable={
-                    "thread_id": thread_id,
-                    "stream": True,
-                },
-                recursion_limit=self.max_iterations,
+            configurable: dict[str, Any] = {
+                "stream": True,
+            }
+
+            if thread_id is not None:
+                configurable[
+                    "thread_id"
+                ] = thread_id
+
+            config: RunnableConfig = (
+                RunnableConfig(
+                    configurable=configurable,
+                    recursion_limit=(self.max_iterations),
+                )
             )
             async for chunk in self.graph.astream(input=input_state, config=config, stream_mode="custom"):
                 if isinstance(chunk, AgentMessageChunk):
@@ -1303,7 +1319,6 @@ class TopAgent(AsyncMixin):
 
     async def _build_graph(self) -> CompiledStateGraph:
         try:
-            self.checkpointer = InMemorySaver()
             graph = StateGraph(TopAgentState)
             graph.add_node("agent", self.agent_node)
             graph.add_node("tool", self.tool_or_subagent_node)
@@ -1361,8 +1376,29 @@ class TopAgent(AsyncMixin):
                     graph.add_conditional_edges("postprocessing", lambda s: "finalize" if s.final_answer else "agent")
 
             graph.add_edge("finalize", "__end__")
-            self.graph = graph.compile(checkpointer=self.checkpointer)
-            logger.info("Agent Graph built and compiled successfully")
+
+            if self.max_history > 0:
+                self.checkpointer = (InMemorySaver())
+
+                self.graph = graph.compile(checkpointer=self.checkpointer)
+
+                logger.info(
+                    "Agent Graph built with "
+                    "conversation checkpointing: "
+                    "max_history=%d",
+                    self.max_history,
+                )
+            else:
+                self.checkpointer = None
+
+                self.graph = graph.compile()
+
+                logger.info(
+                    "Agent Graph built without "
+                    "conversation checkpointing "
+                    "(stateless mode)"
+                )
+
             return self.graph
         except Exception:
             logger.exception("Failed to build the Agent Graph")

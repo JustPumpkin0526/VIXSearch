@@ -141,33 +141,6 @@ export const ChatHeader = ({
             isExpanded ? 'w-auto opacity-100' : 'w-0 opacity-0'
           }`}
         >
-          {/* Chat History Toggle */}
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
-              <span className="text-sm font-medium text-black dark:text-white">
-                Chat History
-              </span>
-              <div
-                onClick={() => {
-                  if (chatBlocked) return;
-                  homeDispatch({
-                    field: 'chatHistory',
-                    value: !chatHistory,
-                  });
-                }}
-                className={`relative inline-flex h-5 w-10 items-center cursor-pointer rounded-full transition-colors duration-300 ease-in-out ${
-                  chatHistory ? 'bg-black dark:bg-[#76b900]' : 'bg-gray-200'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-300 ease-in-out ${
-                    chatHistory ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
-              </div>
-            </label>
-          </div>
-
           {/* WebSocket Mode Toggle */}
           <div className="flex items-center gap-2 whitespace-nowrap">
             <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
