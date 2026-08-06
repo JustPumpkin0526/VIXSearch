@@ -1654,20 +1654,52 @@ async def execute_core_search(
                 critic_results: dict[VideoInfo, CriticVideoResult] = {}
 
                 # Call critic agent - use screenshot_url as video_url for critic
+                critic_limit = min(100,max(1,int(search_input.critic_max_results)))
+
                 search_videos: list[VideoInfo] = []
+
                 for result in search_results:
                     info = VideoInfo(
                         sensor_id=result.sensor_id,
                         start_timestamp=result.start_time,
                         end_timestamp=result.end_time,
                     )
-                    if info not in confirmed_results and info not in rejected_results:
-                        search_videos.append(info)
-                if len(search_videos) > 0:
-                    critic_input = {"query": original_query, "videos": search_videos}
-                    logger.debug(f"[Search] Critic agent input: {critic_input}")
-                    with TimeMeasure("search: critic agent verification"):
-                        critic_output = await critic_agent.ainvoke(critic_input)
+
+                    if (info in confirmed_results or info in rejected_results):
+                        continue
+                    
+                    search_videos.append(info)
+
+                    # UI에서 지정한 최대 분석 개수까지만 구성
+                    if len(search_videos) >= critic_limit:
+                        break
+                    
+                if search_videos:
+                    critic_input = {
+                        "query": original_query,
+                        "videos": search_videos,
+                        "evaluation_count": critic_limit,
+                    }
+
+                    logger.info(
+                        "[Search] Critic evaluation limit: "
+                        "selected=%d, available=%d, limit=%d",
+                        len(search_videos),
+                        len(search_results),
+                        critic_limit,
+                    )
+
+                    logger.debug(
+                        "[Search] Critic agent input: %s",
+                        critic_input,
+                    )
+
+                    with TimeMeasure(
+                        "search: critic agent verification"
+                    ):
+                        critic_output = (
+                            await critic_agent.ainvoke(critic_input)
+                        )
                     logger.debug(f"[Search] Critic output: {critic_output}")
                     critic_results = {result.video_info: result for result in critic_output.video_results}
 

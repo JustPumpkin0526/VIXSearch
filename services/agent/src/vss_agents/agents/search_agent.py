@@ -148,6 +148,12 @@ class SearchAgentInput(BaseModel):
     critic_max_results: int | None = Field(
         default=None,
         ge=1,
+        le=100,
+        description=(
+            "Maximum number of search results "
+            "submitted to the critic agent. "
+            "Parent request_options takes priority."
+        ),
     )
 
 
@@ -271,16 +277,18 @@ def _effective_candidate_top_k(
     )
 
 def _effective_critic_max_results(search_agent_input: SearchAgentInput) -> int:
-    if (search_agent_input.critic_max_results is not None):
-        return max(1, int(search_agent_input.critic_max_results))
+    request_options = (search_agent_input.request_options)
 
-    request_options = search_agent_input.request_options
-
+    # Search 메뉴 Settings에서 전달된 값을 최우선 사용
     if request_options is not None:
-        value = getattr(request_options, "critic_max_results", None)
+        value = getattr(request_options, "critic_max_results",None)
 
         if value is not None:
-            return max(1, int(value))
+            return min(100,max(1,int(value)))
+
+    # Search Agent를 직접 호출하는 경우의 fallback
+    if (search_agent_input.critic_max_results is not None):
+        return min(100, max(1, int(search_agent_input.critic_max_results)))
 
     return 5
 
