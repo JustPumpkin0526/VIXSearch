@@ -1,10 +1,3 @@
-export interface SearchSettings {
-  maxResults: number;
-  minSimilarity: number;
-  useCritic: boolean;
-  criticMaxResults: number;
-}
-
 export type SearchUserMode =
   | 'search'
   | 'debug';

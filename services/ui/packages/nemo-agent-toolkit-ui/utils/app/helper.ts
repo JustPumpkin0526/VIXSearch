@@ -305,6 +305,28 @@ export const convertBackticksToPreCode = (markdown = '') => {
     }
 };
 
+const normalizeIntermediatePayload = (
+  payload: unknown,
+): string => {
+  if (payload === null || payload === undefined) {
+    return '';
+  }
+
+  if (typeof payload === 'string') {
+    return payload;
+  }
+
+  try {
+    return [
+      '```json',
+      JSON.stringify(payload, null, 2),
+      '```',
+    ].join('\n');
+  } catch {
+    return String(payload);
+  }
+};
+
 export const generateContentIntermediate = (intermediateSteps: IntermediateStep[] = []): string => {
     const generateDetails = (data: IntermediateStep[], isParentLast: boolean = true): string => {
         try {
@@ -318,10 +340,14 @@ export const generateContentIntermediate = (intermediateSteps: IntermediateStep[
                 const isLastInArray = idx === lastIndex;
                 // A step is considered "last" (still streaming) if it's the last in its array AND its parent is also last
                 const isLast = isLastInArray && isParentLast;
-                const sanitizedPayload = convertBackticksToPreCode(item.content?.payload || '');
+                const payloadText = normalizeIntermediatePayload(item.content?.payload);
+                const sanitizedPayload = convertBackticksToPreCode(payloadText);
+                const stepName = escapeHtml(typeof item.content?.name === 'string' 
+                    ? item.content.name
+                    : 'Intermediate Step',
+                );
                 let details = `<details id=${currentId} index=${currentIndex}>\n`;
-                details += `  <summary id=${currentId} index=${currentIndex} islast="${isLast}">${item.content?.name || ''}</summary>\n`;
-
+                details += `  <summary id=${currentId} index=${currentIndex} islast="${isLast}">${stepName}</summary>\n`;
                 details += `\n${sanitizedPayload}\n`;
 
                 if (item.intermediate_steps && item.intermediate_steps.length > 0) {
@@ -345,9 +371,7 @@ export const generateContentIntermediate = (intermediateSteps: IntermediateStep[
         if (firstStep && firstStep.parent_id) {
             intermediateContent = `<details id=${uuidv4()} index="-1" ><summary id=${firstStep.parent_id} index="-1" islast="true">Intermediate Steps</summary>\n${intermediateContent}</details>`;
         }
-        if (/(?:\\)?```/.test(intermediateContent)) {
-            intermediateContent = intermediateContent.replace(/\n{2,}/g, '\n');
-        }
+        
         return intermediateContent;
     } catch (error) {
         return '';

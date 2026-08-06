@@ -18,6 +18,7 @@ from collections.abc import Hashable
 import copy
 from datetime import UTC
 from datetime import datetime
+import html
 import json
 import logging
 import re
@@ -80,6 +81,27 @@ from vss_agents.utils.reasoning_utils import get_llm_reasoning_bind_kwargs
 from vss_agents.utils.reasoning_utils import get_thinking_tag
 
 logger = logging.getLogger(__name__)
+
+def _format_debug_step_content(content: Any) -> str:
+    """
+    Format Reasoning Trace step content without destroying
+    newlines or allowing raw HTML to break custom tags.
+    """
+
+    if content is None:
+        return ""
+
+    if isinstance(content, str):
+        text = content.replace("\\n", "\n")
+    else:
+        text = json.dumps(
+            content,
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        )
+
+    return html.escape(text.strip())
 
 PLAN_CLARIFY_PREFIX = "[USER]"
 TOOL_NOT_FOUND_ERROR_MESSAGE = "There is no tool named {tool_name}. Tool must be one of {tools}."
@@ -1741,11 +1763,11 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
 
                 steps.append(
                     '<agent-think-step '
-                    'title="0 - Request Options">'
-                    f"```json\n"
-                    f"{request_debug_json}\n"
-                    f"```"
-                    "</agent-think-step>"
+                    'title="0 - Request Options">\n'
+                    '```json\n'
+                    f'{request_debug_json}\n'
+                    '```\n'
+                    '</agent-think-step>'
                 )
 
             # Stream agent responses
@@ -1776,17 +1798,15 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                     if debug_mode:
                         step_num += 1
 
-                        clean_content = (
+                        clean_content = _format_debug_step_content(
                             chunk.content
-                            .replace("\\n", " ")
-                            .replace("\n", " ")
                         )
 
                         steps.append(
                             '<agent-think-step '
-                            f'title="{step_num} - Error">'
-                            f"{clean_content}"
-                            "</agent-think-step>"
+                            f'title="{step_num} - Error">\n'
+                            f'{clean_content}\n'
+                            '</agent-think-step>'
                         )
 
                     continue
@@ -1800,17 +1820,15 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                 ):
                     step_num += 1
 
-                    clean_content = (
+                    clean_content = _format_debug_step_content(
                         chunk.content
-                        .replace("\\n", " ")
-                        .replace("\n", " ")
                     )
 
                     steps.append(
                         '<agent-think-step '
-                        f'title="{step_num} - Thought">'
-                        f"{clean_content}"
-                        "</agent-think-step>"
+                        f'title="{step_num} - Thought">\n'
+                        f'{clean_content}\n'
+                        '</agent-think-step>'
                     )
 
                 elif (
@@ -1819,17 +1837,15 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                 ):
                     step_num += 1
 
-                    clean_content = (
+                    clean_content = _format_debug_step_content(
                         chunk.content
-                        .replace("\\n", " ")
-                        .replace("\n", " ")
                     )
 
                     steps.append(
                         '<agent-think-step '
-                        f'title="{step_num} - Tool Call">'
-                        f"{clean_content}"
-                        "</agent-think-step>"
+                        f'title="{step_num} - Tool Call">\n'
+                        f'{clean_content}\n'
+                        '</agent-think-step>'
                     )
 
                 elif (
@@ -1838,17 +1854,15 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                 ):
                     step_num += 1
 
-                    clean_content = (
+                    clean_content = _format_debug_step_content(
                         chunk.content
-                        .replace("\\n", " ")
-                        .replace("\n", " ")
                     )
 
                     steps.append(
                         '<agent-think-step '
-                        f'title="{step_num} - Sub-Agent Call">'
-                        f"{clean_content}"
-                        "</agent-think-step>"
+                        f'title="{step_num} - Sub-Agent Call">\n'
+                        f'{clean_content}\n'
+                        '</agent-think-step>'
                     )
 
             # Yield all steps wrapped in unified agent-think
@@ -1858,8 +1872,8 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                 )
             
                 agent_think_block = (
-                    "\n\n<agent-think>"
-                    f"{steps_content}"
+                    "\n\n<agent-think>\n"
+                    f"{steps_content}\n"
                     "</agent-think>\n\n"
                 )
             

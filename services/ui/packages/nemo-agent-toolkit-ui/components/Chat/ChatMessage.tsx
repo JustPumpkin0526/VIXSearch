@@ -49,6 +49,21 @@ function extractReasoningTraceContent(
   return matches?.join('\n\n') ?? '';
 }
 
+function removeReasoningTraceContent(
+  content: string,
+): string {
+  if (!content) {
+    return '';
+  }
+
+  return content
+    .replace(
+      /<agent-think(?:\s[^>]*)?>[\s\S]*?<\/agent-think>/gi,
+      '',
+    )
+    .trim();
+}
+
 export interface Props {
   message: Message;
   messageIndex: number;
@@ -230,7 +245,7 @@ export const ChatMessage: FC<Props> = memo(
       }
 
       // fixing malformed html and removing extra spaces to avoid markdown issues
-      return fixMalformedHtml(result)?.trim()?.replace(/\n\s+/, '\n ');
+      return fixMalformedHtml(result)?.trim() ?? '';
     };
 
     
@@ -279,6 +294,19 @@ export const ChatMessage: FC<Props> = memo(
       message.role,
     ]);
 
+    const finalAssistantResponseContent = useMemo(() => {
+        if (message.role !== 'assistant') {
+          return '';
+        }
+      
+        return removeReasoningTraceContent(
+          assistantResponseContent,
+        );
+      }, [
+        assistantResponseContent,
+        message.role,
+      ]);
+
     const parsedSearchResultsMessage = useMemo(() => {
       if (message.role !== 'assistant') {
         return null;
@@ -291,13 +319,13 @@ export const ChatMessage: FC<Props> = memo(
         };
       }
     
-      if (!assistantResponseContent) {
+      if (!finalAssistantResponseContent) {
         return null;
       }
-    
-      return extractSearchResultsMessage(assistantResponseContent);
+
+      return extractSearchResultsMessage(finalAssistantResponseContent);
     }, [
-      assistantResponseContent,
+      finalAssistantResponseContent,
       message.role,
       message.searchResults,
       message.searchResultsSummary,
@@ -426,37 +454,33 @@ export const ChatMessage: FC<Props> = memo(
                     
                       {parsedSearchResultsMessage ? (
                         <div className="w-full">
+                          {reasoningTraceContent && (
+                            <div className="mb-5 w-full">
+                              <MemoizedReactMarkdown
+                                rehypePlugins={[rehypeRaw] as any}
+                                remarkPlugins={[
+                                  remarkGfm,
+                                  [
+                                    remarkMath,
+                                    {
+                                      singleDollarTextMath: false,
+                                    },
+                                  ],
+                                ]}
+                                components={markdownComponents}
+                              >
+                                {reasoningTraceContent}
+                              </MemoizedReactMarkdown>
+                            </div>
+                          )}
+                      
                           <SearchResultsMessage
-                            results={parsedSearchResultsMessage.results}
+                            results={
+                              parsedSearchResultsMessage.results
+                            }
                             sourceQuery={sourceQuery}
                             onSubmitMessage={onSubmitMessage}
                           />
-                    
-                          {reasoningTraceContent && (
-                            <section className="not-prose mt-5 overflow-hidden rounded-lg border border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900">
-                              <div className="border-b border-neutral-200 px-4 py-3 text-sm font-semibold text-neutral-800 dark:border-neutral-700 dark:text-neutral-100">
-                                Reasoning Trace
-                              </div>
-                          
-                              <div className="prose max-w-none px-4 py-3 text-sm dark:prose-invert">
-                                <MemoizedReactMarkdown
-                                  rehypePlugins={[rehypeRaw] as any}
-                                  remarkPlugins={[
-                                    remarkGfm,
-                                    [
-                                      remarkMath,
-                                      {
-                                        singleDollarTextMath: false,
-                                      },
-                                    ],
-                                  ]}
-                                  components={markdownComponents}
-                                >
-                                  {reasoningTraceContent}
-                                </MemoizedReactMarkdown>
-                              </div>
-                            </section>
-                          )}
                         </div>
                       ) : (
                         assistantResponseContent && (
