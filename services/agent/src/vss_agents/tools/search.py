@@ -1294,12 +1294,33 @@ async def execute_core_search(
         vst_internal_url = getattr(config, "vst_internal_url", None)
         vst_external_url = getattr(config, "vst_external_url", None)
         await enrich_attribute_results(attr_results, vst_internal_url, vst_external_url)
-
+        
         search_results = [attribute_result_to_search_result(r) for r in attr_results]
+        
+        # Object ID 검색에도 Settings의 최소 유사도 적용
+        min_similarity = search_input.result_min_similarity
+        
+        if min_similarity > 0.0:
+            before_count = len(search_results)
+        
+            search_results = [result for result in search_results if result.similarity >= min_similarity]
+        
+            logger.info(
+                "[Search][Object ID] Similarity filter: "
+                "kept %d/%d result(s), threshold=%.4f",
+                len(search_results),
+                before_count,
+                min_similarity,
+            )
+        
         result_count = len(search_results)
+        
         yield AgentMessageChunk(
             type=AgentMessageChunkType.THOUGHT,
-            content=f"Found {result_count} similar object{'s' if result_count != 1 else ''}",
+            content=(
+                f"Found {result_count} similar "
+                f"object{'s' if result_count != 1 else ''}"
+            ),
         )
         yield SearchOutput(data=search_results, search_messages=[])
         return

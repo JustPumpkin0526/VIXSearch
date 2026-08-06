@@ -103,9 +103,14 @@ class SearchAgentInput(BaseModel):
     use_attribute_search: bool | None = Field(
         default=None, description="Enable fusion reranking with attribute search (overrides config if provided)"
     )
-    max_results: int = Field(
-        default=5,
-        description="Final number of results to return when the user explicitly asks for a result count.",
+    max_results: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description=(
+            "Optional explicit result count. "
+            "The parent request_options value takes priority."
+        ),
     )
     start_time: str | None = Field(default=None, description="Start time filter (ISO format)")
     end_time: str | None = Field(default=None, description="End time filter (ISO format)")
@@ -182,36 +187,88 @@ def _effective_owned_video_ids(
 
     return None
 
-def _explicit_max_results(search_agent_input: SearchAgentInput) -> int | None:
-    if ("max_results" in search_agent_input.model_fields_set):
-        return max(1, search_agent_input.max_results)
-
-    request_options = search_agent_input.request_options
-
-    if request_options is None:
-        return None
-
-    value = getattr(request_options, "max_results", None)
-
-    if value is None:
-        return None
-
-    return max(1, int(value))
-
-def _effective_result_min_similarity(search_agent_input: SearchAgentInput) -> float:
-    if (search_agent_input.result_min_similarity is not None):
-        return min(1.0, max(0.0, float(search_agent_input.result_min_similarity)))
-
+def _explicit_max_results(
+    search_agent_input: SearchAgentInput,
+) -> int | None:
     request_options = search_agent_input.request_options
 
     if request_options is not None:
-        value = getattr(request_options, "result_min_similarity", None)
+        value = getattr(
+            request_options,
+            "max_results",
+            None,
+        )
 
         if value is not None:
-            return min(1.0, max(0.0, float(value)))
+            return min(
+                100,
+                max(1, int(value)),
+            )
+
+    if search_agent_input.max_results is not None and "max_results" in search_agent_input.model_fields_set:
+        return min(
+            100,
+            max(
+                1,
+                int(search_agent_input.max_results),
+            ),
+        )
+
+    return None
+
+def _effective_result_min_similarity(
+    search_agent_input: SearchAgentInput,
+) -> float:
+    request_options = search_agent_input.request_options
+
+    if request_options is not None:
+        value = getattr(
+            request_options,
+            "result_min_similarity",
+            None,
+        )
+
+        if value is not None:
+            return min(
+                1.0,
+                max(0.0, float(value)),
+            )
+
+    if search_agent_input.result_min_similarity is not None:
+        return min(
+            1.0,
+            max(
+                0.0,
+                float(
+                    search_agent_input.result_min_similarity
+                ),
+            ),
+        )
 
     return 0.1
 
+def _effective_candidate_top_k(
+    search_agent_input: SearchAgentInput,
+    default_top_k: int,
+) -> int:
+    max_results = _explicit_max_results(
+        search_agent_input,
+    )
+
+    requested_top_k = (
+        search_agent_input.top_k
+        if search_agent_input.top_k is not None
+        else default_top_k
+    )
+
+    if max_results is None:
+        return max(1, int(requested_top_k))
+
+    # 최종 결과 개수보다 검색 후보가 적어지지 않도록 함
+    return max(
+        int(requested_top_k),
+        int(max_results),
+    )
 
 def _effective_critic_max_results(search_agent_input: SearchAgentInput) -> int:
     if (search_agent_input.critic_max_results is not None):
@@ -637,10 +694,9 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             except Exception as e:
                 logger.warning(f"Failed to parse end_time: {e}")
 
-        top_k = (
-            search_agent_input.top_k
-            if search_agent_input.top_k is not None
-            else _candidate_top_k(search_agent_input, config.default_max_results)
+        top_k = _effective_candidate_top_k(
+            search_agent_input,
+            config.default_max_results,
         )
 
         source_type, use_critic = _effective_search_runtime_options(search_agent_input)
@@ -736,10 +792,9 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             except Exception as e:
                 logger.warning(f"Failed to parse end_time: {e}")
 
-        top_k = (
-            search_agent_input.top_k
-            if search_agent_input.top_k is not None
-            else _candidate_top_k(search_agent_input, config.default_max_results)
+        top_k = _effective_candidate_top_k(
+            search_agent_input,
+            config.default_max_results,
         )
 
         effective_config = config.model_copy(

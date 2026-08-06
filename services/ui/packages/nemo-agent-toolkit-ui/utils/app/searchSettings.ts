@@ -31,6 +31,17 @@ function clamp(
   );
 }
 
+function toFiniteNumber(
+  value: unknown,
+  fallback: number,
+): number {
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : fallback;
+}
+
 export function normalizeSearchSettings(
   value?: Partial<SearchSettings> | null,
 ): SearchSettings {
@@ -42,16 +53,20 @@ export function normalizeSearchSettings(
 
     maxResults: Math.round(
       clamp(
-        Number(value?.maxResults) ||
+        toFiniteNumber(
+          value?.maxResults,
           DEFAULT_SEARCH_SETTINGS.maxResults,
+        ),
         1,
         100,
       ),
     ),
 
     minSimilarity: clamp(
-      Number(value?.minSimilarity) ||
+      toFiniteNumber(
+        value?.minSimilarity,
         DEFAULT_SEARCH_SETTINGS.minSimilarity,
+      ),
       0,
       1,
     ),
@@ -63,8 +78,10 @@ export function normalizeSearchSettings(
 
     criticMaxResults: Math.round(
       clamp(
-        Number(value?.criticMaxResults) ||
+        toFiniteNumber(
+          value?.criticMaxResults,
           DEFAULT_SEARCH_SETTINGS.criticMaxResults,
+        ),
         1,
         100,
       ),
