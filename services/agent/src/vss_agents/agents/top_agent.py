@@ -76,6 +76,8 @@ from vss_agents.agents.postprocessing import POSTPROCESSING_FEEDBACK_MARKER
 from vss_agents.agents.postprocessing import PostprocessingConfig
 from vss_agents.agents.postprocessing import PostprocessingNode
 from vss_agents.utils.asyncmixin import AsyncMixin
+from vss_agents.utils.query_translation import contains_hangul
+from vss_agents.utils.query_translation import translate_query_if_korean
 from vss_agents.utils.reasoning_parsing import parse_reasoning_content
 from vss_agents.utils.reasoning_utils import get_llm_reasoning_bind_kwargs
 from vss_agents.utils.reasoning_utils import get_thinking_tag
@@ -973,6 +975,10 @@ class TopAgent(AsyncMixin):
 
                     # Build tool args once, filtering None values and injecting request options when supported.
                     tool_args = {k: v for k, v in tool_call["args"].items() if v is not None}
+                    if tool_name == "search_agent" and state.current_message is not None:
+                        original_query = _get_content_text(state.current_message).strip()
+                        if contains_hangul(original_query):
+                            tool_args["query"] = await translate_query_if_korean(original_query)
                     if self._tool_accepts_param(tool_name, "request_options"):
                         tool_args["request_options"] = state.options.model_dump(mode="json")
                         logger.info("Passing request_options to %s", tool_name)

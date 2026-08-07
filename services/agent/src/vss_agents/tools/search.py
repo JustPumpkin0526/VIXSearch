@@ -49,6 +49,8 @@ from vss_agents.tools.attribute_search import resolve_index_by_source_type
 from vss_agents.tools.embed_search import EmbedSearchOutput
 from vss_agents.tools.vst.utils import get_streams_info
 from vss_agents.utils.es_client import VSSESClient
+from vss_agents.utils.query_translation import contains_hangul
+from vss_agents.utils.query_translation import translate_query_if_korean
 from vss_agents.utils.reasoning_utils import get_llm_reasoning_bind_kwargs
 from vss_agents.utils.reasoning_utils import get_thinking_tag
 from vss_agents.utils.time_convert import datetime_to_iso8601
@@ -69,7 +71,7 @@ Extract the following parameters from the user query:
 - source_type: "rtsp" if referring to live/camera streams, "video_file" if referring to uploaded video files (default: "video_file")
 - timestamp_start: Start time in ISO format (e.g., "2025-01-01T13:00:00Z"). Use 2025-01-01 as the base date.
 - timestamp_end: End time in ISO format (e.g., "2025-01-01T14:00:00Z"). Use 2025-01-01 as the base date.
-- attributes: List of visual descriptions for persons and other detected objects. Include the object class and visible attributes such as color, shape, clothing, size, subtype, and apparent gender for persons. Do not include actions or scene context, and do not return a generic object class without a visible attribute.
+- attributes: List of visual descriptions for objects from the RT-CV detector classes "person", "car", "head", "wheelchair", "stroller", "license_plate", and "heavy_machine". Include the object class and visible attributes such as color, shape, clothing, size, subtype, and apparent gender for persons. Preserve a specific car subtype (for example, "hatchback car") instead of replacing it with only "car". Do not include actions or scene context, and do not return a generic object class without a visible attribute.
 - has_action: REQUIRED boolean. Set to True if the query explicitly mentions an action/event/activity (e.g., running, walking, carrying, pushing, entering, leaving, moving). Set to False if the query only describes visual/physical attributes (what someone/something LOOKS LIKE) without any action. Examples: "person" → false, "person walking" → true, "red car" → false, "person carrying box" → true, "forklift" → false.
 - object_ids: List of integer object IDs if explicitly mentioned in the query (e.g., "find object 5" → [5], "search for objects 10, 20" → [10, 20]). null if no object IDs are mentioned.
 - top_k: Number of results to return (integer, only if explicitly mentioned, e.g., "top 5", "first 10")
@@ -84,11 +86,11 @@ User query: {user_query}"""
 # Default few-shot examples for query decomposition
 DEFAULT_FEW_SHOT_EXAMPLES = """Example 1:
 User query: "Find a man pushing a cart wearing a beige shirt between 1 pm and 2 pm at Endeavor heart"
-Output: {{"query": "man pushing cart wearing beige shirt", "video_sources": ["Endeavor heart"], "source_type": "rtsp", "timestamp_start": "2025-01-01T13:00:00Z", "timestamp_end": "2025-01-01T14:00:00Z", "attributes": ["person wearing beige shirt"], "has_action": true}}
+Output: {{"query": "man pushing cart wearing beige shirt", "video_sources": [], "source_type": "rtsp", "timestamp_start": "2025-01-01T13:00:00Z", "timestamp_end": "2025-01-01T14:00:00Z", "attributes": ["person wearing beige shirt"], "has_action": true}}
 
 Example 2:
 User query: "Find people running near Building A camera from 9am to 10am"
-Output: {{"query": "people running", "video_sources": ["Building A"], "source_type": "rtsp", "timestamp_start": "2025-01-01T09:00:00Z", "timestamp_end": "2025-01-01T10:00:00Z", "has_action": true}}
+Output: {{"query": "people running", "video_sources": [], "source_type": "rtsp", "timestamp_start": "2025-01-01T09:00:00Z", "timestamp_end": "2025-01-01T10:00:00Z", "has_action": true}}
 
 Example 3:
 User query: "Search for a woman with a blue backpack walking"
@@ -96,11 +98,15 @@ Output: {{"query": "woman walking with blue backpack", "video_sources": [], "sou
 
 Example 4:
 User query: "Find delivery truck at warehouse entrance between 2pm and 4pm"
-Output: {{"query": "delivery truck at warehouse entrance", "video_sources": ["warehouse entrance"], "source_type": "rtsp", "timestamp_start": "2025-01-01T14:00:00Z", "timestamp_end": "2025-01-01T16:00:00Z", "has_action": false}}
+Output: {{"query": "delivery truck at warehouse entrance", "video_sources": [], "source_type": "rtsp", "timestamp_start": "2025-01-01T14:00:00Z", "timestamp_end": "2025-01-01T16:00:00Z", "has_action": false}}
 
 Example 5:
 User query: "Person wearing red jacket and blue jeans carrying a box"
 Output: {{"query": "person wearing red jacket and blue jeans carrying box", "video_sources": [], "source_type": "video_file", "attributes": ["person wearing red jacket and blue jeans"], "has_action": true}}
+
+Example 6:
+User query: "Find a small green hatchback car"
+Output: {{"query": "small green hatchback car", "video_sources": [], "source_type": "video_file", "attributes": ["green hatchback car"], "has_action": false}}
 
 Example 7:
 User query: "person with long wavy hair wearing white sneakers"
@@ -116,7 +122,7 @@ Output: {{"query": "object ids 5, 6", "object_ids": [5, 6], "has_action": false}
 
 Example 10:
 User query: "find more objects like object 42 near warehouse entrance"
-Output: {{"query": "objects like object 42 near warehouse entrance", "object_ids": [42], "video_sources": ["warehouse entrance"], "has_action": false}}"""
+Output: {{"query": "objects like object 42 near warehouse entrance", "object_ids": [42], "video_sources": [], "has_action": false}}"""
 
 
 class DecomposedQuery(BaseModel):
@@ -878,6 +884,9 @@ async def execute_core_search(
     Yields:
         AgentMessageChunk for progress updates, then SearchOutput as final result
     """
+    if contains_hangul(search_input.query):
+        search_input.query = await translate_query_if_korean(search_input.query)
+        
     decomposed: DecomposedQuery | None = None
     original_query = search_input.query
 
