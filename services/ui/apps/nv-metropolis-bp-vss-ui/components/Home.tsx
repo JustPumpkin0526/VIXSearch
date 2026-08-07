@@ -27,7 +27,6 @@ import { useAppChatSidebar } from '../hooks/useAppChatSidebar';
 import { useChatSidebarMainTabBridge } from '../hooks/useChatSidebarMainTabBridge';
 import { parseMainTabIdFromCallerInfoHash } from '../utils/callerInfoMainTabHash';
 import { parseSidebarMainTabId } from '../utils/sidebarMainTabChatSubscribers';
-import { TabWithChatSidebarLayout } from './TabWithChatSidebarLayout';
 import packageJson from '../package.json';
 import { APPLICATION_TITLE, APPLICATION_SUBTITLE } from '../constants/constants';
 
@@ -749,38 +748,6 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
     }
   }, [activeTab, visibleTabs]);
 
-  useEffect(() => {
-    const handleOpenSearchTab =
-      () => {
-        const hasSearchTab =
-          visibleTabs.some(
-            (tab) =>
-              tab.id === 'search',
-          );
-
-        if (!hasSearchTab) {
-          return;
-        }
-
-        setActiveTab('search');
-      };
-
-    window.addEventListener(
-      OPEN_SEARCH_TAB_EVENT,
-      handleOpenSearchTab,
-    );
-
-    return () => {
-      window.removeEventListener(
-        OPEN_SEARCH_TAB_EVENT,
-        handleOpenSearchTab,
-      );
-    };
-  }, [
-    setActiveTab,
-    visibleTabs,
-  ]);
-
   // Render a single tab component with visibility control
   const renderTabComponent = (tabConfig: TabConfig) => {
     const isActive = activeTab === tabConfig.id;
@@ -858,33 +825,21 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
       componentProps.serverRenderTime = serverRenderTime;
       componentProps.renderControlsInLeftSidebar = true;
       componentProps.onControlsReady = isActive ? alertsControlsReadyCallback : undefined;
-      componentProps.registerChatAnswerHandler = registerAlertsTabChatAnswer;
-      componentProps.registerSidebarChatEventSubscriber = registerAlertsTabSidebarChatEvents;
-      componentProps.submitChatMessage = sidebarSubmitChatMessage;
     } else if (componentName === 'DashboardComponent' && dashboardData) {
       componentProps.dashboardData = dashboardData;
       componentProps.serverRenderTime = serverRenderTime;
       componentProps.renderControlsInLeftSidebar = true;
       componentProps.onControlsReady = isActive ? dashboardControlsReadyCallback : undefined;
-      componentProps.registerChatAnswerHandler = registerDashboardTabChatAnswer;
-      componentProps.registerSidebarChatEventSubscriber = registerDashboardTabSidebarChatEvents;
     } else if (componentName === 'MapComponent' && mapData) {
       componentProps.mapData = mapData;
       componentProps.serverRenderTime = serverRenderTime;
       componentProps.renderControlsInLeftSidebar = true;
       componentProps.onControlsReady = isActive ? mapControlsReadyCallback : undefined;
-      componentProps.registerChatAnswerHandler = registerMapTabChatAnswer;
-      componentProps.registerSidebarChatEventSubscriber = registerMapTabSidebarChatEvents;
     } else if (componentName === 'VideoManagementComponent' && videoManagementData) {
       componentProps.videoManagementData = videoManagementData;
       componentProps.serverRenderTime = serverRenderTime;
       componentProps.renderControlsInLeftSidebar = true;
       componentProps.onControlsReady = isActive ? videoManagementControlsReadyCallback : undefined;
-      componentProps.registerChatAnswerHandler = registerVideoManagementTabChatAnswer;
-      componentProps.registerSidebarChatEventSubscriber = registerVideoManagementTabSidebarChatEvents;
-      componentProps.registerChatVideoUploadComplete =
-        registerMainTabChatVideoUploadComplete['video-management'];
-      componentProps.addChatQueryContext = sidebarAddChatQueryContext;
     }
 
     return (
@@ -901,45 +856,22 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
   const renderMainAreaComponent = () => {
     if (visibleTabs.length === 0) {
       return (
-        <div className="flex-1 p-6 overflow-auto">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">No Content Available</h2>
-          <p className="text-gray-600 dark:text-gray-400">No tabs are enabled in the current deployment configuration.</p>
+        <div className="flex-1 overflow-auto p-6">
+          <h2 className="mb-4 text-2xl font-bold text-gray-900 dark:text-gray-100">
+            No Content Available
+          </h2>
+
+          <p className="text-gray-600 dark:text-gray-400">
+            No tabs are enabled in the current deployment configuration.
+          </p>
         </div>
       );
     }
 
-    const tabStack = (
+    return (
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {visibleTabs.map((tab) => renderTabComponent(tab))}
       </div>
-    );
-
-    const activeTabConfig = visibleTabs.find((tab) => tab.id === activeTab);
-
-    const activeTabUsesMainChat =
-      activeTabConfig?.component === 'NemoAgentToolkitApp';
-      
-    const showFloatingChatSidebar =
-      deploymentConfig.chatSidebarEnabled && !activeTabUsesMainChat;
-
-    if (!showFloatingChatSidebar) {
-      return tabStack;
-    }
-
-    return (
-      <TabWithChatSidebarLayout
-        tabId="side-bar"
-        tabLabel="App"
-        mainContent={tabStack}
-        sidebarEnabled
-        sidebarApi={sidebarApi}
-        highlightIcon={chatSidebarHighlight}
-        queryExecuting={chatSidebarQueryExecuting}
-        onOpenSidebar={clearChatSidebarHighlight}
-        renderSidebarChat={renderAppSidebarChat}
-        contentAreaRef={sidebarApi.contentAreaCallbackRef}
-        isActive
-      />
     );
   };
 

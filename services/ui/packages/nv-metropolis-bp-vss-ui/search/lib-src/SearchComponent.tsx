@@ -43,6 +43,10 @@ const GROUP_SEARCH_STORAGE_KEY =
 const GROUP_SEARCH_CHANGED_EVENT =
   'vss:video-group-search-changed';
 
+const REPORTS_UPDATED_EVENT = 'vss:reports-updated';
+
+const OPEN_REPORT_TAB_EVENT = 'vss:open-report-tab';
+
 function readVideoGroupSearchScope():
   VideoGroupSearchScope | null {
   if (typeof window === 'undefined') {
@@ -337,6 +341,114 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
 
   // Track which SearchData item is currently playing so Search by Image knows sensorId + start_time.
   const [activeVideoData, setActiveVideoData] = React.useState<SearchData | null>(null);
+
+  const [creatingReport, setCreatingReport] =
+    React.useState(false);
+
+  const handleCreateReportFromActiveVideo =
+    React.useCallback(async () => {
+      if (
+        !activeVideoData ||
+        creatingReport
+      ) {
+        return;
+      }
+
+      setCreatingReport(true);
+
+      try {
+        const item = activeVideoData;
+        const displayVideoName = resolveAgentDisplayVideoName(item) || item.video_name || '검색 결과';
+        const report = {
+          id: `report-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`,
+          title: `${displayVideoName} 보고서`,
+          createdAt: new Date().toISOString(),
+          items: [
+            {
+              id: [
+                item.sensor_id ?? '',
+                item.start_time ?? '',
+                item.end_time ?? '',
+                item.video_name ?? '',
+              ].join('::'),
+
+              videoName: displayVideoName,
+              description: item.description?.trim() ?? '',
+              startTime: item.start_time,
+              endTime: item.end_time,
+              sensorId: item.sensor_id,
+              similarity: item.similarity,
+              screenshotUrl: item.screenshot_url,
+            },
+          ],
+        };
+
+        const headers: HeadersInit = {
+          'Content-Type': 'application/json',
+        };
+
+        const token =
+          window.localStorage.getItem(
+            'vss.auth.token',
+          );
+
+        if (token) {
+          headers.Authorization =
+            `Bearer ${token}`;
+        }
+
+        const response =
+          await fetch('/api/reports', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(report),
+          });
+
+        if (!response.ok) {
+          throw new Error(
+            `Failed to save report: ${response.status}`,
+          );
+        }
+
+        window.dispatchEvent(
+          new CustomEvent(
+            REPORTS_UPDATED_EVENT,
+          ),
+        );
+
+        window.dispatchEvent(
+          new CustomEvent(
+            OPEN_REPORT_TAB_EVENT,
+            {
+              detail: {
+                tabId: 'report',
+              },
+            },
+          ),
+        );
+
+        closeVideoModal();
+        setActiveVideoData(null);
+      } catch (error) {
+        console.error(
+          '[SearchComponent] Failed to create report:',
+          error,
+        );
+
+        window.alert(
+          '보고서 생성에 실패했습니다.',
+        );
+      } finally {
+        setCreatingReport(false);
+      }
+    }, [
+      activeVideoData,
+      creatingReport,
+      closeVideoModal,
+      resolveAgentDisplayVideoName,
+    ]);
 
   // Search by Image hook
   const {
@@ -719,6 +831,8 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
         onSearchByImageRequest={handleSearchByImageRequest}
         searchByImageFooter={searchByImageFooterElement}
         searchByImageOverlay={searchByImageOverlayElement}
+        onCreateReport={handleCreateReportFromActiveVideo}
+        creatingReport={creatingReport}
       />
     </div>
   );

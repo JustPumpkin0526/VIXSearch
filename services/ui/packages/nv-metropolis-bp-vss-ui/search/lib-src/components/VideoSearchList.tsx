@@ -12,36 +12,6 @@ import { Whisper, Tooltip } from 'rsuite';
 import { SearchData, QueryDataContext } from '../types';
 import { formatTime, parseDateAsLocal } from '../utils/Formatter';
 
-const REPORTS_UPDATED_EVENT = 'vss:reports-updated';
-const OPEN_REPORT_TAB_EVENT = 'vss:open-report-tab';
-
-type GeneratedReportItem = {
-  id: string;
-  title: string;
-  createdAt: string;
-  query?: string;
-  description?: string;
-  content?: string;
-  items: Array<{
-    id: string;
-    videoName: string;
-    description: string;
-    startTime: string;
-    endTime: string;
-    sensorId: string;
-    similarity: number;
-    screenshotUrl: string;
-  }>;
-};
-
-type ContextMenuState =
-  | {
-      x: number;
-      y: number;
-      targetKey: string;
-    }
-  | null;
-
 const AddContextButton: React.FC<{
   item: SearchData;
   displayVideoName: string;
@@ -155,21 +125,6 @@ function getResultKey(item: SearchData): string {
     item.end_time ?? '',
     item.video_name ?? '',
   ].join('::');
-}
-
-function getAuthHeaders(): HeadersInit {
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-  };
-
-  if (typeof window !== 'undefined') {
-    const token = window.localStorage.getItem('vss.auth.token');
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-  }
-
-  return headers;
 }
 
 export type UploadedVideoMetadata = {
@@ -321,127 +276,6 @@ function getDisplayDescription(description?: string | null): string | null {
   return text;
 }
 
-function buildReportTitle(items: SearchData[]): string {
-  if (items.length <= 1) {
-    return `${items[0]?.video_name ?? '검색 결과'} 보고서`;
-  }
-
-  return `${items[0]?.video_name ?? '검색 결과'} 외 ${
-    items.length - 1
-  }건 보고서`;
-}
-
-function toReportItems(items: SearchData[]): GeneratedReportItem['items'] {
-  return items.map((item) => ({
-    id: getResultKey(item),
-    videoName: item.video_name,
-    description: getDisplayDescription(item.description) ?? '',
-    startTime: item.start_time,
-    endTime: item.end_time,
-    sensorId: item.sensor_id,
-    similarity: item.similarity,
-    screenshotUrl: item.screenshot_url,
-  }));
-}
-
-function mergeReportItems(
-  existingItems: GeneratedReportItem['items'],
-  newItems: GeneratedReportItem['items'],
-): GeneratedReportItem['items'] {
-  const merged = new Map<string, GeneratedReportItem['items'][number]>();
-
-  for (const item of existingItems || []) {
-    merged.set(item.id, item);
-  }
-
-  for (const item of newItems || []) {
-    merged.set(item.id, item);
-  }
-
-  return Array.from(merged.values());
-}
-
-async function fetchExistingReports(): Promise<GeneratedReportItem[]> {
-  const response = await fetch('/api/reports', {
-    method: 'GET',
-    headers: getAuthHeaders(),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch reports: ${response.status}`);
-  }
-
-  const data = await response.json();
-  return Array.isArray(data.reports) ? data.reports : [];
-}
-
-async function createNewReportFromItems(
-  items: SearchData[],
-  userQuery?: string,
-): Promise<GeneratedReportItem | null> {
-  if (typeof window === 'undefined' || items.length === 0) {
-    return null;
-  }
-
-  const report: GeneratedReportItem = {
-    id: `report-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    title: buildReportTitle(items),
-    createdAt: new Date().toISOString(),
-    query: userQuery?.trim() || undefined,
-    items: toReportItems(items),
-  };
-
-  const response = await fetch('/api/reports', {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(report),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to save report: ${response.status}`);
-  }
-
-  window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
-  window.dispatchEvent(
-    new CustomEvent(OPEN_REPORT_TAB_EVENT, {
-      detail: { tabId: 'report' },
-    }),
-  );
-
-  return report;
-}
-
-async function appendItemsToExistingReport(
-  report: GeneratedReportItem,
-  items: SearchData[],
-): Promise<void> {
-  if (typeof window === 'undefined' || items.length === 0) {
-    return;
-  }
-
-  const nextItems = mergeReportItems(report.items || [], toReportItems(items));
-
-  const response = await fetch('/api/reports', {
-    method: 'PATCH',
-    headers: getAuthHeaders(),
-    body: JSON.stringify({
-      ...report,
-      items: nextItems,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to update report: ${response.status}`);
-  }
-
-  window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
-  window.dispatchEvent(
-    new CustomEvent(OPEN_REPORT_TAB_EVENT, {
-      detail: { tabId: 'report' },
-    }),
-  );
-}
-
 export interface VideoSearchListProps {
   data: SearchData[];
   loading: boolean;
@@ -563,11 +397,14 @@ interface VideoCardProps {
   isDark: boolean;
   showObjectsBbox: boolean;
   displayVideoName: string;
-  selected: boolean;
-  onToggleSelection: (item: SearchData) => void;
-  onContextMenu: (event: React.MouseEvent, item: SearchData) => void;
-  onPlayVideo: (data: SearchData, showObjectsBbox: boolean) => void;
-  onAddContext?: (ctx: QueryDataContext) => void;
+  onPlayVideo: (
+    data: SearchData,
+    showObjectsBbox: boolean,
+  ) => void;
+
+  onAddContext?: (
+    ctx: QueryDataContext,
+  ) => void;
 }
 
 const VideoCard: React.FC<VideoCardProps> = ({
@@ -578,9 +415,6 @@ const VideoCard: React.FC<VideoCardProps> = ({
   displayVideoName,
   onPlayVideo,
   onAddContext,
-  selected,
-  onToggleSelection,
-  onContextMenu,
 }) => {
   const [isOpeningVideo, setIsOpeningVideo] = useState(false);
   const openingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -611,9 +445,8 @@ const VideoCard: React.FC<VideoCardProps> = ({
 
   const videoTitle = displayVideoName || item.video_name || '';
 
-  const cardBorderClass = selected
-  ? 'border-2 border-[#76b900] dark:border-[#76b900]'
-  : item.critic_result?.result === 'confirmed'
+  const cardBorderClass =
+  item.critic_result?.result === 'confirmed'
     ? 'border border-green-500 dark:border-green-400'
     : item.critic_result?.result === 'rejected'
       ? 'border border-red-500 dark:border-red-400'
@@ -623,13 +456,8 @@ const VideoCard: React.FC<VideoCardProps> = ({
 
   return (
     <div
-      onClick={() => onToggleSelection(item)}
-      onContextMenu={(event) =>
-        onContextMenu(event, item)
-      }
       data-testid="search-result-card"
       key={`${videoTitle}-${index}`}
-      aria-selected={selected}
       className={`
         rounded-lg
         overflow-hidden
@@ -812,11 +640,6 @@ export const VideoSearchList:
     showObjectsBbox = false,
     onAddContext,
   }) => {
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
-  const [creatingReport, setCreatingReport] = useState(false);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
-  const [existingReports, setExistingReports] = useState<GeneratedReportItem[]>([]);
-  const [loadingReports, setLoadingReports] = useState(false);
 
   const filenameLookup =
     useMemo(
@@ -826,15 +649,7 @@ export const VideoSearchList:
         ),
       [uploadedVideos],
     );
-
-  const toDisplaySearchItem = useCallback(
-    (item: SearchData): SearchData => ({
-      ...item,
-      video_name: resolveDisplayVideoName(item, filenameLookup),
-    }),
-    [filenameLookup],
-  );
-
+    
   const visibleData = useMemo(
     () => data.filter(shouldDisplaySearchClip),
     [data],
@@ -858,187 +673,6 @@ export const VideoSearchList:
     });
   }, [visibleData]);
 
-  useEffect(() => {
-    if (!contextMenu) {
-      return undefined;
-    }
-
-    const handleOutside = () => setContextMenu(null);
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setContextMenu(null);
-      }
-    };
-
-    window.addEventListener('click', handleOutside);
-    window.addEventListener('contextmenu', handleOutside);
-    window.addEventListener('keydown', handleEscape);
-
-    return () => {
-      window.removeEventListener('click', handleOutside);
-      window.removeEventListener('contextmenu', handleOutside);
-      window.removeEventListener('keydown', handleEscape);
-    };
-  }, [contextMenu]);
-
-  useEffect(() => {
-    if (!contextMenu) {
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadReports() {
-      setLoadingReports(true);
-      try {
-        const reports = await fetchExistingReports();
-        if (!cancelled) {
-          setExistingReports(reports);
-        }
-      } catch (error) {
-        console.warn('[VideoSearchList] Failed to fetch existing reports:', error);
-        if (!cancelled) {
-          setExistingReports([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingReports(false);
-        }
-      }
-    }
-
-    loadReports();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [contextMenu]);
-
-  useEffect(() => {
-    setSelectedKeys((prev) => {
-      const validKeys = new Set(visibleData.map((item) => getResultKey(item)));
-      const next = new Set(Array.from(prev).filter((key) => validKeys.has(key)));
-      return next.size === prev.size ? prev : next;
-    });
-  }, [visibleData]);
-
-  const handleContextMenu = useCallback(
-    (event: React.MouseEvent, item: SearchData) => {
-      event.preventDefault();
-      event.stopPropagation();
-    
-      const key = getResultKey(item);
-    
-      setSelectedKeys((prev) => {
-        if (prev.has(key)) {
-          return prev;
-        }
-      
-        return new Set([key]);
-      });
-    
-      setContextMenu({
-        x: event.clientX,
-        y: event.clientY,
-        targetKey: key,
-      });
-    },
-    [],
-  );
-
-  const selectedItems = useMemo(() => {
-    if (selectedKeys.size === 0) {
-      return [];
-    }
-
-    return sortedData.filter((item) => selectedKeys.has(getResultKey(item)));
-  }, [sortedData, selectedKeys]);
-
-  const toggleSelection = useCallback((item: SearchData) => {
-    const key = getResultKey(item);
-
-    setSelectedKeys((prev) => {
-      const next = new Set(prev);
-
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-
-      return next;
-    });
-  }, []);
-
-  const getContextTargetItems = useCallback((): SearchData[] => {
-    if (selectedItems.length > 0) {
-      return selectedItems;
-    }
-
-    if (!contextMenu?.targetKey) {
-      return [];
-    }
-
-    return sortedData.filter((item) => getResultKey(item) === contextMenu.targetKey);
-  }, [contextMenu?.targetKey, selectedItems, sortedData]);
-
-  const handleCreateNewReport = useCallback(async () => {
-    if (creatingReport) {
-      return;
-    }
-
-    const targetItems = getContextTargetItems();
-
-    if (targetItems.length === 0) {
-      setContextMenu(null);
-      return;
-    }
-
-    setCreatingReport(true);
-
-    try {
-      await createNewReportFromItems(targetItems.map(toDisplaySearchItem));
-    } catch (error) {
-      console.error('Failed to create report:', error);
-      if (typeof window !== 'undefined') {
-        window.alert('보고서 생성에 실패했습니다.');
-      }
-    } finally {
-      setCreatingReport(false);
-      setContextMenu(null);
-    }
-  }, [creatingReport, getContextTargetItems]);
-
-  const handleAppendToReport = useCallback(
-    async (report: GeneratedReportItem) => {
-      if (creatingReport) {
-        return;
-      }
-
-      const targetItems = getContextTargetItems();
-
-      if (targetItems.length === 0) {
-        setContextMenu(null);
-        return;
-      }
-
-      setCreatingReport(true);
-
-      try {
-        await appendItemsToExistingReport(report, targetItems.map(toDisplaySearchItem));
-      } catch (error) {
-        console.error('Failed to append report:', error);
-        if (typeof window !== 'undefined') {
-          window.alert('기존 보고서에 클립을 추가하지 못했습니다.');
-        }
-      } finally {
-        setCreatingReport(false);
-        setContextMenu(null);
-      }
-    },
-    [creatingReport, getContextTargetItems, toDisplaySearchItem],
-  );
-
   if (loading) {
     return <EmptyState isDark={isDark} />;
   }
@@ -1052,147 +686,31 @@ export const VideoSearchList:
   }
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-neutral-900">
-        <div className="text-sm text-gray-600 dark:text-gray-300">
-          {selectedKeys.size > 0
-            ? `${selectedKeys.size}개 클립 선택됨`
-            : '리포트로 만들 클립을 선택하세요'}
-        </div>
-
-        <button
-          type="button"
-          disabled={selectedItems.length === 0 || creatingReport}
-          onClick={handleCreateNewReport}
-          className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {creatingReport ? '보고서 생성 중...' : '선택 클립으로 보고서 생성'}
-        </button>
-      </div>
-
+    <div className="p-4">
       <div
         data-testid="search-results-grid"
         className="grid gap-4 grid-cols-[repeat(auto-fill,280px)] justify-start"
       >
         {sortedData.map((item, index) => {
           const key = getResultKey(item);
-          const selected = selectedKeys.has(key);
-                
+
           return (
-            <div
+            <VideoCard
               key={key}
-              className={
-                selected ? 'rounded-xl ring-2 ring-green-500' : 'rounded-xl'
-              }
-            >
-              <label className="mb-2 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
-                <input
-                  type="checkbox"
-                  checked={selected}
-                  onChange={() => toggleSelection(item)}
-                  onClick={(event) => event.stopPropagation()}
-                />
-                리포트에 포함
-              </label>
-            
-              <VideoCard
-                item={item}
-                index={index}
-                isDark={isDark}
-                showObjectsBbox={showObjectsBbox}
-                displayVideoName={resolveDisplayVideoName(item, filenameLookup)}
-                selected={selected}
-                onToggleSelection={toggleSelection}
-                onContextMenu={handleContextMenu}
-                onPlayVideo={onPlayVideo}
-                onAddContext={onAddContext}
-              />
-            </div>
+              item={item}
+              index={index}
+              isDark={isDark}
+              showObjectsBbox={showObjectsBbox}
+              displayVideoName={resolveDisplayVideoName(
+                item,
+                filenameLookup,
+              )}
+              onPlayVideo={onPlayVideo}
+              onAddContext={onAddContext}
+            />
           );
         })}
       </div>
-      {contextMenu && (
-        <div
-          className={`fixed z-[9999] min-w-[260px] rounded-lg border p-2 shadow-xl ${
-            isDark
-              ? 'border-gray-700 bg-gray-900 text-white'
-              : 'border-gray-200 bg-white text-gray-900'
-          }`}
-          style={{
-            left: contextMenu.x,
-            top: contextMenu.y,
-          }}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => event.preventDefault()}
-        >
-          <div
-            className={`px-3 py-2 text-xs ${
-              isDark ? 'text-gray-400' : 'text-gray-500'
-            }`}
-          >
-            {getContextTargetItems().length}개 클립 선택됨
-          </div>
-
-          <button
-            type="button"
-            className={`w-full rounded px-3 py-2 text-left text-sm ${
-              isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
-            }`}
-            disabled={creatingReport}
-            onClick={handleCreateNewReport}
-          >
-            {creatingReport ? '생성 중...' : '신규 보고서 생성'}
-          </button>
-
-          <div
-            className={`my-1 border-t ${
-              isDark ? 'border-gray-700' : 'border-gray-200'
-            }`}
-          />
-
-          <div
-            className={`px-3 py-2 text-xs ${
-              isDark ? 'text-gray-400' : 'text-gray-500'
-            }`}
-          >
-            기존 보고서에 추가
-          </div>
-
-          {loadingReports ? (
-            <div className="px-3 py-2 text-sm">
-              보고서 목록 불러오는 중...
-            </div>
-          ) : existingReports.length === 0 ? (
-            <div className="px-3 py-2 text-sm text-gray-500">
-              기존 보고서가 없습니다
-            </div>
-          ) : (
-            <div className="max-h-56 overflow-y-auto">
-              {existingReports.map((report) => (
-                <button
-                  key={report.id}
-                  type="button"
-                  className={`w-full rounded px-3 py-2 text-left text-sm ${
-                    isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
-                  }`}
-                  disabled={creatingReport}
-                  onClick={() => handleAppendToReport(report)}
-                  title={report.title}
-                >
-                  <div className="truncate">{report.title}</div>
-                  <div
-                    className={`text-xs ${
-                      isDark ? 'text-gray-500' : 'text-gray-400'
-                    }`}
-                  >
-                    {report.items?.length ?? 0}개 클립
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 };
