@@ -126,43 +126,6 @@ interface VideoGroupsApiResponse {
   error?: unknown;
 }
 
-function formatVideoDuration(
-  durationSeconds: number,
-): string {
-  const totalSeconds = Math.max(
-    0,
-    Math.floor(durationSeconds),
-  );
-
-  const hours = Math.floor(
-    totalSeconds / 3600,
-  );
-
-  const minutes = Math.floor(
-    (totalSeconds % 3600) / 60,
-  );
-
-  const seconds =
-    totalSeconds % 60;
-
-  if (hours > 0) {
-    return (
-      `${hours}시간 ` +
-      `${minutes}분 ` +
-      `${seconds}초`
-    );
-  }
-
-  if (minutes > 0) {
-    return (
-      `${minutes}분 ` +
-      `${seconds}초`
-    );
-  }
-
-  return `${seconds}초`;
-}
-
 interface Props {
   onSend: (
     message: Message,
@@ -1019,64 +982,40 @@ export const ChatInput = ({
         }`}
     >
       <div className="stretch mx-auto mt-4 flex flex-col gap-2 last:mb-2 md:mt-[52px] w-full max-w-[95%] pointer-events-auto">
-        {selectedVideoGroup && selectedVideoGroup && (
-          <div
-            className={[
-              'mx-2 flex items-center justify-between gap-4',
-              'rounded-md border border-cyan-500/40',
-              'bg-cyan-50 px-4 py-3',
-              'text-gray-900 shadow-sm',
-              'dark:bg-neutral-900 dark:text-gray-100',
-              'sm:mx-4',
-            ].join(' ')}
-          >
-            <div className="min-w-0">
-              <div className="text-xs font-medium text-cyan-700 dark:text-cyan-300">
-                선택된 검색 그룹
-              </div>
-          
-              <div
-                className="truncate text-sm font-semibold"
-                title={
-                  selectedVideoGroup.groupName
-                }
+        {selectedVideoGroup && (
+          <div className="mx-2 flex items-center sm:mx-4">
+            <div className="inline-flex max-w-full items-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm dark:border-neutral-700 dark:bg-neutral-900 dark:text-gray-100">
+              <span className="text-sm font-medium text-neutral-500 dark:text-neutral-400">
+                Search scope
+              </span>
+
+              <IconFolder
+                size={16}
+                className="shrink-0 text-[#76b900]"
+              />
+
+              <span
+                className="max-w-[220px] truncate text-base font-semibold"
+                title={selectedVideoGroup.groupName}
               >
                 {selectedVideoGroup.groupName}
-              </div>
-            </div>
-              
-            <div className="flex shrink-0 items-center gap-3 text-xs">
-              <span>
-                영상{' '}
-                {selectedVideoGroup.videoCount}개
+              </span>
+
+              <span className="whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
+                {selectedVideoGroup.videoCount} videos
               </span>
               
-              {selectedVideoGroup.totalDurationSeconds > 0 && (
-                <span>
-                  총 길이{' '}
-                  {formatVideoDuration(
-                    selectedVideoGroup.totalDurationSeconds,
-                  )}
-                </span>
+              {onClearSelectedVideoGroup && (
+                <button
+                  type="button"
+                  onClick={onClearSelectedVideoGroup}
+                  className="ml-1 flex h-6 w-6 items-center justify-center rounded text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-700 dark:hover:text-neutral-100"
+                  aria-label="그룹 검색 해제"
+                  title="그룹 검색 해제"
+                >
+                  <IconX size={14} />
+                </button>
               )}
-              
-              <button
-                type="button"
-                onClick={
-                  onClearSelectedVideoGroup
-                }
-                className={[
-                  'rounded p-1',
-                  'text-gray-500',
-                  'hover:bg-gray-200',
-                  'dark:text-gray-300',
-                  'dark:hover:bg-neutral-700',
-                ].join(' ')}
-                aria-label="그룹 검색 해제"
-                title="그룹 검색 해제"
-              >
-                <IconX size={16} />
-              </button>
             </div>
           </div>
         )}
@@ -1283,7 +1222,8 @@ export const ChatInput = ({
                   </button>
                   
                   {showGroupSelector && (
-                      <div className="absolute bottom-9 left-0 z-50 w-72 overflow-hidden rounded-md border border-neutral-200 bg-white shadow-xl dark:border-neutral-700 dark:bg-neutral-900 sm:w-80">                      <div className="flex items-center justify-between border-b border-neutral-200 px-3 py-2 dark:border-neutral-700">
+                    <div className="absolute bottom-9 left-0 z-50 w-72 overflow-hidden rounded-md border border-neutral-200 bg-white shadow-xl dark:border-neutral-700 dark:bg-neutral-900 sm:w-80">                      
+                      <div className="flex items-center justify-between border-b border-neutral-200 px-3 py-2 dark:border-neutral-700">
                         <span className="text-sm font-semibold">검색 그룹 선택</span>
                         <button
                           type="button"
@@ -1341,8 +1281,7 @@ export const ChatInput = ({
                         {!groupLoading &&
                           !groupError &&
                           videoGroups.map(group => {
-                            const selected =
-                              selectedVideoGroup?.groupId === group.id;
+                            const selected = selectedVideoGroup?.groupId === group.id;
                           
                             return (
                               <button
@@ -1351,7 +1290,7 @@ export const ChatInput = ({
                                 onClick={() => handleSelectGroup(group)}
                                 className={`mb-1 w-full rounded-md px-3 py-2 text-left ${
                                   selected
-                                    ? 'bg-[#76b900]/10 text-[#5d9200]'
+                                    ? 'bg-[#76b900]/10 font-semibold text-[#5d9200] ring-1 ring-inset ring-[#76b900]/30'
                                     : 'hover:bg-neutral-100 dark:hover:bg-neutral-800'
                                 }`}
                               >
