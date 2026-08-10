@@ -25,6 +25,7 @@ export type ReportSceneItem = {
   endTime: string;
   sensorId: string;
   similarity: number;
+  pauseTime?: number;
   screenshotUrl: string;
 };
 
@@ -91,6 +92,7 @@ function normalizeStoredReports(input: unknown): ReportListItem[] {
           endTime?: unknown;
           sensorId?: unknown;
           similarity?: unknown;
+          pauseTime?: unknown;
           screenshotUrl?: unknown;
         }>;
       };
@@ -125,8 +127,13 @@ function normalizeStoredReports(input: unknown): ReportListItem[] {
               sensorId: typeof item?.sensorId === 'string' ? item.sensorId : '',
               similarity: typeof item?.similarity === 'number' ? item.similarity : 0,
               screenshotUrl: typeof item?.screenshotUrl === 'string' ? item.screenshotUrl : '',
+              pauseTime:
+                typeof item?.pauseTime === 'number'
+                  ? item.pauseTime
+                  : undefined,
             }))
           : [],
+          
       };
     })
     .filter((report): report is ReportListItem => report !== null);
@@ -683,10 +690,17 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                   <p className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
                     {selectedReport?.title || '리포트를 선택하세요'}
                   </p>
-                  {selectedReport?.createdAt ? (
-                    <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">
-                      {formatCreatedAt(selectedReport.createdAt)}
-                    </p>
+                  {selectedReport ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-neutral-400">
+                      <span>{formatCreatedAt(selectedReport.createdAt)}</span>
+
+                      {selectedReport.author ? (
+                        <>
+                          <span>·</span>
+                          <span>{selectedReport.author}</span>
+                        </>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               </div>
@@ -765,7 +779,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
 
                 <div className="mt-4 flex items-center justify-between text-xs text-gray-500 dark:text-neutral-400">
                   <span>리포트 미리보기</span>
-                  <span>{selectedReport.wordCount ?? 0} 단어</span>
+                  <span>{selectedReport.items?.length ?? 0}개 장면</span>
                 </div>
               </>
             )}
@@ -859,7 +873,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                       ) : null}
                       <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-neutral-400">
                         <span>{formatCreatedAt(report.createdAt)}</span>
-                        <span>{report.wordCount ?? 0} 단어</span>
+                        <span>{report.items?.length ?? 0}개 장면</span>
                       </div>
                     </div>
                     <div className="relative flex items-start">

@@ -382,10 +382,15 @@ export const SearchVideoModal:
       ]);
 
     const capturePausedFrame = useCallback(() => {
-      if (!videoElement || !paused) {
+      if (
+        !videoElement ||
+        !paused ||
+        !videoElement.videoWidth ||
+        !videoElement.videoHeight
+      ) {
         return '';
       }
-    
+
       const canvas = document.createElement('canvas');
       canvas.width = videoElement.videoWidth;
       canvas.height = videoElement.videoHeight;
@@ -397,7 +402,18 @@ export const SearchVideoModal:
     
       context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
     
-      return canvas.toDataURL('image/jpeg', 0.9);
+      try {
+        return canvas.toDataURL(
+          'image/jpeg',
+          0.9,
+        );
+      } catch (error) {
+        console.error(
+          '[SearchVideoModal] Failed to capture paused frame:',
+          error,
+        );
+        return '';
+      }
     }, [videoElement, paused]);
 
     const handleSubmitNewReport =

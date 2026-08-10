@@ -127,6 +127,7 @@ export const VideoModal: React.FC<VideoModalProps> = ({
               ref={videoRef}
               controls
               autoPlay
+              crossOrigin="anonymous"
               className="h-full w-full bg-black object-contain"
               onPause={(event) => {
                 onVideoPause?.(event.currentTarget.currentTime);
