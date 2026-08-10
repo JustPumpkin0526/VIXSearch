@@ -341,18 +341,11 @@ export const SearchVideoModal:
           videoUrl={videoUrl}
           title={title}
           onClose={onClose}
-          onVideoPause={
-            handleVideoPause
-          }
-          onVideoPlay={
-            handleVideoPlay
-          }
-          videoRef={
-            handleVideoRef
-          }
-          footer={
-            searchByImageFooter
-          }
+          onVideoPause={handleVideoPause}
+          onVideoPlay={handleVideoPlay}
+          videoRef={handleVideoRef}
+          footer={searchByImageFooter}
+          sidePanel={reportPanel}
         />
 
         {videoOverlayHost &&

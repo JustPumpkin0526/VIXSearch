@@ -96,7 +96,13 @@ export const VideoModal: React.FC<VideoModalProps> = ({
       }}
       className="z-50 grid place-items-center overflow-hidden backdrop:bg-black/60 backdrop:backdrop-blur-sm"
     >
-      <div className="flex h-[80vh] w-[95vw] max-w-[1500px] min-h-0 min-w-0 items-stretch gap-3">
+      <div
+        className={`flex min-h-0 min-w-0 items-stretch gap-3 ${
+          sidePanel
+            ? 'h-[80vh] w-[95vw] max-w-[1500px]'
+            : 'h-[80vh] w-[80vw] max-w-[1200px]'
+        }`}
+      >
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-neutral-900">
           <div className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4 py-3 text-black dark:border-gray-700 dark:bg-neutral-900 dark:text-white">
             <div
