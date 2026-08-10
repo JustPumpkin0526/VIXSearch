@@ -10,6 +10,7 @@ import {
   TableCell,
   TableRow,
   TextRun,
+  VerticalAlign,
   WidthType,
 } from 'docx';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
@@ -18,7 +19,7 @@ import { tmpdir } from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import fontkit from '@pdf-lib/fontkit';
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, PDFFont, PDFPage, rgb } from 'pdf-lib';
 
 const PDF_FONT_CANDIDATES = {
   regular: [
@@ -64,6 +65,11 @@ export type ReportSceneItem = {
   id: string;
   videoName: string;
   description: string;
+  startTime?: string;
+  endTime?: string;
+  sensorId?: string;
+  similarity?: number;
+  pauseTime?: number;
   screenshotUrl?: string;
 };
 
@@ -89,24 +95,6 @@ export type ReportPayload = {
 function safeText(value: string | undefined, fallback = '-'): string {
   const trimmed = String(value || '').trim();
   return trimmed || fallback;
-}
-
-function formatClock(value: string | undefined): string {
-  if (!value) {
-    return '-';
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-
-  return parsed.toLocaleTimeString('ko-KR', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
 }
 
 function formatDateTime(value: string | undefined): string {
@@ -150,6 +138,26 @@ async function fetchRemoteImage(url: string | undefined): Promise<{ bytes: Uint8
   const target = String(url || '').trim();
   if (!target) {
     return null;
+  }
+
+  if (target.startsWith('data:image/')) {
+    const match = target.match(
+      /^data:image\/(png|jpeg|jpg);base64,(.+)$/,
+    );
+
+    if (!match) {
+      return null;
+    }
+
+    return {
+      bytes: new Uint8Array(
+        Buffer.from(match[2], 'base64'),
+      ),
+      extension:
+        match[1] === 'png'
+          ? 'png'
+          : 'jpg',
+    };
   }
 
   try {
@@ -227,55 +235,179 @@ function buildInfoTable(report: ReportPayload): Table {
   });
 }
 
-async function buildWordSceneBlocks(report: ReportPayload): Promise<Array<Paragraph>> {
-  const blocks: Paragraph[] = [];
-
-  for (const [index, item] of report.items.entries()) {
-    blocks.push(
-      new Paragraph({
-        spacing: { before: index === 0 ? 120 : 200, after: 80 },
-        indent: { left: 280 },
-        alignment: AlignmentType.LEFT,
-        children: [
-          new TextRun({ text: `[${index + 1}] `, bold: true, size: 24 }),
-          new TextRun({ text: safeText(item.videoName, `clip_${index + 1}`), bold: true, size: 24 }),
-          new TextRun({ text: ` (시간: ${formatClock(item.startTime)} - ${formatClock(item.endTime)})`, size: 22 }),
-        ],
-      }),
-    );
-
-    const image = await fetchRemoteImage(item.screenshotUrl);
-    if (image) {
-      blocks.push(
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { before: 40, after: 80 },
+async function buildWordSceneTable(
+  report: ReportPayload,
+): Promise<Table> {
+  const rows: TableRow[] = [
+    new TableRow({
+      children: [
+        new TableCell({
+          width: {
+            size: 12,
+            type: WidthType.PERCENTAGE,
+          },
+          shading: {
+            fill: 'E9EEF5',
+          },
           children: [
-            new ImageRun({
-              data: image.bytes,
-              transformation: { width: 420, height: 236 },
-              type: image.extension,
+            new Paragraph({
+              alignment:
+                AlignmentType.CENTER,
+              children: [
+                new TextRun({
+                  text: 'ID',
+                  bold: true,
+                  size: 22,
+                }),
+              ],
             }),
           ],
         }),
-      );
-    }
+        new TableCell({
+          width: {
+            size: 88,
+            type: WidthType.PERCENTAGE,
+          },
+          shading: {
+            fill: 'E9EEF5',
+          },
+          children: [
+            new Paragraph({
+              alignment:
+                AlignmentType.CENTER,
+              children: [
+                new TextRun({
+                  text: '결과 장면',
+                  bold: true,
+                  size: 22,
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    }),
+  ];
 
-    blocks.push(
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        spacing: { before: 20, after: 80 },
-        indent: { left: 420, right: 420 },
-        children: [new TextRun({ text: safeText(item.description, safeText(report.content, '설명 없음')), size: 22 })],
+  for (
+    const [index, item]
+    of report.items.entries()
+  ) {
+    const image =
+      await fetchRemoteImage(
+        item.screenshotUrl,
+      );
+
+    const imageChildren = image
+      ? [
+          new Paragraph({
+            alignment:
+              AlignmentType.CENTER,
+            children: [
+              new ImageRun({
+                data: image.bytes,
+                transformation: {
+                  width: 420,
+                  height: 236,
+                },
+                type: image.extension,
+              }),
+            ],
+          }),
+        ]
+      : [
+          new Paragraph({
+            alignment:
+              AlignmentType.CENTER,
+            children: [
+              new TextRun({
+                text:
+                  '이미지를 불러올 수 없습니다.',
+                size: 20,
+              }),
+            ],
+          }),
+        ];
+
+    rows.push(
+      new TableRow({
+        children: [
+          new TableCell({
+            width: {
+              size: 12,
+              type:
+                WidthType.PERCENTAGE,
+            },
+            verticalAlign: VerticalAlign.CENTER,
+            children: [
+              new Paragraph({
+                alignment:
+                  AlignmentType.CENTER,
+                children: [
+                  new TextRun({
+                    text: String(
+                      index + 1,
+                    ).padStart(2, '0'),
+                    bold: true,
+                    size: 22,
+                  }),
+                ],
+              }),
+            ],
+          }),
+
+          new TableCell({
+            width: {
+              size: 88,
+              type:
+                WidthType.PERCENTAGE,
+            },
+            children: imageChildren,
+          }),
+        ],
       }),
     );
-
-    if (index < report.items.length - 1) {
-      blocks.push(paragraphDivider());
-    }
   }
 
-  return blocks;
+  return new Table({
+    width: {
+      size: 100,
+      type: WidthType.PERCENTAGE,
+    },
+    rows,
+    borders: {
+      top: {
+        style: BorderStyle.SINGLE,
+        size: 1,
+        color: 'C8D1DC',
+      },
+      bottom: {
+        style: BorderStyle.SINGLE,
+        size: 1,
+        color: 'C8D1DC',
+      },
+      left: {
+        style: BorderStyle.SINGLE,
+        size: 1,
+        color: 'C8D1DC',
+      },
+      right: {
+        style: BorderStyle.SINGLE,
+        size: 1,
+        color: 'C8D1DC',
+      },
+      insideHorizontal: {
+        style: BorderStyle.SINGLE,
+        size: 1,
+        color: 'C8D1DC',
+      },
+      insideVertical: {
+        style: BorderStyle.SINGLE,
+        size: 1,
+        color: 'C8D1DC',
+      },
+    },
+  });
 }
 
 export function createWordFileName(title: string, reportId: string): string {
@@ -371,34 +503,96 @@ export async function convertWordBufferToPdfBuffer(
 }
 
 export async function buildAccidentReportWordBuffer(report: ReportPayload): Promise<Buffer> {
-  const sceneBlocks = await buildWordSceneBlocks(report);
+  const sceneTable = await buildWordSceneTable(report);
 
   const doc = new Document({
     sections: [
       {
         children: [
           new Paragraph({
-            text: safeText(report.title, 'VSS 분석 보고서'),
+            text: 'VIXSearch Search Report',
             heading: HeadingLevel.TITLE,
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 120, after: 120 },
+            alignment:
+              AlignmentType.CENTER,
+            spacing: {
+              before: 120,
+              after: 80,
+            },
           }),
-          paragraphDivider(),
-          buildInfoTable(report),
-          paragraphDivider(),
+        
           new Paragraph({
-            spacing: { before: 40, after: 80 },
+            text: safeText(
+              report.title,
+              '검색 보고서',
+            ),
+            alignment:
+              AlignmentType.CENTER,
+            spacing: {
+              after: 120,
+            },
+          }),
+        
+          buildInfoTable(report),
+        
+          paragraphDivider(),
+        
+          new Paragraph({
             children: [
-              new TextRun({ text: '사용자 질문: ', bold: true, color: '0066CC', size: 24 }),
-              new TextRun({ text: buildReportQuestion(report), size: 22 }),
+              new TextRun({
+                text: '사용자 질문',
+                bold: true,
+                size: 24,
+              }),
             ],
           }),
-          paragraphDivider(),
+        
           new Paragraph({
-            spacing: { before: 40, after: 120 },
-            children: [new TextRun({ text: '검색 결과', bold: true, color: '0066CC', size: 24 })],
+            spacing: {
+              before: 80,
+              after: 100,
+            },
+            children: [
+              new TextRun({
+                text:
+                  buildReportQuestion(
+                    report,
+                  ),
+                size: 22,
+              }),
+            ],
           }),
-          ...sceneBlocks,
+        
+          paragraphDivider(),
+        
+          sceneTable,
+        
+          paragraphDivider(),
+        
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: '부가 설명',
+                bold: true,
+                size: 24,
+              }),
+            ],
+          }),
+        
+          new Paragraph({
+            spacing: {
+              before: 80,
+            },
+            children: [
+              new TextRun({
+                text: safeText(
+                  report.description ||
+                    report.content,
+                  '-',
+                ),
+                size: 22,
+              }),
+            ],
+          }),
         ],
       },
     ],
@@ -476,7 +670,12 @@ async function drawImageBlock(
   page: PDFPage,
   imageUrl: string | undefined,
   y: number,
-): Promise<{ page: PDFPage; y: number }> {
+  x = 110,
+  maxWidth = 420,
+): Promise<{
+  page: PDFPage;
+  y: number;
+}> {
   const image = await fetchRemoteImage(imageUrl);
   if (!image) {
     return { page, y };
@@ -486,7 +685,12 @@ async function drawImageBlock(
     const embedded = image.extension === 'png'
       ? await pdfDoc.embedPng(image.bytes)
       : await pdfDoc.embedJpg(image.bytes);
-    const scaled = embedded.scale(Math.min(1, 420 / embedded.width));
+    const scaled = embedded.scale(
+      Math.min(
+        1,
+        maxWidth / embedded.width,
+      ),
+    );
 
     let nextPage = page;
     let nextY = y;
@@ -495,12 +699,15 @@ async function drawImageBlock(
       nextY = 790;
     }
 
-    nextPage.drawImage(embedded, {
-      x: (595.28 - scaled.width) / 2,
-      y: nextY - scaled.height,
-      width: scaled.width,
-      height: scaled.height,
-    });
+    nextPage.drawImage(
+      embedded,
+      {
+        x,
+        y: nextY - scaled.height,
+        width: scaled.width,
+        height: scaled.height,
+      },
+    );
 
     return { page: nextPage, y: nextY - scaled.height - 16 };
   } catch {
@@ -566,7 +773,7 @@ export async function buildAccidentReportPdfBuffer(report: ReportPayload): Promi
   let y = 790;
   const left = 48;
   const maxWidth = 500;
-  page.drawText(safeText(report.title, 'VSS 분석 보고서'), {
+  page.drawText('VIXSearch Search Report', {
     x: 160,
     y,
     size: 20,
@@ -574,6 +781,22 @@ export async function buildAccidentReportPdfBuffer(report: ReportPayload): Promi
     color: rgb(0.07, 0.22, 0.44),
   });
   y -= 18;
+  y -= 30;
+
+  ({ page, y } = drawWrappedText(
+    pdfDoc,
+    page,
+    safeText(
+      report.title,
+      '검색 보고서',
+    ),
+    boldFont,
+    14,
+    left,
+    y,
+    maxWidth,
+    18,
+  ));
   drawDivider(page, y);
   y -= 28;
 
@@ -594,22 +817,105 @@ export async function buildAccidentReportPdfBuffer(report: ReportPayload): Promi
   y -= 16;
   drawDivider(page, y);
   y -= 28;
-
-  ({ page, y } = drawWrappedText(pdfDoc, page, '검색 결과', boldFont, 12, left, y, maxWidth, 16));
   y -= 8;
 
+  ({ page, y } = drawWrappedText(
+    pdfDoc,
+    page,
+    'ID',
+    boldFont,
+    11,
+    left,
+    y,
+    40,
+    16,
+  ));
+
+  ({ page, y } = drawWrappedText(
+    pdfDoc,
+    page,
+    '결과 장면',
+    boldFont,
+    11,
+    left + 60,
+    y + 16,
+    430,
+    16,
+  ));
+
+  y -= 12;
+  drawDivider(page, y);
+  y -= 16;
+
   for (const [index, item] of report.items.entries()) {
-    const headerText = `[${index + 1}] ${safeText(item.videoName)} (시간: ${formatClock(item.startTime)} - ${formatClock(item.endTime)})`;
-    ({ page, y } = drawWrappedText(pdfDoc, page, headerText, boldFont, 11, left + 10, y, maxWidth - 10, 15));
-    y -= 6;
-    ({ page, y } = await drawImageBlock(pdfDoc, page, item.screenshotUrl, y));
-    ({ page, y } = drawWrappedText(pdfDoc, page, safeText(item.description, safeText(report.content, '설명 없음')), regularFont, 10.5, 80, y, 440, 15));
-    y -= 10;
-    if (index < report.items.length - 1) {
-      drawDivider(page, y);
-      y -= 18;
+    if (y < 330) {
+      page =
+        pdfDoc.addPage(
+          [595.28, 841.89],
+        );
+      y = 790;
     }
+
+    page.drawText(
+      String(index + 1).padStart(
+        2,
+        '0',
+      ),
+      {
+        x: left,
+        y,
+        size: 11,
+        font: boldFont,
+      },
+    );
+
+    const imageResult = await drawImageBlock(
+      pdfDoc,
+      page,
+      item.screenshotUrl,
+      y,
+      left + 60,
+      420,
+    );
+
+    page = imageResult.page;
+    y = imageResult.y - 10;
+
+    drawDivider(page, y);
+    y -= 16;
   }
+
+  y -= 12;
+
+  ({ page, y } = drawWrappedText(
+    pdfDoc,
+    page,
+    '부가 설명',
+    boldFont,
+    12,
+    left,
+    y,
+    maxWidth,
+    16,
+  ));
+
+  y -= 6;
+
+  ({ page, y } = drawWrappedText(
+    pdfDoc,
+    page,
+    safeText(
+      report.description ||
+        report.content,
+      '-',
+    ),
+    regularFont,
+    10.5,
+    left,
+    y,
+    maxWidth,
+    15,
+  ));
 
   const bytes = await pdfDoc.save();
   return Buffer.from(bytes);

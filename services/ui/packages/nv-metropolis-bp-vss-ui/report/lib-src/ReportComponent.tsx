@@ -659,7 +659,17 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
       await deleteReportFromApi(report.id);
       setStoredReports((current) => current.filter((currentReport) => currentReport.id !== report.id));
       setOpenReportMenuId((current) => (current === report.id ? null : current));
-      window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
+      window.dispatchEvent(
+        new CustomEvent(
+          OPEN_REPORT_TAB_EVENT,
+          {
+            detail: {
+              tabId: 'report',
+              reportId: report.id,
+            },
+          },
+        ),
+      );
     } catch (error) {
       window.alert(error instanceof Error ? error.message : '보고서를 삭제하지 못했습니다.');
     } finally {
