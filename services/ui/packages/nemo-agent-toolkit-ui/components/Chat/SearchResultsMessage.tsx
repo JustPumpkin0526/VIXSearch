@@ -685,30 +685,105 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
   ]);
 
   const handleCreateReport = React.useCallback(async () => {
-    if (
-      !activeVideoData ||
-      creatingReport
-    ) {
+    if (!activeVideoData || creatingReport) {
       return;
     }
-
+  
     setCreatingReport(true);
-
+  
     try {
-      console.log('[SearchResultsMessage] Create report', {activeVideoData});
-
-      // 실제 보고서 API 호출
+      const token = window.localStorage.getItem('vss.auth.token');
+    
+      if (!token) {
+        throw new Error('Authentication token is missing');
+      }
+    
+      const displayVideoName =
+        sensorIdToNameMap.get(activeVideoData.sensor_id) ||
+        activeVideoData.video_name ||
+        '검색 결과';
+    
+      const reportId = `report-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      
+      const report = {
+        id: reportId,
+        title: `${displayVideoName} 보고서`,
+        createdAt: new Date().toISOString(),
+        items: [
+          {
+            id: [
+              activeVideoData.sensor_id ?? '',
+              activeVideoData.start_time ?? '',
+              activeVideoData.end_time ?? '',
+              activeVideoData.video_name ?? '',
+            ].join('::'),
+            videoName: displayVideoName,
+            description: activeVideoData.description?.trim() ?? '',
+            startTime: activeVideoData.start_time ?? '',
+            endTime: activeVideoData.end_time ?? '',
+            sensorId: activeVideoData.sensor_id ?? '',
+            similarity: activeVideoData.similarity ?? 0,
+            screenshotUrl: activeVideoData.screenshot_url ?? '',
+          },
+        ],
+      };
+    
+      const response = await fetch('/api/reports', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(report),
+      });
+    
+      if (!response.ok) {
+        const errorText = await response.text();
+      
+        throw new Error(
+          `Failed to create report: ${response.status} ${errorText}`,
+        );
+      }
+    
+      const result = await response.json();
+    
+      console.log(
+        '[SearchResultsMessage] Report created:',
+        result,
+      );
+    
+      window.dispatchEvent(
+        new CustomEvent(REPORTS_UPDATED_EVENT),
+      );
+    
+      window.dispatchEvent(
+        new CustomEvent(OPEN_REPORT_TAB_EVENT, {
+          detail: {
+            tabId: 'report',
+            reportId,
+          },
+        }),
+      );
+    
+      closeVideoModal();
+      setActiveVideoData(null);
     } catch (error) {
       console.error(
         '[SearchResultsMessage] Failed to create report:',
         error,
       );
+    
+      window.alert('보고서 생성에 실패했습니다.');
     } finally {
       setCreatingReport(false);
     }
   }, [
     activeVideoData,
     creatingReport,
+    sensorIdToNameMap,
+    closeVideoModal,
   ]);
 
   const handleRefresh = React.useCallback(() => {
