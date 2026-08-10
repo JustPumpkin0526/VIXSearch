@@ -163,11 +163,6 @@ export const SearchVideoModal:
     ] = useState(false);
 
     const [
-      showNewReportForm,
-      setShowNewReportForm,
-    ] = useState(false);
-
-    const [
       reportTitle,
       setReportTitle,
     ] = useState('');
@@ -191,8 +186,8 @@ export const SearchVideoModal:
         ) => {
           event.stopPropagation();
 
-          const menuWidth = 340;
-          const menuHeight = 380;
+          const menuWidth = 240;
+          const menuHeight = 280;
           const padding = 8;
 
           const x = Math.min(
@@ -210,7 +205,6 @@ export const SearchVideoModal:
           );
 
           setShowExistingReports(false);
-          setShowNewReportForm(false);
 
           setReportMenuPosition({
             x: Math.max(padding, x),
@@ -225,7 +219,6 @@ export const SearchVideoModal:
       useCallback(() => {
         setReportMenuPosition(null);
         setShowExistingReports(false);
-        setShowNewReportForm(false);
       }, []);
 
 
@@ -291,7 +284,6 @@ export const SearchVideoModal:
 
       setReportMenuPosition(null);
       setShowExistingReports(false);
-      setShowNewReportForm(false);
 
       setReportTitle('');
       setReportCreatedAt('');
@@ -300,7 +292,6 @@ export const SearchVideoModal:
       isOpen,
       videoUrl,
     ]);
-
 
     useEffect(() => {
       if (!videoElement) {
@@ -328,29 +319,40 @@ export const SearchVideoModal:
     ]);
 
 
-    const handleVideoPause =
-      useCallback(
-        (
-          currentTime: number,
-        ) => {
-          setPaused(true);
-          setPauseTime(currentTime);
-
-          setReportCreatedAt(
-            formatReportDate(
-              new Date(),
-            ),
+    const handleVideoPause = useCallback(
+      (
+        currentTime: number,
+      ) => {
+        setPaused(true);
+        setPauseTime(currentTime);
+      
+        if (!reportTitle.trim()) {
+          setReportTitle(
+            typeof title === 'string'
+              ? `${title} 보고서`
+              : '검색 결과 보고서',
           );
-
+        }
+      
+        setReportCreatedAt(
+          formatReportDate(
+            new Date(),
+          ),
+        );
+      
+        if (!reportAuthor.trim()) {
           setReportAuthor(
             defaultReportAuthor,
           );
-        },
-        [
-          defaultReportAuthor,
-        ],
-      );
-
+        }
+      },
+      [
+        title,
+        reportTitle,
+        reportAuthor,
+        defaultReportAuthor,
+      ],
+    );
 
     const handleVideoPlay =
       useCallback(() => {
@@ -363,7 +365,6 @@ export const SearchVideoModal:
 
     const handleShowExistingReports =
       useCallback(async () => {
-        setShowNewReportForm(false);
         setShowExistingReports(true);
 
         try {
@@ -377,25 +378,6 @@ export const SearchVideoModal:
       }, [
         onLoadExistingReports,
       ]);
-
-
-    const handleCreateNewReport =
-      useCallback(() => {
-        if (!reportTitle.trim()) {
-          setReportTitle(
-            typeof title === 'string'
-              ? `${title} 보고서`
-              : '검색 결과 보고서',
-          );
-        }
-
-        setShowExistingReports(false);
-        setShowNewReportForm(true);
-      }, [
-        reportTitle,
-        title,
-      ]);
-
 
     const handleSubmitNewReport =
       useCallback(async () => {
@@ -512,15 +494,17 @@ export const SearchVideoModal:
         <div
           data-testid="search-report-panel"
           className="
-            w-[260px]
+            flex
+            h-full
+            w-[320px]
             shrink-0
+            flex-col
             overflow-hidden
             rounded-xl
             border
             border-gray-300
             bg-white
             shadow-2xl
-
             dark:border-gray-700
             dark:bg-neutral-900
           "
@@ -550,8 +534,11 @@ export const SearchVideoModal:
           <div
             className="
               flex
+              min-h-0
+              flex-1
               flex-col
               gap-4
+              overflow-y-auto
               p-4
             "
           >
@@ -580,11 +567,152 @@ export const SearchVideoModal:
                 )}
               </div>
             </div>
-
+              
+            <div>
+              <label
+                className="
+                  mb-1
+                  block
+                  text-sm
+                  font-medium
+                  text-gray-700
+                  dark:text-gray-300
+                "
+              >
+                보고서 제목
+              </label>
+              
+              <input
+                type="text"
+                value={reportTitle}
+                onChange={event =>
+                  setReportTitle(
+                    event.target.value,
+                  )
+                }
+                disabled={creatingReport}
+                className="
+                  w-full
+                  rounded-md
+                  border
+                  border-gray-300
+                  bg-white
+                  px-3
+                  py-2
+                  text-sm
+                  text-gray-900
+                  outline-none
+                  focus:border-[#76b900]
+              
+                  disabled:cursor-not-allowed
+                  disabled:opacity-60
+              
+                  dark:border-gray-700
+                  dark:bg-neutral-800
+                  dark:text-gray-100
+                "
+              />
+            </div>
+              
+            <div>
+              <label
+                className="
+                  mb-1
+                  block
+                  text-sm
+                  font-medium
+                  text-gray-700
+                  dark:text-gray-300
+                "
+              >
+                작성 일시
+              </label>
+              
+              <input
+                type="text"
+                value={reportCreatedAt}
+                onChange={event =>
+                  setReportCreatedAt(
+                    event.target.value,
+                  )
+                }
+                disabled={creatingReport}
+                className="
+                  w-full
+                  rounded-md
+                  border
+                  border-gray-300
+                  bg-white
+                  px-3
+                  py-2
+                  text-sm
+                  text-gray-900
+                  outline-none
+                  focus:border-[#76b900]
+              
+                  disabled:cursor-not-allowed
+                  disabled:opacity-60
+              
+                  dark:border-gray-700
+                  dark:bg-neutral-800
+                  dark:text-gray-100
+                "
+              />
+            </div>
+              
+            <div>
+              <label
+                className="
+                  mb-1
+                  block
+                  text-sm
+                  font-medium
+                  text-gray-700
+                  dark:text-gray-300
+                "
+              >
+                작성자
+              </label>
+              
+              <input
+                type="text"
+                value={reportAuthor}
+                onChange={event =>
+                  setReportAuthor(
+                    event.target.value,
+                  )
+                }
+                disabled={creatingReport}
+                className="
+                  w-full
+                  rounded-md
+                  border
+                  border-gray-300
+                  bg-white
+                  px-3
+                  py-2
+                  text-sm
+                  text-gray-900
+                  outline-none
+                  focus:border-[#76b900]
+              
+                  disabled:cursor-not-allowed
+                  disabled:opacity-60
+              
+                  dark:border-gray-700
+                  dark:bg-neutral-800
+                  dark:text-gray-100
+                "
+              />
+            </div>
+              
             <button
               type="button"
               disabled={
-                creatingReport
+                creatingReport ||
+                !reportTitle.trim() ||
+                !reportCreatedAt.trim() ||
+                !reportAuthor.trim()
               }
               onClick={
                 handleReportMenuOpen
@@ -615,7 +743,7 @@ export const SearchVideoModal:
                 className="
                   fixed
                   z-[200]
-                  w-[340px]
+                  w-[240px]
                   overflow-hidden
                   rounded-lg
                   border
@@ -637,220 +765,7 @@ export const SearchVideoModal:
                     event.stopPropagation()
                 }
               >
-                {showNewReportForm ? (
-                  <div className="p-3">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setShowNewReportForm(
-                          false,
-                        )
-                      }
-                      disabled={
-                        creatingReport
-                      }
-                      className="
-                        mb-3
-                        text-xs
-                        text-gray-500
-                        hover:text-gray-900
-
-                        disabled:cursor-not-allowed
-                        disabled:opacity-50
-
-                        dark:text-gray-400
-                        dark:hover:text-gray-100
-                      "
-                    >
-                      ← 뒤로
-                    </button>
-
-                    <div className="mb-3">
-                      <label
-                        className="
-                          mb-1
-                          block
-                          text-sm
-                          font-medium
-                          text-gray-700
-                          dark:text-gray-300
-                        "
-                      >
-                        보고서 제목
-                      </label>
-
-                      <input
-                        type="text"
-                        value={
-                          reportTitle
-                        }
-                        onChange={event =>
-                          setReportTitle(
-                            event.target
-                              .value,
-                          )
-                        }
-                        disabled={
-                          creatingReport
-                        }
-                        autoFocus
-                        className="
-                          w-full
-                          rounded-md
-                          border
-                          border-gray-300
-                          bg-white
-                          px-3
-                          py-2
-                          text-sm
-                          text-gray-900
-                          outline-none
-                          focus:border-[#76b900]
-
-                          disabled:cursor-not-allowed
-                          disabled:opacity-60
-
-                          dark:border-gray-700
-                          dark:bg-neutral-800
-                          dark:text-gray-100
-                        "
-                      />
-                    </div>
-
-                    <div className="mb-3">
-                      <label
-                        className="
-                          mb-1
-                          block
-                          text-sm
-                          font-medium
-                          text-gray-700
-                          dark:text-gray-300
-                        "
-                      >
-                        작성 일시
-                      </label>
-
-                      <input
-                        type="text"
-                        value={
-                          reportCreatedAt
-                        }
-                        onChange={event =>
-                          setReportCreatedAt(
-                            event.target
-                              .value,
-                          )
-                        }
-                        disabled={
-                          creatingReport
-                        }
-                        className="
-                          w-full
-                          rounded-md
-                          border
-                          border-gray-300
-                          bg-white
-                          px-3
-                          py-2
-                          text-sm
-                          text-gray-900
-                          outline-none
-                          focus:border-[#76b900]
-
-                          disabled:cursor-not-allowed
-                          disabled:opacity-60
-
-                          dark:border-gray-700
-                          dark:bg-neutral-800
-                          dark:text-gray-100
-                        "
-                      />
-                    </div>
-
-                    <div className="mb-4">
-                      <label
-                        className="
-                          mb-1
-                          block
-                          text-sm
-                          font-medium
-                          text-gray-700
-                          dark:text-gray-300
-                        "
-                      >
-                        작성자
-                      </label>
-
-                      <input
-                        type="text"
-                        value={
-                          reportAuthor
-                        }
-                        onChange={event =>
-                          setReportAuthor(
-                            event.target
-                              .value,
-                          )
-                        }
-                        disabled={
-                          creatingReport
-                        }
-                        className="
-                          w-full
-                          rounded-md
-                          border
-                          border-gray-300
-                          bg-white
-                          px-3
-                          py-2
-                          text-sm
-                          text-gray-900
-                          outline-none
-                          focus:border-[#76b900]
-
-                          disabled:cursor-not-allowed
-                          disabled:opacity-60
-
-                          dark:border-gray-700
-                          dark:bg-neutral-800
-                          dark:text-gray-100
-                        "
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={
-                        handleSubmitNewReport
-                      }
-                      disabled={
-                        creatingReport ||
-                        !reportTitle.trim() ||
-                        !reportCreatedAt.trim() ||
-                        !reportAuthor.trim()
-                      }
-                      className="
-                        w-full
-                        rounded-md
-                        bg-[#76b900]
-                        px-4
-                        py-2.5
-                        text-sm
-                        font-semibold
-                        text-black
-                        transition-colors
-                        hover:bg-[#8bd000]
-                        disabled:cursor-not-allowed
-                        disabled:opacity-50
-                      "
-                    >
-                      {creatingReport
-                        ? '생성 중...'
-                        : '생성'}
-                    </button>
-                  </div>
-                ) : showExistingReports ? (
+                {showExistingReports ? (
                   <div
                     className="
                       max-h-[280px]
@@ -875,7 +790,7 @@ export const SearchVideoModal:
                         text-xs
                         text-gray-500
                         hover:bg-gray-100
-
+                    
                         dark:border-gray-700
                         dark:text-gray-400
                         dark:hover:bg-neutral-800
@@ -883,37 +798,20 @@ export const SearchVideoModal:
                     >
                       ← 뒤로
                     </button>
-
+                    
                     {loadingReports ? (
-                      <div
-                        className="
-                          px-4
-                          py-3
-                          text-sm
-                          text-gray-500
-                        "
-                      >
+                      <div className="px-4 py-3 text-sm text-gray-500">
                         보고서 불러오는 중...
                       </div>
-                    ) : existingReports.length ===
-                      0 ? (
-                      <div
-                        className="
-                          px-4
-                          py-3
-                          text-sm
-                          text-gray-500
-                        "
-                      >
+                    ) : existingReports.length === 0 ? (
+                      <div className="px-4 py-3 text-sm text-gray-500">
                         기존 보고서가 없습니다.
                       </div>
                     ) : (
                       existingReports.map(
                         report => (
                           <button
-                            key={
-                              report.id
-                            }
+                            key={report.id}
                             type="button"
                             disabled={
                               creatingReport
@@ -932,10 +830,9 @@ export const SearchVideoModal:
                               text-sm
                               text-gray-900
                               hover:bg-gray-100
-
                               disabled:cursor-not-allowed
                               disabled:opacity-50
-
+                          
                               dark:text-gray-100
                               dark:hover:bg-neutral-800
                             "
@@ -943,9 +840,7 @@ export const SearchVideoModal:
                               report.title
                             }
                           >
-                            {
-                              report.title
-                            }
+                            {report.title}
                           </button>
                         ),
                       )
@@ -955,8 +850,8 @@ export const SearchVideoModal:
                   <div className="py-1">
                     <button
                       type="button"
-                      onClick={
-                        handleCreateNewReport
+                      onClick={() =>
+                        void handleSubmitNewReport()
                       }
                       className="
                         w-full
@@ -966,14 +861,14 @@ export const SearchVideoModal:
                         text-sm
                         text-gray-900
                         hover:bg-gray-100
-
+                    
                         dark:text-gray-100
                         dark:hover:bg-neutral-800
                       "
                     >
                       새 보고서 생성
                     </button>
-
+                    
                     <button
                       type="button"
                       onClick={() =>
@@ -987,7 +882,7 @@ export const SearchVideoModal:
                         text-sm
                         text-gray-900
                         hover:bg-gray-100
-
+                    
                         dark:text-gray-100
                         dark:hover:bg-neutral-800
                       "

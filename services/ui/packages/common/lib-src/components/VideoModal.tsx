@@ -99,8 +99,8 @@ export const VideoModal: React.FC<VideoModalProps> = ({
       <div
         className={`flex min-h-0 min-w-0 items-stretch gap-3 ${
           sidePanel
-            ? 'h-[80vh] w-[95vw] max-w-[1500px]'
-            : 'h-[80vh] w-[80vw] max-w-[1200px]'
+            ? 'h-[60vh] w-[95vw] max-w-[1500px]'
+            : 'h-[60vh] w-[80vw] max-w-[1200px]'
         }`}
       >
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-neutral-900">
@@ -154,7 +154,7 @@ export const VideoModal: React.FC<VideoModalProps> = ({
         {sidePanel && (
           <div
             data-testid="video-modal-side-panel"
-            className="w-[260px] min-h-0 shrink-0 self-start"
+            className="h-full w-[260px] min-h-0 shrink-0 self-stretch"
           >
             {sidePanel}
           </div>

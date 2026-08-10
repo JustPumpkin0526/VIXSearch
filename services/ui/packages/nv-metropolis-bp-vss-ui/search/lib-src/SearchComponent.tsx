@@ -33,7 +33,10 @@ import { extractSearchResultsFromAgentResponse } from './utils/agentResponsePars
 import { SearchHeader } from './components/SearchHeader';
 import { SearchSidebarControls } from './components/SearchSidebarControls';
 import { VideoSearchList } from './components/VideoSearchList';
-import { SearchVideoModal } from './components/SearchVideoModal';
+import {
+  SearchVideoModal,
+  NewReportFormValues,
+} from './components/SearchVideoModal';
 import { SearchByImageOverlayInfo } from './components/SearchByImageOverlayInfo';
 import { useFilter } from './hooks/useFilter';
 
@@ -345,8 +348,10 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
   const [creatingReport, setCreatingReport] =
     React.useState(false);
 
-  const handleCreateReportFromActiveVideo =
-    React.useCallback(async () => {
+  const handleCreateReportFromActiveVideo = React.useCallback(
+    async (
+      values: NewReportFormValues,
+    ) => {
       if (
         !activeVideoData ||
         creatingReport
@@ -363,8 +368,9 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
           id: `report-${Date.now()}-${Math.random()
             .toString(36)
             .slice(2, 8)}`,
-          title: `${displayVideoName} 보고서`,
-          createdAt: new Date().toISOString(),
+          title: values.title,
+          createdAt: values.createdAt,
+          author: values.author,
           items: [
             {
               id: [
