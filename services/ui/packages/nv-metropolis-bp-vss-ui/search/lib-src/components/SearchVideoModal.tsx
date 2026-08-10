@@ -66,6 +66,11 @@ function formatPauseTime(
 }
 
 
+export type ExistingReportOption = {
+  id: string;
+  title: string;
+};
+
 export interface SearchVideoModalProps {
   isOpen: boolean;
   videoUrl: string;
@@ -73,17 +78,17 @@ export interface SearchVideoModalProps {
   onClose: () => void;
 
   searchByImageEnabled?: boolean;
-
-  onSearchByImageRequest?: (
-    pauseOffsetSeconds: number,
-  ) => void;
-
+  onSearchByImageRequest?: (pauseOffsetSeconds: number) => void;
   searchByImageFooter?: React.ReactNode;
-
   searchByImageOverlay?: React.ReactNode;
 
-  onCreateReport?: () => void;
+  onCreateReport?: () => void | Promise<void>;
+  onAddToExistingReport?: (reportId: string) => void | Promise<void>;
+  onLoadExistingReports?: () => void | Promise<void>;
+  existingReports?: ExistingReportOption[];
+  loadingReports?: boolean;
   creatingReport?: boolean;
+
   debugCaller?: string;
 }
 
@@ -101,8 +106,13 @@ export const SearchVideoModal:
     searchByImageOverlay,
 
     onCreateReport,
+    onAddToExistingReport,
+    onLoadExistingReports,
+    existingReports = [],
+    loadingReports = false,
     creatingReport = false,
-    debugCaller
+    debugCaller,
+
     }) => {
     console.log(
       '[DEBUG] SearchVideoModal props',
@@ -132,6 +142,69 @@ export const SearchVideoModal:
       setPauseTime,
     ] =
       useState(0);
+
+    const [reportMenuPosition, setReportMenuPosition] = useState<{
+      x: number;
+      y: number;
+    } | null>(null);
+
+    const [showExistingReports, setShowExistingReports] = useState(false);
+
+    const handleReportMenuOpen = useCallback(
+      (event: React.MouseEvent<HTMLButtonElement>) => {
+        event.stopPropagation();
+      
+        const menuWidth = 240;
+        const menuHeight = 280;
+        const padding = 8;
+      
+        const x = Math.min(
+          event.clientX,
+          window.innerWidth - menuWidth - padding,
+        );
+      
+        const y = Math.min(
+          event.clientY,
+          window.innerHeight - menuHeight - padding,
+        );
+      
+        setShowExistingReports(false);
+        setReportMenuPosition({
+          x: Math.max(padding, x),
+          y: Math.max(padding, y),
+        });
+      },
+      [],
+    );
+
+    const closeReportMenu = useCallback(() => {
+      setReportMenuPosition(null);
+      setShowExistingReports(false);
+    }, []);
+
+    useEffect(() => {
+      if (!reportMenuPosition) {
+        return;
+      }
+    
+      const handlePointerDown = () => {
+        closeReportMenu();
+      };
+    
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (event.key === 'Escape') {
+          closeReportMenu();
+        }
+      };
+    
+      window.addEventListener('pointerdown', handlePointerDown);
+      window.addEventListener('keydown', handleKeyDown);
+    
+      return () => {
+        window.removeEventListener('pointerdown', handlePointerDown);
+        window.removeEventListener('keydown', handleKeyDown);
+      };
+    }, [reportMenuPosition, closeReportMenu]);
 
     const handleVideoRef =
       useCallback(
@@ -194,11 +267,37 @@ export const SearchVideoModal:
       );
 
 
-    const handleVideoPlay =
-      useCallback(() => {
-        setPaused(false);
-      }, []);
+    const handleVideoPlay = useCallback(() => {
+      setPaused(false);
+      setReportMenuPosition(null);
+      setShowExistingReports(false);
+    }, []);
 
+    const handleShowExistingReports = useCallback(async () => {
+      setShowExistingReports(true);
+
+      try {
+        await onLoadExistingReports?.();
+      } catch (error) {
+        console.error(
+          '[SearchVideoModal] Failed to load reports:',
+          error,
+        );
+      }
+    }, [onLoadExistingReports]);
+
+    const handleCreateNewReport = useCallback(() => {
+          closeReportMenu();
+          void onCreateReport?.();
+        }, [closeReportMenu, onCreateReport]);
+      
+        const handleSelectExistingReport = useCallback(
+      (reportId: string) => {
+        closeReportMenu();
+        void onAddToExistingReport?.(reportId);
+      },
+      [closeReportMenu, onAddToExistingReport],
+    );
 
     const handleSearchByImageClick =
       useCallback(() => {
@@ -310,26 +409,74 @@ export const SearchVideoModal:
           <button
             type="button"
             disabled={creatingReport}
-            onClick={onCreateReport}
-            className="
-              w-full
-              rounded-md
-              bg-[#76b900]
-              px-4
-              py-2.5
-              text-sm
-              font-semibold
-              text-black
-              transition-colors
-              hover:bg-[#8bd000]
-              disabled:cursor-not-allowed
-              disabled:opacity-50
-            "
+            onClick={handleReportMenuOpen}
+            className="w-full rounded-md bg-[#76b900] px-4 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-[#8bd000] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {creatingReport
-              ? '보고서 생성 중...'
-              : '보고서 생성'}
+            {creatingReport ? '보고서 처리 중...' : '보고서 생성'}
           </button>
+          {reportMenuPosition && (
+            <div
+              data-testid="report-context-menu"
+              className="fixed z-[200] w-[240px] overflow-hidden rounded-lg border border-gray-300 bg-white shadow-2xl dark:border-gray-700 dark:bg-neutral-900"
+              style={{
+                left: reportMenuPosition.x,
+                top: reportMenuPosition.y,
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              {!showExistingReports ? (
+                <div className="py-1">
+                  <button
+                    type="button"
+                    onClick={handleCreateNewReport}
+                    className="w-full px-4 py-2.5 text-left text-sm text-gray-900 hover:bg-gray-100 dark:text-gray-100 dark:hover:bg-neutral-800"
+                  >
+                    새 보고서 생성
+                  </button>
+              
+                  <button
+                    type="button"
+                    onClick={handleShowExistingReports}
+                    className="w-full px-4 py-2.5 text-left text-sm text-gray-900 hover:bg-gray-100 dark:text-gray-100 dark:hover:bg-neutral-800"
+                  >
+                    기존 보고서에 추가
+                  </button>
+                </div>
+              ) : (
+                <div className="max-h-[280px] overflow-y-auto py-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowExistingReports(false)}
+                    className="w-full border-b border-gray-200 px-4 py-2 text-left text-xs text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-neutral-800"
+                  >
+                    ← 뒤로
+                  </button>
+              
+                  {loadingReports ? (
+                    <div className="px-4 py-3 text-sm text-gray-500">
+                      보고서 불러오는 중...
+                    </div>
+                  ) : existingReports.length === 0 ? (
+                    <div className="px-4 py-3 text-sm text-gray-500">
+                      기존 보고서가 없습니다.
+                    </div>
+                  ) : (
+                    existingReports.map((report) => (
+                      <button
+                        key={report.id}
+                        type="button"
+                        onClick={() => handleSelectExistingReport(report.id)}
+                        className="w-full truncate px-4 py-2.5 text-left text-sm text-gray-900 hover:bg-gray-100 dark:text-gray-100 dark:hover:bg-neutral-800"
+                        title={report.title}
+                      >
+                        {report.title}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     ) : null;

@@ -19,6 +19,27 @@ type CriticResult = {
   criteria_met: Record<string, boolean>;
 };
 
+const REPORTS_UPDATED_EVENT = 'vss:reports-updated';
+const OPEN_REPORT_TAB_EVENT = 'vss:open-report-tab';
+
+type ReportItem = {
+  id: string;
+  videoName: string;
+  description: string;
+  startTime: string;
+  endTime: string;
+  sensorId: string;
+  similarity: number;
+  screenshotUrl: string;
+};
+
+type StoredReport = {
+  id: string;
+  title: string;
+  createdAt?: string;
+  items?: ReportItem[];
+};
+
 const loadSearchByImageOverlay = () =>
   import(
     '@nv-metropolis-bp-vss-ui/search/components/SearchByImageOverlay'
@@ -423,6 +444,9 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
     'on',
   ].includes(searchByImageFlag.trim().toLowerCase());
 
+  const [availableReports, setAvailableReports] = React.useState<StoredReport[]>([]);
+  const [loadingReports, setLoadingReports] = React.useState(false);
+
   const canSearchByImage =
     searchByImageConfigured &&
     Boolean(vstApiUrl) &&
@@ -478,6 +502,162 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
     openVideoModal,
     closeVideoModal,
   } = useVideoModal(vstApiUrl);
+
+  const buildCurrentReportItem = React.useCallback((): ReportItem | null => {
+    if (!activeVideoData) {
+      return null;
+    }
+
+    return {
+      id: [
+        activeVideoData.sensor_id ?? '',
+        activeVideoData.start_time ?? '',
+        activeVideoData.end_time ?? '',
+        activeVideoData.video_name ?? '',
+      ].join('::'),
+      videoName: activeVideoData.video_name || '검색 결과',
+      description: activeVideoData.description?.trim() ?? '',
+      startTime: activeVideoData.start_time ?? '',
+      endTime: activeVideoData.end_time ?? '',
+      sensorId: activeVideoData.sensor_id ?? '',
+      similarity: activeVideoData.similarity ?? 0,
+      screenshotUrl: activeVideoData.screenshot_url ?? '',
+    };
+  }, [activeVideoData]);
+
+  const loadExistingReports = React.useCallback(async () => {
+    setLoadingReports(true);
+
+    try {
+      const token = window.localStorage.getItem('vss.auth.token');
+
+      if (!token) {
+        throw new Error('Authentication token is missing');
+      }
+
+      const response = await fetch('/api/reports', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to load reports: ${response.status}`);
+      }
+
+      const payload = await response.json();
+      const reports = Array.isArray(payload?.reports) ? payload.reports : [];
+
+      setAvailableReports(reports);
+      return reports as StoredReport[];
+    } catch (error) {
+      console.error(
+        '[SearchResultsMessage] Failed to load reports:',
+        error,
+      );
+
+      setAvailableReports([]);
+      throw error;
+    } finally {
+      setLoadingReports(false);
+    }
+  }, []);
+
+  const handleAddToExistingReport = React.useCallback(
+    async (reportId: string) => {
+      if (!activeVideoData || creatingReport) {
+        return;
+      }
+
+      const reportItem = buildCurrentReportItem();
+
+      if (!reportItem) {
+        return;
+      }
+
+      setCreatingReport(true);
+
+      try {
+        const token = window.localStorage.getItem('vss.auth.token');
+
+        if (!token) {
+          throw new Error('Authentication token is missing');
+        }
+
+        let reports = availableReports;
+
+        if (reports.length === 0) {
+          reports = await loadExistingReports();
+        }
+
+        const targetReport = reports.find((report) => report.id === reportId);
+
+        if (!targetReport) {
+          throw new Error(`Report not found: ${reportId}`);
+        }
+
+        const existingItems = Array.isArray(targetReport.items)
+          ? targetReport.items
+          : [];
+
+        const alreadyExists = existingItems.some(
+          (item) => item.id === reportItem.id,
+        );
+
+        const items = alreadyExists
+          ? existingItems
+          : [...existingItems, reportItem];
+
+        const response = await fetch('/api/reports', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            id: targetReport.id,
+            items,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to update report: ${response.status}`);
+        }
+
+        window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
+
+        window.dispatchEvent(
+          new CustomEvent(OPEN_REPORT_TAB_EVENT, {
+            detail: {
+              tabId: 'report',
+              reportId: targetReport.id,
+            },
+          }),
+        );
+
+        closeVideoModal();
+        setActiveVideoData(null);
+      } catch (error) {
+        console.error(
+          '[SearchResultsMessage] Failed to append report:',
+          error,
+        );
+
+        window.alert('기존 보고서에 추가하지 못했습니다.');
+      } finally {
+        setCreatingReport(false);
+      }
+    },
+    [
+      activeVideoData,
+      creatingReport,
+      availableReports,
+      loadExistingReports,
+      buildCurrentReportItem,
+      closeVideoModal,
+    ],
+  );
 
   const handlePlayVideo = React.useCallback(
     (item: SearchData, showObjectsBbox: boolean) => {
@@ -741,14 +921,19 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
         title={modalTitle}
         onClose={handleCloseVideoModal}
         searchByImageEnabled={canSearchByImage}
-        onSearchByImageRequest={canSearchByImage 
-            ? handleSearchByImageRequest
-            : undefined
+        onSearchByImageRequest={
+          canSearchByImage ? handleSearchByImageRequest : undefined
         }
         searchByImageFooter={searchByImageFooterElement}
         searchByImageOverlay={searchByImageOverlayElement}
-        debugCaller="SearchResultsMessage-REPORT-V1"
         onCreateReport={handleCreateReport}
+        onAddToExistingReport={handleAddToExistingReport}
+        onLoadExistingReports={loadExistingReports}
+        existingReports={availableReports.map((report) => ({
+          id: report.id,
+          title: report.title,
+        }))}
+        loadingReports={loadingReports}
         creatingReport={creatingReport}
       />
     </div>
