@@ -84,6 +84,7 @@ export interface SearchVideoModalProps {
 
   onCreateReport?: () => void;
   creatingReport?: boolean;
+  debugCaller?: string;
 }
 
 
@@ -101,21 +102,17 @@ export const SearchVideoModal:
 
     onCreateReport,
     creatingReport = false,
+    debugCaller
     }) => {
     console.log(
       '[DEBUG] SearchVideoModal props',
       {
-        isOpen,
-        videoUrl,
-
+        debugCaller,
         onCreateReport,
         onCreateReportType:
           typeof onCreateReport,
-
         hasOnCreateReport:
           !!onCreateReport,
-
-        creatingReport,
       },
     );
 
@@ -135,15 +132,6 @@ export const SearchVideoModal:
       setPauseTime,
     ] =
       useState(0);
-
-    const [
-      reportPanelPosition,
-      setReportPanelPosition,
-    ] = useState<{
-        top: number;
-        left: number;
-      } | null>(null);
-
 
     const handleVideoRef =
       useCallback(
@@ -230,107 +218,121 @@ export const SearchVideoModal:
       !!onSearchByImageRequest;
 
 
-    const videoOverlayHost =
-      useMemo(
-        () =>
-          (
-            videoElement?.parentElement as
-            HTMLDivElement | null
-          ) ?? null,
-        [videoElement],
-      );
-
-    const updateReportPanelPosition =
-      useCallback(() => {
-        if (!videoOverlayHost) {
-          setReportPanelPosition(null);
-          return;
-        }
-      
-        const rect =
-          videoOverlayHost.getBoundingClientRect();
-      
-        const PANEL_GAP = 12;
-        const PANEL_WIDTH = 260;
-        const VIEWPORT_PADDING = 16;
-      
-        const rightSideLeft = rect.right + PANEL_GAP;
-      
-        const canShowOnRight = rightSideLeft + PANEL_WIDTH + VIEWPORT_PADDING <= window.innerWidth;
-      
-        setReportPanelPosition({
-          top: Math.max(VIEWPORT_PADDING, rect.top),
-        
-          left: canShowOnRight
-            ? rightSideLeft
-            : Math.max(VIEWPORT_PADDING, rect.left - PANEL_WIDTH - PANEL_GAP),
-        });
-      }, [videoOverlayHost]);
-
-
-    useEffect(() => {
-      if (!isOpen || !paused || !videoOverlayHost) {
-        setReportPanelPosition(null);
-        return;
-      }
-    
-      updateReportPanelPosition();
-    
-      const handleUpdate = () => {
-        updateReportPanelPosition();
-      };
-    
-      window.addEventListener('resize', handleUpdate);
-    
-      window.addEventListener('scroll', handleUpdate, true);
-    
-      const resizeObserver = new ResizeObserver(handleUpdate);
-      
-      resizeObserver.observe(videoOverlayHost);
-    
-      return () => {
-        window.removeEventListener('resize', handleUpdate);
-      
-        window.removeEventListener('scroll', handleUpdate, true);
-      
-        resizeObserver.disconnect();
-      };
-    }, [
-      isOpen,
-      paused,
-      videoOverlayHost,
-      updateReportPanelPosition,
-    ]);
-
+    const videoOverlayHost = useMemo(() =>(
+      videoElement?.parentElement as
+      HTMLDivElement | null
+    ) ?? null,
+      [videoElement],
+    );
 
     const showReportPanel =
       paused &&
       !searchByImageOverlay &&
-      !!onCreateReport &&
-      !!reportPanelPosition;
-
-    console.log(
-      '[SearchVideoModal] Report state',
-      {
-        isOpen,
-        paused,
-        searchByImageOverlay:
-          !!searchByImageOverlay,
-        onCreateReport:
-          !!onCreateReport,
-        videoElement:
-          !!videoElement,
-        videoOverlayHost:
-          !!videoOverlayHost,
-        reportPanelPosition,
-        showReportPanel,
-      },
-    );
+      !!onCreateReport;
 
     if (!isOpen) {
       return null;
     }
 
+    const reportPanel = showReportPanel ? (
+      <div
+        data-testid="search-report-panel"
+        className="
+          w-[260px]
+          shrink-0
+          overflow-hidden
+          rounded-xl
+          border
+          border-gray-300
+          bg-white
+          shadow-2xl
+    
+          dark:border-gray-700
+          dark:bg-neutral-900
+        "
+      >
+        <div
+          className="
+            border-b
+            border-gray-200
+            px-4
+            py-3
+    
+            dark:border-gray-700
+          "
+        >
+          <h3
+            className="
+              text-sm
+              font-semibold
+              text-gray-900
+              dark:text-gray-100
+            "
+          >
+            Report
+          </h3>
+        </div>
+    
+        <div
+          className="
+            flex
+            flex-col
+            gap-4
+            p-4
+          "
+        >
+          <div>
+            <div
+              className="
+                text-xs
+                text-gray-500
+                dark:text-gray-400
+              "
+            >
+              Paused At
+            </div>
+    
+            <div
+              className="
+                mt-1
+                text-sm
+                font-medium
+                text-gray-900
+                dark:text-gray-100
+              "
+            >
+              {formatPauseTime(
+                pauseTime,
+              )}
+            </div>
+          </div>
+            
+          <button
+            type="button"
+            disabled={creatingReport}
+            onClick={onCreateReport}
+            className="
+              w-full
+              rounded-md
+              bg-[#76b900]
+              px-4
+              py-2.5
+              text-sm
+              font-semibold
+              text-black
+              transition-colors
+              hover:bg-[#8bd000]
+              disabled:cursor-not-allowed
+              disabled:opacity-50
+            "
+          >
+            {creatingReport
+              ? '보고서 생성 중...'
+              : '보고서 생성'}
+          </button>
+        </div>
+      </div>
+    ) : null;
 
     return (
       <>
@@ -408,124 +410,6 @@ export const SearchVideoModal:
               {searchByImageOverlay}
             </div>,
             videoOverlayHost,
-          )}
-
-        {showReportPanel &&
-          reportPanelPosition &&
-          typeof document !==
-          'undefined' &&
-          createPortal(
-            <div
-              data-testid="search-report-panel"
-              className="
-              fixed
-              z-[10000]
-              w-[260px]
-              overflow-hidden
-              rounded-xl
-              border
-              border-gray-300
-              bg-white
-              shadow-2xl
-
-              dark:border-gray-700
-              dark:bg-neutral-900
-            "
-              style={{
-                top: reportPanelPosition.top,
-                left: reportPanelPosition.left,
-                minHeight: '220px',
-              }}
-            >
-              <div
-                className="
-                border-b
-                border-gray-200
-                px-4
-                py-3
-
-                dark:border-gray-700
-              "
-              >
-                <h3
-                  className="
-                  text-sm
-                  font-semibold
-                  text-gray-900
-
-                  dark:text-gray-100
-                "
-                >
-                  Report
-                </h3>
-              </div>
-
-              <div
-                className="
-                flex
-                flex-col
-                gap-4
-                p-4
-              "
-              >
-                <div>
-                  <div
-                    className="
-                    text-xs
-                    text-gray-500
-
-                    dark:text-gray-400
-                  "
-                  >
-                    Paused At
-                  </div>
-
-                  <div
-                    className="
-                    mt-1
-                    text-sm
-                    font-medium
-                    text-gray-900
-
-                    dark:text-gray-100
-                  "
-                  >
-                    {formatPauseTime(
-                      pauseTime,
-                    )}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={
-                    creatingReport
-                  }
-                  onClick={
-                    onCreateReport
-                  }
-                  className="
-                    w-full
-                    rounded-md
-                    bg-[#76b900]
-                    px-4
-                    py-2.5
-                    text-sm
-                    font-semibold
-                    text-black
-                    transition-colors
-                    hover:bg-[#8bd000]
-                    disabled:cursor-not-allowed
-                    disabled:opacity-50
-                  "
-                >
-                  {creatingReport
-                    ? '보고서 생성 중...'
-                    : '보고서 생성'}
-                </button>
-              </div>
-            </div>,
-            document.body,
           )}
       </>
     );

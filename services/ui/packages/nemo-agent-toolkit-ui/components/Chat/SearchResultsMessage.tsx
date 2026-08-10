@@ -382,6 +382,16 @@ export interface SearchResultsMessageProps {
 }
 
 export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ results, onSubmitMessage }) => {
+
+  console.log(
+    '[DEBUG] SearchResultsMessage rendered',
+    {
+      resultCount: results.length,
+      hasOnSubmitMessage:
+        !!onSubmitMessage,
+    },
+  );
+
   const isDark = useDarkTheme();
 
   const vstApiUrl =
@@ -424,6 +434,8 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
   );
 
   const [activeVideoData, setActiveVideoData] = React.useState<SearchData | null>(null);
+
+  const [creatingReport, setCreatingReport] = React.useState(false);
 
   const [
     searchByImageSelectedObjectId,
@@ -490,6 +502,33 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
   }, [
     closeVideoModal,
     cancelSearchByImage,
+  ]);
+
+  const handleCreateReport = React.useCallback(async () => {
+    if (
+      !activeVideoData ||
+      creatingReport
+    ) {
+      return;
+    }
+
+    setCreatingReport(true);
+
+    try {
+      console.log('[SearchResultsMessage] Create report', {activeVideoData});
+
+      // 실제 보고서 API 호출
+    } catch (error) {
+      console.error(
+        '[SearchResultsMessage] Failed to create report:',
+        error,
+      );
+    } finally {
+      setCreatingReport(false);
+    }
+  }, [
+    activeVideoData,
+    creatingReport,
   ]);
 
   const handleRefresh = React.useCallback(() => {
@@ -666,6 +705,24 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
     videoModal.title
   );
 
+  console.log(
+    '[DEBUG] SearchResultsMessage -> SearchVideoModal',
+    {
+      handleCreateReport,
+      handleCreateReportType:
+        typeof handleCreateReport,
+      hasHandleCreateReport:
+        !!handleCreateReport,
+      creatingReport,
+      activeVideoData:
+        !!activeVideoData,
+      videoModalIsOpen:
+        videoModal.isOpen,
+      videoUrl:
+        videoModal.videoUrl,
+    },
+  );
+
   return (
     <div className="not-prose mt-4 w-full min-w-0">
       <VideoSearchList
@@ -684,17 +741,15 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
         title={modalTitle}
         onClose={handleCloseVideoModal}
         searchByImageEnabled={canSearchByImage}
-        onSearchByImageRequest={
-          canSearchByImage
+        onSearchByImageRequest={canSearchByImage 
             ? handleSearchByImageRequest
             : undefined
         }
-        searchByImageFooter={
-          searchByImageFooterElement
-        }
-        searchByImageOverlay={
-          searchByImageOverlayElement
-        }
+        searchByImageFooter={searchByImageFooterElement}
+        searchByImageOverlay={searchByImageOverlayElement}
+        debugCaller="SearchResultsMessage-REPORT-V1"
+        onCreateReport={handleCreateReport}
+        creatingReport={creatingReport}
       />
     </div>
   );
