@@ -83,7 +83,6 @@ export interface SearchVideoModalProps {
   searchByImageOverlay?: React.ReactNode;
 
   onCreateReport?: () => void;
-
   creatingReport?: boolean;
 }
 
@@ -102,7 +101,24 @@ export const SearchVideoModal:
 
     onCreateReport,
     creatingReport = false,
-  }) => {
+    }) => {
+    console.log(
+      '[DEBUG] SearchVideoModal props',
+      {
+        isOpen,
+        videoUrl,
+
+        onCreateReport,
+        onCreateReportType:
+          typeof onCreateReport,
+
+        hasOnCreateReport:
+          !!onCreateReport,
+
+        creatingReport,
+      },
+    );
+
     const [
       videoElement,
       setVideoElement,
@@ -224,37 +240,36 @@ export const SearchVideoModal:
         [videoElement],
       );
 
-    const modalHost = useMemo(() => {
-      if (!videoElement) {
-        return null;
-      }
-    
-      return videoElement.closest(
-        '[role="dialog"]',
-      ) as HTMLElement | null;
-    }, [videoElement]);
-
     const updateReportPanelPosition =
       useCallback(() => {
-        if (!modalHost) {
+        if (!videoOverlayHost) {
           setReportPanelPosition(null);
           return;
         }
       
         const rect =
-          modalHost.getBoundingClientRect();
+          videoOverlayHost.getBoundingClientRect();
       
         const PANEL_GAP = 12;
+        const PANEL_WIDTH = 260;
+        const VIEWPORT_PADDING = 16;
+      
+        const rightSideLeft = rect.right + PANEL_GAP;
+      
+        const canShowOnRight = rightSideLeft + PANEL_WIDTH + VIEWPORT_PADDING <= window.innerWidth;
       
         setReportPanelPosition({
-          top: rect.top,
-          left: rect.right + PANEL_GAP,
+          top: Math.max(VIEWPORT_PADDING, rect.top),
+        
+          left: canShowOnRight
+            ? rightSideLeft
+            : Math.max(VIEWPORT_PADDING, rect.left - PANEL_WIDTH - PANEL_GAP),
         });
-      }, [modalHost]);
+      }, [videoOverlayHost]);
 
 
     useEffect(() => {
-      if (!isOpen || !paused || !modalHost) {
+      if (!isOpen || !paused || !videoOverlayHost) {
         setReportPanelPosition(null);
         return;
       }
@@ -265,39 +280,27 @@ export const SearchVideoModal:
         updateReportPanelPosition();
       };
     
-      window.addEventListener(
-        'resize',
-        handleUpdate,
-      );
+      window.addEventListener('resize', handleUpdate);
     
-      window.addEventListener(
-        'scroll',
-        handleUpdate,
-        true,
-      );
+      window.addEventListener('scroll', handleUpdate, true);
     
-      const resizeObserver =
-        new ResizeObserver(handleUpdate);
-    
-      resizeObserver.observe(modalHost);
+      const resizeObserver = new ResizeObserver(handleUpdate);
+      
+      resizeObserver.observe(videoOverlayHost);
     
       return () => {
-        window.removeEventListener(
-          'resize',
-          handleUpdate,
-        );
+        window.removeEventListener('resize', handleUpdate);
       
-        window.removeEventListener(
-          'scroll',
-          handleUpdate,
-          true,
-        );
+        window.removeEventListener('scroll', handleUpdate, true);
       
         resizeObserver.disconnect();
       };
-    }, 
-      [isOpen, paused, modalHost, updateReportPanelPosition]
-    );
+    }, [
+      isOpen,
+      paused,
+      videoOverlayHost,
+      updateReportPanelPosition,
+    ]);
 
 
     const showReportPanel =
@@ -306,6 +309,23 @@ export const SearchVideoModal:
       !!onCreateReport &&
       !!reportPanelPosition;
 
+    console.log(
+      '[SearchVideoModal] Report state',
+      {
+        isOpen,
+        paused,
+        searchByImageOverlay:
+          !!searchByImageOverlay,
+        onCreateReport:
+          !!onCreateReport,
+        videoElement:
+          !!videoElement,
+        videoOverlayHost:
+          !!videoOverlayHost,
+        reportPanelPosition,
+        showReportPanel,
+      },
+    );
 
     if (!isOpen) {
       return null;
