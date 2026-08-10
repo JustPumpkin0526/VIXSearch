@@ -36,6 +36,7 @@ module.exports = {
         'brand-green': '#76b900',
         'brand-green-dark': '#5a8d00',
       },
+    
       screens: {
         xs: '320px',
         sm: '344px',
@@ -45,6 +46,7 @@ module.exports = {
         xl: '1440px',
         xxl: '1600px',
       },
+    
       fontSize: {
         xs: ['0.6rem', { lineHeight: '1rem' }],
         sm: ['0.875rem', { lineHeight: '1.25rem' }],
@@ -52,6 +54,17 @@ module.exports = {
         md: ['1.0rem', { lineHeight: '1.5rem' }],
         lg: ['1.125rem', { lineHeight: '1.75rem' }],
         xl: ['1.25rem', { lineHeight: '1.75rem' }],
+      },
+    
+      keyframes: {
+        blink: {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0' },
+        },
+      },
+    
+      animation: {
+        blink: 'blink 1s step-start infinite',
       },
     },
   },

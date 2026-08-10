@@ -26,7 +26,7 @@ general:
       delete_vst_storage_on_stream_remove: false
       rtvi_embed_base_url: http://${HOST_IP}:${RTVI_EMBED_PORT}
       rtvi_embed_model: ${RTVI_EMBED_MODEL:-cosmos-embed1-448p}
-      rtvi_embed_chunk_duration: 5
+      rtvi_embed_chunk_duration: 10
       rtvi_cv_base_url: http://${HOST_IP}:${RTVI_CV_PORT}
       elasticsearch_url: ${ELASTIC_SEARCH_ENDPOINT}
       rtvi_embed_es_index: ${ELASTIC_SEARCH_INDEX}

@@ -171,6 +171,84 @@ class TopAgentRequest(ChatRequestOrMessage):
         le=100,
     )
 
+def _parse_optional_bool(
+    value: Any,
+    default: bool | None = None,
+) -> bool | None:
+    """Safely parse boolean values received from request/WebSocket payload."""
+
+    if value is None:
+        return default
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+
+        if normalized in {
+            "true",
+            "1",
+            "yes",
+            "on",
+        }:
+            return True
+
+        if normalized in {
+            "false",
+            "0",
+            "no",
+            "off",
+        }:
+            return False
+
+        return default
+
+    if isinstance(value, (int, float)):
+        return bool(value)
+
+    return default
+
+def _parse_optional_int(
+    value: Any,
+    default: int,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+
+    return parsed
+
+
+def _parse_optional_float(
+    value: Any,
+    default: float,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+
+    return parsed
 
 def _extract_text_content(message: "Message") -> dict:
     """
@@ -974,24 +1052,46 @@ class TopAgent(AsyncMixin):
                     is_subagent = tool_name in self.subagent_names
 
                     # Build tool args once, filtering None values and injecting request options when supported.
-                    tool_args = {k: v for k, v in tool_call["args"].items() if v is not None}
-                    if tool_name == "search_agent" and state.current_message is not None:
-                        original_query = _get_content_text(state.current_message).strip()
-                        if contains_hangul(original_query):
-                            tool_args["query"] = await translate_query_if_korean(original_query)
-                    if self._tool_accepts_param(tool_name, "request_options"):
-                        tool_args["request_options"] = state.options.model_dump(mode="json")
-                        logger.info("Passing request_options to %s", tool_name)
-                    if self._tool_accepts_param(tool_name, "llm_reasoning"):
-                        tool_args["llm_reasoning"] = state.options.llm_reasoning
-                        logger.info(f"Passing llm_reasoning={state.options.llm_reasoning} to {tool_name}")
-                    if self._tool_accepts_param(tool_name, "vlm_reasoning"):
-                        tool_args["vlm_reasoning"] = state.options.vlm_reasoning
-                        logger.info(f"Passing vlm_reasoning={state.options.vlm_reasoning} to {tool_name}")
-                    if self._tool_accepts_param(tool_name, "use_critic"):
-                        tool_args["use_critic"] = state.options.use_critic
-                        logger.info(f"Passing use_critic={state.options.use_critic} to {tool_name}")
+                    supports_request_options = self._tool_accepts_param(tool_name, "request_options")
 
+                    tool_args = {k: v for k, v in tool_call["args"].items() if v is not None}
+                    
+                    if supports_request_options:
+                        tool_args["request_options"] = (
+                            state.options.model_dump(mode="json")
+                        )
+                    
+                        logger.info(
+                            "Passing request_options to %s: %s",
+                            tool_name,
+                            tool_args["request_options"],
+                        )
+                    
+                    else:
+                        # Legacy tools that do not support request_options
+                        if self._tool_accepts_param(
+                            tool_name,
+                            "llm_reasoning",
+                        ):
+                            tool_args["llm_reasoning"] = (
+                                state.options.llm_reasoning
+                            )
+                    
+                        if self._tool_accepts_param(
+                            tool_name,
+                            "vlm_reasoning",
+                        ):
+                            tool_args["vlm_reasoning"] = (
+                                state.options.vlm_reasoning
+                            )
+                    
+                        if self._tool_accepts_param(
+                            tool_name,
+                            "use_critic",
+                        ):
+                            tool_args["use_critic"] = (
+                                state.options.use_critic
+                            )
                     # Use native streaming for configured sub-agents
                     final_chunks = []
                     if is_subagent:
@@ -1639,108 +1739,159 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
     ) -> AsyncGenerator[str]:
         """Streaming top agent response."""
 
-        typed_request = TopAgentRequest.model_validate(
-            request.model_dump()
-        )
-
-        options = AgentRequestOptions(
-            user_mode=(
-                typed_request.user_mode
-                if typed_request.user_mode is not None
-                else "search"
-            ),
-            llm_reasoning=(
-                typed_request.llm_reasoning
-                if typed_request.llm_reasoning is not None
-                else config.llm_reasoning
-            ),
-            vlm_reasoning=typed_request.vlm_reasoning,
-            search_source_type=(
-                typed_request.search_source_type
-                or "video_file"
-            ),
-            use_critic=(
-                typed_request.use_critic
-                if typed_request.use_critic is not None
-                else True
-            ),
-            owned_video_ids=typed_request.owned_video_ids,
-            max_results=(
-                typed_request.max_results
-                if typed_request.max_results is not None
-                else 10
-            ),
-            result_min_similarity=(
-                typed_request.result_min_similarity
-                if typed_request.result_min_similarity is not None
-                else 0.1
-            ),
-            critic_max_results=(
-                typed_request.critic_max_results
-                if typed_request.critic_max_results is not None
-                else 5
-            ),
-        )
-
-        # Override with WebSocket payload values if present (WebSocket requests don't pass params through request object)
-        context = Context.get()
-        if hasattr(context.metadata, "payload") and isinstance(context.metadata.payload, dict):
-            payload = context.metadata.payload
-            options_payload = options.model_dump(mode="json")
-            if "user_mode" in payload:
-                raw_user_mode = str(payload["user_mode"]).strip().lower()
-                if raw_user_mode in {"search","debug"}:
-                    options_payload["user_mode"] = raw_user_mode
-                else:
-                    logger.warning(
-                        "Invalid user_mode received: %r. "
-                        "Using the current/default value.",
-                        raw_user_mode,
-                    )
-            if "llm_reasoning" in payload:
-                options_payload["llm_reasoning"] = bool(payload["llm_reasoning"])
-            if "vlm_reasoning" in payload:
-                options_payload["vlm_reasoning"] = bool(payload["vlm_reasoning"])
-            if "search_source_type" in payload:
-                options_payload["search_source_type"] = payload["search_source_type"]
-            if "use_critic" in payload:
-                options_payload["use_critic"] = bool(payload["use_critic"])
-            if "owned_video_ids" in payload:
-                raw_owned_video_ids = (payload.get("owned_video_ids"))
-                if isinstance( raw_owned_video_ids, list,): options_payload[ "owned_video_ids"] = [
-                        str(video_id).strip()
-                        for video_id
-                        in raw_owned_video_ids
-                        if str(video_id).strip()
-                    ]
-                else:
-                    options_payload[
-                        "owned_video_ids"
-                    ] = []
-            if "max_results" in payload:
-                options_payload["max_results"] = int(
-                    payload["max_results"]
-                )
-
-            if "result_min_similarity" in payload:
-                options_payload[
-                    "result_min_similarity"
-                ] = float(
-                    payload["result_min_similarity"]
-                )
-
-            if "critic_max_results" in payload:
-                options_payload[
-                    "critic_max_results"
-                ] = int(
-                    payload["critic_max_results"]
-                )
-            options = AgentRequestOptions.model_validate(options_payload)
-            logger.info(f"Extracted from WebSocket payload - {options}")
-
-        logger.info("Creating Top Agent with options=%s", options)
-
         try:
+
+            typed_request = TopAgentRequest.model_validate(
+                request.model_dump()
+            )
+
+            options = AgentRequestOptions(
+                user_mode=(
+                    typed_request.user_mode
+                    if typed_request.user_mode is not None
+                    else "search"
+                ),
+                llm_reasoning=(
+                    typed_request.llm_reasoning
+                    if typed_request.llm_reasoning is not None
+                    else config.llm_reasoning
+                ),
+                vlm_reasoning=typed_request.vlm_reasoning,
+                search_source_type=(
+                    typed_request.search_source_type
+                    or "video_file"
+                ),
+                use_critic=(
+                    typed_request.use_critic
+                    if typed_request.use_critic is not None
+                    else True
+                ),
+                owned_video_ids=typed_request.owned_video_ids,
+                max_results=(
+                    typed_request.max_results
+                    if typed_request.max_results is not None
+                    else 10
+                ),
+                result_min_similarity=(
+                    typed_request.result_min_similarity
+                    if typed_request.result_min_similarity is not None
+                    else 0.1
+                ),
+                critic_max_results=(
+                    typed_request.critic_max_results
+                    if typed_request.critic_max_results is not None
+                    else 5
+                ),
+            )
+
+            # Override with WebSocket payload values if present (WebSocket requests don't pass params through request object)
+            context = Context.get()
+            if hasattr(context.metadata, "payload") and isinstance(context.metadata.payload, dict):
+                payload = context.metadata.payload
+                options_payload = options.model_dump(mode="json")
+                if "user_mode" in payload:
+                    raw_user_mode = str(payload["user_mode"]).strip().lower()
+                    if raw_user_mode in {"search","debug"}:
+                        options_payload["user_mode"] = raw_user_mode
+                    else:
+                        logger.warning(
+                            "Invalid user_mode received: %r. "
+                            "Using the current/default value.",
+                            raw_user_mode,
+                        )
+                if "llm_reasoning" in payload:
+                    options_payload["llm_reasoning"] = (
+                        _parse_optional_bool(
+                            payload["llm_reasoning"],
+                            default=options.llm_reasoning,
+                        )
+                    )
+
+                if "vlm_reasoning" in payload:
+                    options_payload["vlm_reasoning"] = (
+                        _parse_optional_bool(
+                            payload["vlm_reasoning"],
+                            default=options.vlm_reasoning,
+                        )
+                    )
+
+                if "search_source_type" in payload:
+                    raw_source_type = str(
+                        payload["search_source_type"]
+                    ).strip()
+
+                    if raw_source_type == "video_file":
+                        options_payload["search_source_type"] = (
+                            raw_source_type
+                        )
+                    else:
+                        logger.warning(
+                            "Invalid search_source_type received: %r. "
+                            "Using current/default value.",
+                            raw_source_type,
+                        )
+
+                if "use_critic" in payload:
+                    options_payload["use_critic"] = (
+                        _parse_optional_bool(
+                            payload["use_critic"],
+                            default=options.use_critic,
+                        )
+                    )
+                if "owned_video_ids" in payload:
+                    raw_owned_video_ids = payload.get(
+                        "owned_video_ids"
+                    )
+
+                    if isinstance(raw_owned_video_ids, list):
+                        options_payload["owned_video_ids"] = [
+                            str(video_id).strip()
+                            for video_id in raw_owned_video_ids
+                            if str(video_id).strip()
+                        ]
+                    else:
+                        logger.warning(
+                            "Invalid owned_video_ids received: %r. "
+                            "Using empty allowed-video list.",
+                            raw_owned_video_ids,
+                        )
+
+                        options_payload["owned_video_ids"] = []
+                        
+                if "max_results" in payload:
+                    options_payload["max_results"] = (
+                        _parse_optional_int(
+                            payload["max_results"],
+                            default=options.max_results,
+                            minimum=1,
+                            maximum=100,
+                        )
+                    )
+
+                if "result_min_similarity" in payload:
+                    options_payload["result_min_similarity"] = (
+                        _parse_optional_float(
+                            payload["result_min_similarity"],
+                            default=options.result_min_similarity,
+                            minimum=0.0,
+                            maximum=1.0,
+                        )
+                    )
+
+                if "critic_max_results" in payload:
+                    options_payload["critic_max_results"] = (
+                        _parse_optional_int(
+                            payload["critic_max_results"],
+                            default=options.critic_max_results,
+                            minimum=1,
+                            maximum=100,
+                        )
+                    )
+                options = AgentRequestOptions.model_validate(options_payload)
+                logger.info(f"Extracted from WebSocket payload - {options}")
+
+            logger.info("Creating Top Agent with options=%s", options)
+
             # Convert request to ChatRequest following NAT's agent pattern:
             # https://github.com/NVIDIA/NeMo-Agent-Toolkit/blob/6184d2fb/src/nat/agent/tool_calling_agent/register.py#L86-L99
             chat_request = GlobalTypeConverter.get().convert(request, to_type=ChatRequest)

@@ -156,38 +156,85 @@ class SearchAgentInput(BaseModel):
         ),
     )
 
+class ResolvedSearchOptions(BaseModel):
+    """Final runtime search options after applying request priorities."""
+
+    source_type: Literal[
+        "video_file",
+        "rtsp",
+    ]
+
+    use_critic: bool
+
+    owned_video_ids: list[str] | None
+
+    max_results: int | None
+
+    result_min_similarity: float
+
+    critic_max_results: int
+
+    candidate_top_k: int
+
 
 def _effective_search_runtime_options(
     search_agent_input: SearchAgentInput,
 ) -> tuple[Literal["video_file", "rtsp"], bool]:
-    """Resolve runtime search options from the parent request-options interface."""
-    if search_agent_input.request_options is None:
-        return search_agent_input.source_type, search_agent_input.use_critic
-    return (
-        search_agent_input.request_options.search_source_type,
-        search_agent_input.request_options.use_critic,
+    """Resolve runtime search options from parent request options."""
+
+    request_options = search_agent_input.request_options
+
+    if request_options is None:
+        return (
+            search_agent_input.source_type,
+            search_agent_input.use_critic,
+        )
+
+    source_type = (
+        request_options.search_source_type
+        if request_options.search_source_type is not None
+        else search_agent_input.source_type
     )
+
+    use_critic = (
+        request_options.use_critic
+        if request_options.use_critic is not None
+        else search_agent_input.use_critic
+    )
+
+    return source_type, use_critic
 
 def _effective_owned_video_ids(
     search_agent_input: SearchAgentInput,
 ) -> list[str] | None:
-    """Resolve owned video IDs from direct search-agent input or parent request options."""
+    """
+    Resolve allowed video IDs.
+
+    Priority:
+    1. Parent request_options
+    2. Direct SearchAgentInput
+    3. None
+    """
+
+    request_options = (
+        search_agent_input.request_options
+    )
+
+    if request_options is not None:
+        value = request_options.owned_video_ids
+
+        if value is not None:
+            return [
+                str(video_id).strip()
+                for video_id in value
+                if str(video_id).strip()
+            ]
+
     if search_agent_input.owned_video_ids is not None:
-        return search_agent_input.owned_video_ids
-
-    request_options = search_agent_input.request_options
-    if request_options is None:
-        return None
-
-    value = getattr(request_options, "owned_video_ids", None)
-
-    if value is None:
-        return None
-
-    if isinstance(value, list):
         return [
             str(video_id).strip()
-            for video_id in value
+            for video_id
+            in search_agent_input.owned_video_ids
             if str(video_id).strip()
         ]
 
@@ -292,16 +339,60 @@ def _effective_critic_max_results(search_agent_input: SearchAgentInput) -> int:
 
     return 5
 
-
-def _apply_final_result_limit(
-    results: list[SearchResult],
+def _resolve_search_options(
     search_agent_input: SearchAgentInput,
-) -> list[SearchResult]:
-    """Apply the user-facing result limit without changing retrieval top_k."""
-    max_results = _explicit_max_results(search_agent_input)
-    if max_results is None:
-        return results
-    return results[:max_results]
+    default_top_k: int,
+) -> ResolvedSearchOptions:
+    """Resolve all runtime search settings exactly once."""
+
+    owned_video_ids = (
+        _effective_owned_video_ids(
+            search_agent_input
+        )
+    )
+
+    max_results = _explicit_max_results(
+        search_agent_input
+    )
+
+    result_min_similarity = (
+        _effective_result_min_similarity(
+            search_agent_input
+        )
+    )
+
+    critic_max_results = (
+        _effective_critic_max_results(
+            search_agent_input
+        )
+    )
+
+    candidate_top_k = (
+        _effective_candidate_top_k(
+            search_agent_input,
+            default_top_k,
+        )
+    )
+
+    source_type, use_critic = (
+        _effective_search_runtime_options(
+            search_agent_input
+        )
+    )
+
+    return ResolvedSearchOptions(
+        source_type=source_type,
+        use_critic=use_critic,
+        owned_video_ids=owned_video_ids,
+        max_results=max_results,
+        result_min_similarity=(
+            result_min_similarity
+        ),
+        critic_max_results=(
+            critic_max_results
+        ),
+        candidate_top_k=candidate_top_k,
+    )
 
 _MIN_RESULT_CLIP_SECONDS = 5.0
 
@@ -358,18 +449,6 @@ def _expand_zero_duration_results(
             fixed_results.append(result)
 
     return fixed_results
-
-
-def _candidate_top_k(search_agent_input: SearchAgentInput, default_top_k: int) -> int:
-    """Return the final requested result count.
-
-    Internal candidate expansion is handled by execute_core_search().
-    """
-    max_results = _explicit_max_results(search_agent_input)
-    if max_results is None:
-        return default_top_k
-    return max(0, max_results)
-
 
 class SearchAgentConfig(FunctionBaseConfig, name="search_agent"):
     """Config for search agent."""
@@ -469,11 +548,6 @@ class SearchAgentConfig(FunctionBaseConfig, name="search_agent"):
     behavior_index: str = Field(
         default=DEFAULT_BEHAVIOR_INDEX,
         description="Behavior index name for object embedding lookup.",
-    )
-
-    class_only_search_default: bool = Field(
-        default=False,
-        description="If True, bypass embed/fusion and run attribute-search-only by default.",
     )
 
     merge_gap_tolerance_seconds: float = Field(
@@ -686,8 +760,6 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
 
     async def _execute_search(search_agent_input: SearchAgentInput) -> SearchOutput:
         """Non-streaming search execution. Returns SearchOutput directly."""
-        # Convert SearchAgentInput to SearchInput
-        from vss_agents.utils.time_convert import iso8601_to_datetime
 
         timestamp_start = None
         timestamp_end = None
@@ -702,12 +774,10 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             except Exception as e:
                 logger.warning(f"Failed to parse end_time: {e}")
 
-        top_k = _effective_candidate_top_k(
+        resolved = _resolve_search_options(
             search_agent_input,
             config.default_max_results,
         )
-
-        source_type, use_critic = _effective_search_runtime_options(search_agent_input)
 
         effective_config = config.model_copy(
             update={
@@ -715,28 +785,27 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
                     search_agent_input.embed_confidence_threshold
                     if search_agent_input.embed_confidence_threshold is not None
                     else config.embed_confidence_threshold
-                )
+                ),
+                "use_attribute_search": (
+                    search_agent_input.use_attribute_search
+                    if search_agent_input.use_attribute_search is not None
+                    else config.use_attribute_search
+                ),
             }
         )
 
-        class_only_search_default = bool(
-            getattr(effective_config, "class_only_search_default", False)
-        )
-
-        owned_video_ids = _effective_owned_video_ids(search_agent_input)
-
         search_input = SearchInput(
             query=search_agent_input.query,
-            source_type=source_type,
-            top_k=top_k,
-            min_cosine_similarity=effective_config.embed_confidence_threshold,
-            result_min_similarity=_effective_result_min_similarity(search_agent_input),
-            critic_max_results=_effective_critic_max_results(search_agent_input),
+            source_type=resolved.source_type,
+            top_k=resolved.candidate_top_k,
+            min_cosine_similarity=(effective_config.embed_confidence_threshold),
+            result_min_similarity=(resolved.result_min_similarity),
+            critic_max_results=(resolved.critic_max_results),
             agent_mode=search_agent_input.agent_mode,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
-            owned_video_ids=owned_video_ids,
-            use_critic=use_critic,
+            owned_video_ids=(resolved.owned_video_ids),
+            use_critic=resolved.use_critic,
         )
 
         # Use shared core search function (async generator, collect all progress and return final result)
@@ -753,10 +822,16 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             if isinstance(update, SearchOutput):
                 search_output = update
 
-        final_results = _apply_final_result_limit(
-            await stream_name_resolver.resolve(search_output.data),
-            search_agent_input,
+        final_results = (
+            await stream_name_resolver.resolve(
+                search_output.data
+            )
         )
+
+        if resolved.max_results is not None:
+            final_results = final_results[
+                :resolved.max_results
+            ]
         return SearchOutput(data=final_results, search_messages=search_output.search_messages)
 
     async def _execute_search_stream(
@@ -771,21 +846,23 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
         """
         query = search_agent_input.query
         agent_mode = search_agent_input.agent_mode
-        # Use input value if provided, otherwise use config default
         use_attribute_search_flag = (
             search_agent_input.use_attribute_search
-            if search_agent_input.use_attribute_search is not None
+            if search_agent_input.use_attribute_search
+            is not None
             else config.use_attribute_search
         )
-        explicit_max_results = _explicit_max_results(search_agent_input)
+        resolved = _resolve_search_options(
+            search_agent_input,
+            config.default_max_results,
+        )
         start_time = search_agent_input.start_time
         end_time = search_agent_input.end_time
-        source_type, use_critic = _effective_search_runtime_options(search_agent_input)
 
-        logger.info(f"Search agent executing: {search_agent_input.model_dump_json()}")
-
-        # Convert SearchAgentInput to SearchInput
-        from vss_agents.utils.time_convert import iso8601_to_datetime
+        logger.info(
+            "Search agent executing: %s",
+            search_agent_input.model_dump_json(),
+        )
 
         timestamp_start = None
         timestamp_end = None
@@ -800,11 +877,6 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             except Exception as e:
                 logger.warning(f"Failed to parse end_time: {e}")
 
-        top_k = _effective_candidate_top_k(
-            search_agent_input,
-            config.default_max_results,
-        )
-
         effective_config = config.model_copy(
             update={
                 "embed_confidence_threshold": (
@@ -815,24 +887,26 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             }
         )
 
-        class_only_search_default = bool(
-            getattr(effective_config, "class_only_search_default", False)
-        )
-
-        owned_video_ids = _effective_owned_video_ids(search_agent_input)
-
         search_input = SearchInput(
             query=query,
-            source_type=source_type,
-            top_k=top_k,
-            min_cosine_similarity=effective_config.embed_confidence_threshold,
-            result_min_similarity=_effective_result_min_similarity(search_agent_input),
-            critic_max_results=_effective_critic_max_results(search_agent_input),
+            source_type=resolved.source_type,
+            top_k=resolved.candidate_top_k,
+            min_cosine_similarity=(
+                effective_config.embed_confidence_threshold
+            ),
+            result_min_similarity=(
+                resolved.result_min_similarity
+            ),
+            critic_max_results=(
+                resolved.critic_max_results
+            ),
             agent_mode=agent_mode,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
-            owned_video_ids=owned_video_ids,
-            use_critic=use_critic,
+            owned_video_ids=(
+                resolved.owned_video_ids
+            ),
+            use_critic=resolved.use_critic,
         )
 
         try:
@@ -854,10 +928,16 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
                 elif isinstance(update, SearchOutput):
                     search_output = update
 
-            final_results = _apply_final_result_limit(
-                await stream_name_resolver.resolve(search_output.data),
-                search_agent_input,
+            final_results = (
+                await stream_name_resolver.resolve(
+                    search_output.data
+                )
             )
+
+            if resolved.max_results is not None:
+                final_results = final_results[
+                    :resolved.max_results
+                ]
             result_count = len(final_results)
 
             # Build SearchOutput-compatible JSON
@@ -885,7 +965,7 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
                         "query": query,
                         "agent_mode": agent_mode,
                         "fusion_enabled": use_attribute_search_flag,
-                        "max_results": explicit_max_results,
+                        "max_results": resolved.max_results,
                         "filters": (
                             {
                                 "start_time": start_time,

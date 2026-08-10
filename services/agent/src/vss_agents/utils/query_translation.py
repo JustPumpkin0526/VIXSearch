@@ -20,9 +20,8 @@ from pathlib import Path
 import re
 import threading
 
-import sentencepiece as spm
 import torch
-from transformers import MarianMTModel
+from transformers import AutoTokenizer, MarianMTModel
 
 logger = logging.getLogger(__name__)
 
@@ -50,45 +49,50 @@ class KoreanToEnglishTranslator:
 
     def __init__(self, model_name_or_path: str | None = None) -> None:
         model_location = model_name_or_path or _default_model_location()
-        logger.info("Loading Korean-to-English query translation model: %s", model_location)
-        model_path = Path(model_location)
-        self._source_processor = spm.SentencePieceProcessor(model_file=str(model_path / "source.spm"))
-        self._target_processor = spm.SentencePieceProcessor(model_file=str(model_path / "target.spm"))
+
+        logger.info(
+            "Loading Korean-to-English query translation model: %s",
+            model_location,
+        )
+
+        self._tokenizer = AutoTokenizer.from_pretrained(model_location)
+
         self._model = MarianMTModel.from_pretrained(model_location)
         self._model.to("cpu")
         self._model.eval()
+
         self._inference_lock = threading.Lock()
-        logger.info("Korean-to-English query translation model loaded")
+
+        logger.info(
+            "Korean-to-English query translation model loaded"
+        )
 
     def translate(self, query: str) -> str:
         """Translate a Korean query to English; non-Korean input is returned unchanged."""
+    
         if not contains_hangul(query):
             return query
-
-        input_ids = self._source_processor.encode(query, out_type=int)[:127]
-        input_ids.append(self._source_processor.eos_id())
-        input_tensor = torch.tensor([input_ids], dtype=torch.long)
+    
+        inputs = self._tokenizer(
+            query,
+            return_tensors="pt",
+            truncation=True,
+            max_length=128,
+        )
+    
         with self._inference_lock, torch.inference_mode():
             output_ids = self._model.generate(
-                input_ids=input_tensor,
-                attention_mask=torch.ones_like(input_tensor),
+                **inputs,
                 max_new_tokens=64,
                 num_beams=2,
                 do_sample=False,
             )
-
-        special_ids = {
-            self._target_processor.unk_id(),
-            self._target_processor.bos_id(),
-            self._target_processor.eos_id(),
-        }
-        target_vocab_size = self._target_processor.vocab_size()
-        decoded_ids = [
-            token_id
-            for token_id in output_ids[0].tolist()
-            if 0 <= token_id < target_vocab_size and token_id not in special_ids
-        ]
-        translated = self._target_processor.decode(decoded_ids).strip()
+    
+        translated = self._tokenizer.decode(
+            output_ids[0],
+            skip_special_tokens=True,
+        ).strip()
+    
         return translated or query
 
 
