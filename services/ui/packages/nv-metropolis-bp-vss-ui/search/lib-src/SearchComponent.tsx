@@ -371,6 +371,7 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
           title: values.title,
           createdAt: values.createdAt,
           author: values.author,
+          query: filterParams.query?.trim() ?? '',
           items: [
             {
               id: [
@@ -379,14 +380,14 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
                 item.end_time ?? '',
                 item.video_name ?? '',
               ].join('::'),
-
               videoName: displayVideoName,
               description: item.description?.trim() ?? '',
               startTime: item.start_time,
               endTime: item.end_time,
               sensorId: item.sensor_id,
               similarity: item.similarity,
-              screenshotUrl: item.screenshot_url,
+              pauseTime: values.pauseTime,
+              screenshotUrl: values.frameDataUrl,
             },
           ],
         };

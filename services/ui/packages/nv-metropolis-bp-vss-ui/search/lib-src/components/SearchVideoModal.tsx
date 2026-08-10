@@ -73,6 +73,8 @@ export interface NewReportFormValues {
   title: string;
   createdAt: string;
   author: string;
+  pauseTime: number;
+  frameDataUrl: string;
 }
 
 
@@ -379,6 +381,25 @@ export const SearchVideoModal:
         onLoadExistingReports,
       ]);
 
+    const capturePausedFrame = useCallback(() => {
+      if (!videoElement || !paused) {
+        return '';
+      }
+    
+      const canvas = document.createElement('canvas');
+      canvas.width = videoElement.videoWidth;
+      canvas.height = videoElement.videoHeight;
+    
+      const context = canvas.getContext('2d');
+      if (!context) {
+        return '';
+      }
+    
+      context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+    
+      return canvas.toDataURL('image/jpeg', 0.9);
+    }, [videoElement, paused]);
+
     const handleSubmitNewReport =
       useCallback(async () => {
         if (
@@ -390,14 +411,20 @@ export const SearchVideoModal:
           return;
         }
 
+        const frameDataUrl = capturePausedFrame();
+
+        if (!frameDataUrl) {
+          window.alert('현재 영상 프레임을 가져오지 못했습니다.');
+          return;
+        }
+
         try {
           await onCreateReport({
-            title:
-              reportTitle.trim(),
-            createdAt:
-              reportCreatedAt.trim(),
-            author:
-              reportAuthor.trim(),
+            title: reportTitle.trim(),
+            createdAt: reportCreatedAt.trim(),
+            author: reportAuthor.trim(),
+            pauseTime,
+            frameDataUrl,
           });
 
           closeReportMenu();
@@ -411,6 +438,8 @@ export const SearchVideoModal:
         reportTitle,
         reportCreatedAt,
         reportAuthor,
+        pauseTime,
+        capturePausedFrame,
         onCreateReport,
         closeReportMenu,
       ]);
