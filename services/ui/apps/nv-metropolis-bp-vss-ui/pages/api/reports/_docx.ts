@@ -141,8 +141,15 @@ function buildDocumentNumber(report: ReportPayload): string {
 }
 
 function buildSceneTime(item: ReportSceneItem): string {
+  const formatVideoTimestamp = (value: string | undefined): string => {
+    const normalized = String(value || '').trim();
+    if (!normalized) return '-';
+    const matched = normalized.match(/(?:T|\s)?(\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/);
+    return matched?.[1] ?? normalized;
+  };
+
   if (item.startTime || item.endTime) {
-    return `${safeText(item.startTime)} ~ ${safeText(item.endTime)}`;
+    return `${formatVideoTimestamp(item.startTime)} ~ ${formatVideoTimestamp(item.endTime)}`;
   }
   return formatPlaybackTime(item.pauseTime);
 }
@@ -270,6 +277,47 @@ function buildInfoTable(report: ReportPayload): Table {
   });
 }
 
+function buildSearchOverviewTable(report: ReportPayload): Table {
+  const videoNames = report.items
+    .map((item) => safeText(item.videoName))
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join(', ') || '-';
+
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      ['검색어', buildReportQuestion(report)],
+      ['검색 대상', videoNames],
+    ].map(([label, value]) => new TableRow({
+      children: [
+        new TableCell({
+          width: { size: 20, type: WidthType.PERCENTAGE },
+          shading: { fill: 'E8F5EF' },
+          margins: { top: 110, bottom: 110, left: 120, right: 120 },
+          children: [new Paragraph({ children: [
+            new TextRun({ text: label, bold: true, size: 20, color: '176B52' }),
+          ] })],
+        }),
+        new TableCell({
+          width: { size: 80, type: WidthType.PERCENTAGE },
+          margins: { top: 110, bottom: 110, left: 140, right: 140 },
+          children: [new Paragraph({ children: [
+            new TextRun({ text: value, size: 20, color: '24313A' }),
+          ] })],
+        }),
+      ],
+    })),
+    borders: {
+      top: { style: BorderStyle.SINGLE, size: 1, color: 'D7E2DD' },
+      bottom: { style: BorderStyle.SINGLE, size: 1, color: 'D7E2DD' },
+      left: { style: BorderStyle.SINGLE, size: 1, color: 'D7E2DD' },
+      right: { style: BorderStyle.SINGLE, size: 1, color: 'D7E2DD' },
+      insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: 'D7E2DD' },
+      insideVertical: { style: BorderStyle.SINGLE, size: 1, color: 'D7E2DD' },
+    },
+  });
+}
+
 async function buildWordSceneTable(
   report: ReportPayload,
 ): Promise<Table> {
@@ -344,12 +392,6 @@ async function buildWordSceneTable(
               new TextRun({ text: formatSimilarity(item.similarity), size: 19 }),
               new TextRun({ text: '    센서 ID  ', bold: true, size: 19, color: '176B52' }),
               new TextRun({ text: safeText(item.sensorId), size: 19 }),
-            ],
-          }),
-          new Paragraph({
-            children: [
-              new TextRun({ text: '장면 설명  ', bold: true, size: 19, color: '176B52' }),
-              new TextRun({ text: safeText(item.description), size: 19 }),
             ],
           }),
         ],
@@ -526,19 +568,9 @@ export async function buildAccidentReportWordBuffer(report: ReportPayload): Prom
             ],
           }),
         
-          new Paragraph({
-            spacing: {
-              before: 80,
-              after: 100,
-            },
-            children: [
-              new TextRun({
-                text:
-                  `검색어  ${buildReportQuestion(report)}\n검색 대상  ${report.items.map((item) => safeText(item.videoName)).filter((value, index, values) => values.indexOf(value) === index).join(', ') || '-'}\n검색 결과  ${report.items.length}건`,
-                size: 22,
-              }),
-            ],
-          }),
+          new Paragraph({ spacing: { after: 70 } }),
+
+          buildSearchOverviewTable(report),
         
           paragraphDivider(),
         
@@ -801,8 +833,48 @@ export async function buildAccidentReportPdfBuffer(report: ReportPayload): Promi
   y -= 28;
 
   ({ page, y } = drawWrappedText(pdfDoc, page, '검색 개요', boldFont, 12, left, y, maxWidth, 16));
-  ({ page, y } = drawWrappedText(pdfDoc, page, `검색어  ${buildReportQuestion(report)}`, regularFont, 10.5, left + 10, y - 4, 480, 15));
-  ({ page, y } = drawWrappedText(pdfDoc, page, `검색 대상  ${report.items.map((item) => safeText(item.videoName)).filter((value, index, values) => values.indexOf(value) === index).join(', ') || '-'}`, regularFont, 10.5, left + 10, y, 480, 15));
+  y -= 7;
+
+  const overviewRows = [
+    ['검색어', buildReportQuestion(report)],
+    [
+      '검색 대상',
+      report.items
+        .map((item) => safeText(item.videoName))
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .join(', ') || '-',
+    ],
+  ];
+
+  for (const [label, value] of overviewRows) {
+    const rowTop = y + 5;
+    page.drawRectangle({
+      x: left,
+      y: rowTop - 19,
+      width: 92,
+      height: 22,
+      color: rgb(0.91, 0.96, 0.94),
+    });
+    page.drawText(label, {
+      x: left + 9,
+      y: rowTop - 13,
+      size: 9.5,
+      font: boldFont,
+      color: rgb(0.09, 0.42, 0.32),
+    });
+    ({ page, y } = drawWrappedText(
+      pdfDoc,
+      page,
+      value,
+      regularFont,
+      9.5,
+      left + 104,
+      rowTop - 13,
+      395,
+      13,
+    ));
+    y = Math.min(y, rowTop - 22);
+  }
   y -= 16;
   drawDivider(page, y);
   y -= 28;
@@ -840,8 +912,6 @@ export async function buildAccidentReportPdfBuffer(report: ReportPayload): Promi
 
     ({ page, y } = drawWrappedText(pdfDoc, page, `영상 구간  ${buildSceneTime(item)}     캡처 시점  ${formatPlaybackTime(item.pauseTime)}`, regularFont, 9.5, left + 10, y, 480, 14));
     ({ page, y } = drawWrappedText(pdfDoc, page, `유사도  ${formatSimilarity(item.similarity)}     센서 ID  ${safeText(item.sensorId)}`, regularFont, 9.5, left + 10, y, 480, 14));
-    ({ page, y } = drawWrappedText(pdfDoc, page, `장면 설명  ${safeText(item.description)}`, regularFont, 9.5, left + 10, y, 480, 14));
-
     drawDivider(page, y);
     y -= 16;
   }
