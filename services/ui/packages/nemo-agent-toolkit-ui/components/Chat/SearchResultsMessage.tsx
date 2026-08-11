@@ -42,6 +42,8 @@ type StoredReport = {
   id: string;
   title: string;
   createdAt?: string;
+  author?: string;
+  query?: string;
   items?: ReportItem[];
 };
 
@@ -401,13 +403,19 @@ function useDarkTheme(): boolean {
 
 export interface SearchResultsMessageProps {
   results: SearchResultItem[];
-  sourceQuery?: string;
+  sourceQuery: string;
   onSubmitMessage?: (
     content: string,
   ) => void | Promise<void>;
 }
 
-export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ results, onSubmitMessage }) => {
+export const SearchResultsMessage: React.FC<
+  SearchResultsMessageProps
+> = ({
+  results,
+  sourceQuery,
+  onSubmitMessage,
+}) => {
 
   console.log(
     '[DEBUG] SearchResultsMessage rendered',
@@ -693,9 +701,24 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
     if (!activeVideoData || creatingReport) {
       return;
     }
-  
-    setCreatingReport(true);
-    
+
+    const normalizedSourceQuery =
+      typeof sourceQuery === 'string'
+        ? sourceQuery.trim()
+        : '';
+
+    if (!normalizedSourceQuery) {
+      console.error(
+        '[SearchResultsMessage] sourceQuery is missing:',
+        sourceQuery,
+      );
+
+      window.alert(
+        '검색 쿼리를 확인할 수 없어 보고서를 생성할 수 없습니다.',
+      );
+      return;
+    }
+
     const clipStartTime =
       videoModal.actualStartTime ||
       activeVideoData.start_time;
@@ -704,35 +727,69 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
       videoModal.streamId ||
       activeVideoData.sensor_id;
 
-    const frameDataUrl =
-      await fetchReportFrameDataUrl(
-        vstApiUrl,
-        reportStreamId,
-        clipStartTime,
-        values.pauseTime,
+    if (!vstApiUrl.trim()) {
+      window.alert('VST API URL이 설정되지 않았습니다.');
+      return;
+    }
+
+    if (
+      typeof reportStreamId !== 'string' ||
+      !reportStreamId.trim()
+    ) {
+      window.alert(
+        '보고서 프레임의 Stream ID를 확인할 수 없습니다.',
       );
-  
+      return;
+    }
+
+    if (
+      typeof clipStartTime !== 'string' ||
+      !clipStartTime.trim()
+    ) {
+      window.alert(
+        '검색 결과 클립의 시작 시간을 확인할 수 없습니다.',
+      );
+      return;
+    }
+
+    setCreatingReport(true);
+
     try {
-      const token = window.localStorage.getItem('vss.auth.token');
-    
+      const frameDataUrl =
+        await fetchReportFrameDataUrl(
+          vstApiUrl,
+          reportStreamId,
+          clipStartTime,
+          values.pauseTime,
+        );
+
+      const token =
+        window.localStorage.getItem('vss.auth.token');
+
       if (!token) {
-        throw new Error('Authentication token is missing');
+        throw new Error(
+          'Authentication token is missing',
+        );
       }
-    
+
       const displayVideoName =
-        sensorIdToNameMap.get(activeVideoData.sensor_id) ||
+        sensorIdToNameMap.get(
+          activeVideoData.sensor_id,
+        ) ||
         activeVideoData.video_name ||
         '검색 결과';
-    
-      const reportId = `report-${Date.now()}-${Math.random()
-        .toString(36)
-        .slice(2, 8)}`;
-      
+
+      const reportId =
+        `report-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 8)}`;
+
       const report = {
         id: reportId,
         title: values.title,
         createdAt: values.createdAt,
         author: values.author,
+        query: normalizedSourceQuery,
         items: [
           {
             id: [
@@ -742,17 +799,22 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
               activeVideoData.video_name ?? '',
             ].join('::'),
             videoName: displayVideoName,
-            description: activeVideoData.description?.trim() ?? '',
-            startTime: activeVideoData.start_time ?? '',
-            endTime: activeVideoData.end_time ?? '',
-            sensorId: activeVideoData.sensor_id ?? '',
-            similarity: activeVideoData.similarity ?? 0,
+            description:
+              activeVideoData.description?.trim() ?? '',
+            startTime:
+              activeVideoData.start_time ?? '',
+            endTime:
+              activeVideoData.end_time ?? '',
+            sensorId:
+              activeVideoData.sensor_id ?? '',
+            similarity:
+              activeVideoData.similarity ?? 0,
             pauseTime: values.pauseTime,
             screenshotUrl: frameDataUrl,
           },
         ],
       };
-    
+
       const response = await fetch('/api/reports', {
         method: 'POST',
         headers: {
@@ -761,26 +823,19 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
         },
         body: JSON.stringify(report),
       });
-    
+
       if (!response.ok) {
         const errorText = await response.text();
-      
+
         throw new Error(
           `Failed to create report: ${response.status} ${errorText}`,
         );
       }
-    
-      const result = await response.json();
-    
-      console.log(
-        '[SearchResultsMessage] Report created:',
-        result,
-      );
-    
+
       window.dispatchEvent(
         new CustomEvent(REPORTS_UPDATED_EVENT),
       );
-    
+
       window.dispatchEvent(
         new CustomEvent(OPEN_REPORT_TAB_EVENT, {
           detail: {
@@ -789,7 +844,7 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
           },
         }),
       );
-    
+
       closeVideoModal();
       setActiveVideoData(null);
     } catch (error) {
@@ -797,20 +852,23 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
         '[SearchResultsMessage] Failed to create report:',
         error,
       );
-    
+
       window.alert('보고서 생성에 실패했습니다.');
     } finally {
       setCreatingReport(false);
     }
-  }, [
+  },
+  [
     activeVideoData,
     creatingReport,
+    sourceQuery,
     sensorIdToNameMap,
     closeVideoModal,
     vstApiUrl,
     videoModal.actualStartTime,
     videoModal.streamId,
-  ]);
+  ],
+);
 
   const handleRefresh = React.useCallback(() => {
     /*

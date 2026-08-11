@@ -265,6 +265,33 @@ function getImageAttachmentContent(
   return content || null;
 }
 
+function findPreviousUserQuery(
+  messages: Message[],
+  currentMessageIndex: number,
+): string {
+  for (
+    let index = currentMessageIndex - 1;
+    index >= 0;
+    index -= 1
+  ) {
+    const previousMessage = messages[index];
+
+    if (
+      previousMessage.role === 'user' &&
+      !previousMessage.hidden &&
+      typeof previousMessage.content === 'string'
+    ) {
+      const query = previousMessage.content.trim();
+
+      if (query.length > 0) {
+        return query;
+      }
+    }
+  }
+
+  return '';
+}
+
 function getAttachmentContentType(
   message: Message,
   imageContent: string,
@@ -2877,11 +2904,23 @@ export const Chat = () => {
             const isLastMessage = index === arr.length - 1;
             const isStreamingMessage = messageIsStreaming && isLastMessage && message.role === 'assistant';
 
+            const sourceQuery =
+              message.role === 'assistant'
+                ? findPreviousUserQuery(arr, index)
+                : '';
+
+            console.log('[Chat] sourceQuery:', {
+              messageIndex: index,
+              messageRole: message.role,
+              sourceQuery,
+            });
+
             return (
               <MemoizedChatMessage
                 key={message.id ?? index}
                 message={message}
                 messageIndex={index}
+                sourceQuery={sourceQuery}
                 onSubmitMessage={
                   submitMessageProgrammatically
                 }

@@ -67,7 +67,7 @@ function removeReasoningTraceContent(
 export interface Props {
   message: Message;
   messageIndex: number;
-  sourceQuery?: string;
+  sourceQuery: string;
 
   onSubmitMessage?: (
     content: string,
@@ -89,7 +89,7 @@ export const ChatMessage: FC<Props> = memo(
   ({
     message,
     messageIndex,
-    sourceQuery = '',
+    sourceQuery,
     onSubmitMessage,
     onEdit,
     onDelete,
@@ -122,16 +122,6 @@ export const ChatMessage: FC<Props> = memo(
       () => DOMPurify.sanitize(message.callerInfo || ''),
       [message.callerInfo],
     );
-
-    // return if the there is nothing to show
-    // no message and no intermediate steps
-    if (
-      message?.content === '' &&
-      message?.intermediateSteps?.length === 0 &&
-      (!Array.isArray(message?.searchResults) || message.searchResults.length === 0)
-    ) {
-      return null;
-    }
 
     const toggleEditing = () => {
       setIsEditing(!isEditing);
@@ -331,6 +321,16 @@ export const ChatMessage: FC<Props> = memo(
       message.searchResultsSummary,
     ]);
 
+    // return if the there is nothing to show
+    // no message and no intermediate steps
+    if (
+      message?.content === '' &&
+      message?.intermediateSteps?.length === 0 &&
+      (!Array.isArray(message?.searchResults) || message.searchResults.length === 0)
+    ) {
+      return null;
+    }
+
     return (
       <div
         data-testid={message.role === 'assistant' ? 'chat-message-assistant' : 'chat-message-user'}
@@ -475,9 +475,7 @@ export const ChatMessage: FC<Props> = memo(
                           )}
                       
                           <SearchResultsMessage
-                            results={
-                              parsedSearchResultsMessage.results
-                            }
+                            results={parsedSearchResultsMessage.results}
                             sourceQuery={sourceQuery}
                             onSubmitMessage={onSubmitMessage}
                           />
