@@ -18,6 +18,7 @@ export interface VideoModalState {
   videoUrl: string;
   title: string;
   actualStartTime: string;
+  streamId: string;
 }
 
 /** Data required to fetch and display a video clip from VST API */
@@ -57,6 +58,7 @@ export const useVideoModal = (
     videoUrl: '',
     title: '',
     actualStartTime: '',
+    streamId: '',
   });
   const [loadingAlertId, setLoadingAlertId] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -102,6 +104,8 @@ export const useVideoModal = (
           title: video_name,
           actualStartTime:
             videoResult.actualStartTime,
+          streamId:
+            videoResult.streamId,
         });
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') {
@@ -122,12 +126,14 @@ export const useVideoModal = (
       title: string,
       videoUrl: string,
       actualStartTime = '',
+      streamId = '',
     ) => {
       setVideoModal({
         isOpen: true,
         videoUrl,
         title,
         actualStartTime,
+        streamId,
       });
     },
     [],
@@ -208,6 +214,7 @@ export const useVideoModal = (
           title,
           videoResult.videoUrl,
           videoResult.actualStartTime,
+          videoResult.streamId,
         );
       } catch (err) {
         if (abortController.signal.aborted) {
@@ -230,6 +237,7 @@ export const useVideoModal = (
       videoUrl: '',
       title: '',
       actualStartTime: '',
+      streamId: '',
     });
   }, []);
 

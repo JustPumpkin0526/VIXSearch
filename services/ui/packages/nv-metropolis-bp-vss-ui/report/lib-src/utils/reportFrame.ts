@@ -55,7 +55,7 @@ function blobToDataUrl(
 
 export async function fetchReportFrameDataUrl(
   vstApiUrl: string,
-  sensorId: string,
+  streamId: string,
   clipStartTime: string,
   pauseOffsetSeconds: number,
 ): Promise<string> {
@@ -93,18 +93,15 @@ export async function fetchReportFrameDataUrl(
       startTime: timestamp,
     });
 
-  const url =
-    `${vstApiUrl}/v1/replay/stream/` +
-    `${encodeURIComponent(sensorId)}/picture?` +
-    params.toString();
+  const url = `${vstApiUrl}/v1/replay/stream/` + `${encodeURIComponent(streamId)}/picture?` +params.toString();
 
   const response =
     await fetch(url, {
-      cache: 'no-store',
-      headers: {
-        Accept: 'image/*',
-        streamId: sensorId,
-      },
+        cache: 'no-store',
+        headers: {
+            Accept: 'image/*',
+            streamId,
+        },
     });
 
   if (!response.ok) {
@@ -133,7 +130,7 @@ export async function fetchReportFrameDataUrl(
   console.info(
     '[Report] frame fetched',
     {
-      sensorId,
+      streamId,
       clipStartTime,
       pauseOffsetSeconds:
         safePauseSeconds,

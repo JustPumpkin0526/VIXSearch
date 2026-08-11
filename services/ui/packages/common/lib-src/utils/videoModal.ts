@@ -14,6 +14,7 @@ export interface FetchVideoUrlParams {
 export interface FetchVideoUrlResult {
   videoUrl: string;
   actualStartTime: string;
+  streamId: string;
 }
 
 /**
@@ -200,6 +201,10 @@ export const fetchVideoUrlFromVst = async (
       vstApiUrl,
     );
   }
+
+  const streamId = typeof data.streamId === 'string' && data.streamId.trim()
+    ? data.streamId.trim()
+    : sensorId;
   
   const actualStartTime =
     typeof data.startTime === 'string' &&
@@ -210,5 +215,6 @@ export const fetchVideoUrlFromVst = async (
   return {
     videoUrl: finalUrl,
     actualStartTime,
+    streamId,
   };
 };

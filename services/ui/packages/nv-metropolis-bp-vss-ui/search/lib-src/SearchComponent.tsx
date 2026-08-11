@@ -372,12 +372,14 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
 
         const clipStartTime = videoModal.actualStartTime || item.start_time;
 
+        const reportStreamId = videoModal.streamId || item.sensor_id;
+
         const frameDataUrl = await fetchReportFrameDataUrl(
-          vstApiUrl,
-          item.sensor_id,
-          clipStartTime,
-          values.pauseTime,
-        );
+            vstApiUrl,
+            reportStreamId,
+            clipStartTime,
+            values.pauseTime,
+          );
         const displayVideoName = resolveAgentDisplayVideoName(item) || item.video_name || '검색 결과';
         const report = {
           id: `report-${Date.now()}-${Math.random()
@@ -427,6 +429,12 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
             headers,
             body: JSON.stringify(report),
           });
+        
+        const responsePayload = await response.json();
+
+        const savedReportId = typeof responsePayload?.report?.id === 'string'
+            ? responsePayload.report.id
+            : report.id;
 
         if (!response.ok) {
           throw new Error(
@@ -446,6 +454,7 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
             {
               detail: {
                 tabId: 'report',
+                reportId: savedReportId,
               },
             },
           ),
@@ -472,7 +481,8 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
       resolveAgentDisplayVideoName,
       filterParams.query,
       vstApiUrl,
-      videoModal.videoUrl,
+      videoModal.actualStartTime,
+      videoModal.streamId,
     ]);
 
   // Search by Image hook
