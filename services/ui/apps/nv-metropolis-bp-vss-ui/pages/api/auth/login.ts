@@ -12,6 +12,7 @@ import {
   storeRefreshToken,
   verifyPasswordAsync,
 } from './_lib';
+import { rateLimit } from '../_rateLimit';
 
 type LoginErrorCode =
   | 'AUTH_REQUIRED_FIELDS'
@@ -36,6 +37,9 @@ export default async function handler(
   res: NextApiResponse,
 ) {
   try {
+    // Simple rate limiting to mitigate brute-force and high-frequency login attempts.
+    await rateLimit(req, res);
+
     if (req.method !== 'POST') {
       res.setHeader('Allow', 'POST');
 

@@ -1149,6 +1149,17 @@ export const Chat = () => {
       } else {
       }
 
+      // Attach per-tab client id so server can count tabs separately.
+      try {
+        const clientId = sessionStorage.getItem('vss.client.tab_id') || '';
+        if (clientId) {
+          const separator = wsUrl.includes('?') ? '&' : '?';
+          wsUrl += `${separator}client_id=${encodeURIComponent(clientId)}`;
+        }
+      } catch (e) {
+        // ignore
+      }
+
       const ws = new WebSocket(wsUrl);
 
       websocketLoadingToastId = toast.loading(

@@ -8,6 +8,7 @@ import Head from 'next/head';
 import { useEffect } from 'react';
 
 import { APPLICATION_TITLE } from '../constants/constants';
+import { getOrCreateClientInstanceId } from '@aiqtoolkit-ui/common';
 import { AuthProvider, useAuthContext } from '../contexts/AuthContext';
 
 import '../styles/globals.css';
@@ -181,6 +182,16 @@ function App({ Component, pageProps }: AppProps<{}>) {
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const target = getTarget(input);
     
+      // ensure client id exists per browser tab and attach it
+      try {
+        const clientId = getOrCreateClientInstanceId();
+        // expose globally for other scripts
+        // @ts-ignore
+        window.__VSS_CLIENT_ID = clientId;
+      } catch (e) {
+        // ignore
+      }
+
       if (!shouldAttachAuth(target) || isAuthEndpoint(target)) {
         return originalFetch(input, init);
       }
@@ -207,6 +218,12 @@ function App({ Component, pageProps }: AppProps<{}>) {
         const headers = new Headers(
           init?.headers || (input instanceof Request ? input.headers : undefined),
         );
+        try {
+          // attach client id header for per-tab counting
+          // prefer existing session-scoped id if available
+          const clientId = (window as any).__VSS_CLIENT_ID || window.sessionStorage.getItem('vss.client.tab_id');
+          if (clientId && !headers.get('X-Client-Id')) headers.set('X-Client-Id', String(clientId));
+        } catch {}
       
         if (token && !headers.get('Authorization')) {
           headers.set('Authorization', `Bearer ${token}`);

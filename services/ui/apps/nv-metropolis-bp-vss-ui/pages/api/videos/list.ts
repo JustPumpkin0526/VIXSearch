@@ -5,6 +5,7 @@ import {
   getVideosPool,
   verifyVideosJwt,
 } from './_lib';
+import { checkAndIncrConnection } from '../_connectionLimit';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -24,6 +25,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const username = getAccountIdFromVideosPayload(verification.payload);
   if (!username) return res.status(400).json({ error: 'Token missing subject' });
+
+  // Enforce per-tab connection limit when client provides `X-Client-Id` header.
+  try {
+    const conn = await checkAndIncrConnection(req, res);
+    if (!conn.allowed) {
+      res.setHeader('Retry-After', '30');
+      return res.status(503).json({ error: 'Too many active clients, try again later.' });
+    }
+  } catch (err) {
+    console.warn('[api/videos/list] connection check failed, continuing:', err);
+  }
 
   const rawGroupId =
     Array.isArray(req.query.group_id)

@@ -43,3 +43,5 @@ export { chunkedUpload, CHUNK_SIZE_BYTES, MAX_CHUNK_RETRIES } from './utils/chun
 export type { ChunkedUploadOptions, ChunkedUploadResponse } from './utils/chunkedUpload';
 export { checkVideoUrl, fetchVideoUrlFromVst, replaceVideoUrlBase } from './utils/videoModal';
 export type { FetchVideoUrlParams } from './utils/videoModal';
+export { getOrCreateClientInstanceId } from './utils/clientInstance';
+export type {  } from './utils/clientInstance';
