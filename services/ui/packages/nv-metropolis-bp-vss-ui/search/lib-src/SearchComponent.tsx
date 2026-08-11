@@ -386,7 +386,7 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
             .toString(36)
             .slice(2, 8)}`,
           title: values.title,
-          createdAt: values.createdAt,
+          createdAt: new Date().toISOString(),
           author: values.author,
           query: filterParams.query?.trim() ?? '',
           items: [

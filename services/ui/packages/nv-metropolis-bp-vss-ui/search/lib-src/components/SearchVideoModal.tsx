@@ -48,30 +48,8 @@ function formatPauseTime(
   ].join(':');
 }
 
-
-function formatReportDate(
-  date: Date,
-): string {
-  const pad = (value: number) =>
-    value.toString().padStart(2, '0');
-
-  return `${date.getFullYear()}-${pad(
-    date.getMonth() + 1,
-  )}-${pad(
-    date.getDate(),
-  )} ${pad(
-    date.getHours(),
-  )}:${pad(
-    date.getMinutes(),
-  )}:${pad(
-    date.getSeconds(),
-  )}`;
-}
-
-
 export interface NewReportFormValues {
   title: string;
-  createdAt: string;
   author: string;
   pauseTime: number;
 }
@@ -167,12 +145,6 @@ export const SearchVideoModal:
       reportTitle,
       setReportTitle,
     ] = useState('');
-
-    const [
-      reportCreatedAt,
-      setReportCreatedAt,
-    ] = useState('');
-
     const [
       reportAuthor,
       setReportAuthor,
@@ -181,10 +153,7 @@ export const SearchVideoModal:
 
     const handleReportMenuOpen =
       useCallback(
-        (
-          event:
-            React.MouseEvent<HTMLButtonElement>,
-        ) => {
+        (event: React.MouseEvent<HTMLButtonElement>) => {
           event.stopPropagation();
 
           const menuWidth = 240;
@@ -193,16 +162,12 @@ export const SearchVideoModal:
 
           const x = Math.min(
             event.clientX,
-            window.innerWidth -
-              menuWidth -
-              padding,
+            window.innerWidth - menuWidth - padding,
           );
 
           const y = Math.min(
             event.clientY,
-            window.innerHeight -
-              menuHeight -
-              padding,
+            window.innerHeight - menuHeight - padding,
           );
 
           setShowExistingReports(false);
@@ -287,7 +252,6 @@ export const SearchVideoModal:
       setShowExistingReports(false);
 
       setReportTitle('');
-      setReportCreatedAt('');
       setReportAuthor('');
     }, [
       isOpen,
@@ -334,13 +298,7 @@ export const SearchVideoModal:
               : '검색 결과 보고서',
           );
         }
-      
-        setReportCreatedAt(
-          formatReportDate(
-            new Date(),
-          ),
-        );
-      
+
         if (!reportAuthor.trim()) {
           setReportAuthor(
             defaultReportAuthor,
@@ -395,7 +353,6 @@ export const SearchVideoModal:
       useCallback(async () => {
         if (
           !reportTitle.trim() ||
-          !reportCreatedAt.trim() ||
           !reportAuthor.trim() ||
           !onCreateReport
         ) {
@@ -406,8 +363,6 @@ export const SearchVideoModal:
           await onCreateReport({
             title:
               reportTitle.trim(),
-            createdAt:
-              reportCreatedAt.trim(),
             author:
               reportAuthor.trim(),
             pauseTime,
@@ -422,7 +377,6 @@ export const SearchVideoModal:
         }
       }, [
         reportTitle,
-        reportCreatedAt,
         reportAuthor,
         pauseTime,
         onCreateReport,
@@ -628,51 +582,7 @@ export const SearchVideoModal:
               />
             </div>
               
-            <div>
-              <label
-                className="
-                  mb-1
-                  block
-                  text-sm
-                  font-medium
-                  text-gray-700
-                  dark:text-gray-300
-                "
-              >
-                작성 일시
-              </label>
-              
-              <input
-                type="text"
-                value={reportCreatedAt}
-                onChange={event =>
-                  setReportCreatedAt(
-                    event.target.value,
-                  )
-                }
-                disabled={creatingReport}
-                className="
-                  w-full
-                  rounded-md
-                  border
-                  border-gray-300
-                  bg-white
-                  px-3
-                  py-2
-                  text-sm
-                  text-gray-900
-                  outline-none
-                  focus:border-[#76b900]
-              
-                  disabled:cursor-not-allowed
-                  disabled:opacity-60
-              
-                  dark:border-gray-700
-                  dark:bg-neutral-800
-                  dark:text-gray-100
-                "
-              />
-            </div>
+            {/* 작성 일시는 사용자가 수정할 필요 없음 - 입력 필드 제거 */}
               
             <div>
               <label
@@ -725,12 +635,9 @@ export const SearchVideoModal:
               disabled={
                 creatingReport ||
                 !reportTitle.trim() ||
-                !reportCreatedAt.trim() ||
                 !reportAuthor.trim()
               }
-              onClick={
-                handleReportMenuOpen
-              }
+              onClick={handleReportMenuOpen}
               className="
                 w-full
                 rounded-md

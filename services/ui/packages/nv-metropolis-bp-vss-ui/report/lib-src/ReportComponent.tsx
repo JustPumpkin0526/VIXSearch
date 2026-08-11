@@ -715,33 +715,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  disabled={!selectedReport?.pdfFileUrl || isPdfPreviewLoading || pdfCurrentPage <= 1}
-                  onClick={handlePreviewPrevPage}
-                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:disabled:bg-neutral-800 dark:disabled:text-neutral-500"
-                  aria-label="이전 페이지"
-                >
-                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
-                  </svg>
-                </button>
-                <span className="min-w-[72px] text-center text-xs font-medium text-gray-500 dark:text-neutral-400">
-                  {selectedReport?.pdfFileUrl ? `${pdfCurrentPage} / ${pdfTotalPages}` : '- / -'}
-                </span>
-                <button
-                  type="button"
-                  disabled={!selectedReport?.pdfFileUrl || isPdfPreviewLoading || pdfCurrentPage >= pdfTotalPages}
-                  onClick={handlePreviewNextPage}
-                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:disabled:bg-neutral-800 dark:disabled:text-neutral-500"
-                  aria-label="다음 페이지"
-                >
-                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
-              </div>
+              {/* 페이지 전환 버튼은 미리보기 섹션 하단 중앙으로 이동되었습니다. */}
             </header>
 
             {!selectedReport ? (
@@ -762,15 +736,46 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                           </div>
                           {pdfPreviewData && !pdfPreviewError ? (
                             <div
-                              ref={pdfPreviewContainerRef}
-                              className="flex h-[min(72vh,960px)] min-h-[540px] w-full items-center justify-center overflow-hidden rounded-2xl bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(243,244,246,0.98))] p-4 dark:bg-neutral-950"
-                            >
-                              <canvas
-                                ref={pdfCanvasRef}
-                                aria-label={`${selectedReport.title} PDF 미리보기 ${pdfCurrentPage} 페이지`}
-                                className="max-h-full max-w-full rounded-lg bg-white shadow-[0_18px_48px_rgba(15,23,42,0.16)] dark:bg-white"
-                              />
-                            </div>
+                                  ref={pdfPreviewContainerRef}
+                                  className="relative flex h-[min(72vh,960px)] min-h-[540px] w-full items-center justify-center overflow-hidden rounded-2xl bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(243,244,246,0.98))] p-4 dark:bg-neutral-950"
+                                >
+                                  <canvas
+                                    ref={pdfCanvasRef}
+                                    aria-label={`${selectedReport.title} PDF 미리보기 ${pdfCurrentPage} 페이지`}
+                                    className="max-h-full max-w-full rounded-lg bg-white shadow-[0_18px_48px_rgba(15,23,42,0.16)] dark:bg-white"
+                                  />
+
+                                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full bg-white/80 px-2 py-1 shadow-md dark:bg-neutral-900/80">
+                                    <button
+                                      type="button"
+                                      disabled={!selectedReport?.pdfFileUrl || isPdfPreviewLoading || pdfCurrentPage <= 1}
+                                      onClick={handlePreviewPrevPage}
+                                      className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:disabled:bg-neutral-800 dark:disabled:text-neutral-500"
+                                      aria-label="이전 페이지"
+                                    >
+                                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                                      </svg>
+                                    </button>
+
+                                    <span className="min-w-[72px] text-center text-xs font-medium text-gray-500 dark:text-neutral-400">
+                                      {selectedReport?.pdfFileUrl ? `${pdfCurrentPage} / ${pdfTotalPages}` : '- / -'}
+                                    </span>
+
+                                    <button
+                                      type="button"
+                                      disabled={!selectedReport?.pdfFileUrl || isPdfPreviewLoading || pdfCurrentPage >= pdfTotalPages}
+                                      onClick={handlePreviewNextPage}
+                                      className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:disabled:bg-neutral-800 dark:disabled:text-neutral-500"
+                                      aria-label="다음 페이지"
+                                    >
+                                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                                      </svg>
+                                    </button>
+                                  </div>
+
+                                </div>
                           ) : (
                             <div className="flex h-[420px] items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white text-sm text-gray-500">
                               {pdfPreviewError || 'PDF 미리보기를 불러오지 못했습니다.'}
