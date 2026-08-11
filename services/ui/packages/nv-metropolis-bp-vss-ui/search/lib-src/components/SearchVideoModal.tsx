@@ -51,6 +51,7 @@ function formatPauseTime(
 export interface NewReportFormValues {
   title: string;
   author: string;
+  situationDescription: string;
   pauseTime: number;
 }
 
@@ -148,6 +149,11 @@ export const SearchVideoModal:
     const [
       reportAuthor,
       setReportAuthor,
+    ] = useState('');
+
+    const [
+      reportSituationDescription,
+      setReportSituationDescription,
     ] = useState('');
 
 
@@ -351,9 +357,16 @@ export const SearchVideoModal:
 
     const handleSubmitNewReport =
       useCallback(async () => {
+        const normalizedTitle = reportTitle.trim();
+      
+        const normalizedAuthor = reportAuthor.trim();
+      
+        const normalizedSituationDescription = reportSituationDescription.trim();
+      
         if (
-          !reportTitle.trim() ||
-          !reportAuthor.trim() ||
+          !normalizedTitle ||
+          !normalizedAuthor ||
+          !normalizedSituationDescription ||
           !onCreateReport
         ) {
           return;
@@ -361,13 +374,14 @@ export const SearchVideoModal:
       
         try {
           await onCreateReport({
-            title:
-              reportTitle.trim(),
-            author:
-              reportAuthor.trim(),
+            title: normalizedTitle,
+            author: normalizedAuthor,
+            situationDescription:
+              normalizedSituationDescription,
             pauseTime,
           });
         
+          setReportSituationDescription('');
           closeReportMenu();
         } catch (error) {
           console.error(
@@ -378,41 +392,38 @@ export const SearchVideoModal:
       }, [
         reportTitle,
         reportAuthor,
+        reportSituationDescription,
         pauseTime,
         onCreateReport,
         closeReportMenu,
       ]);
 
-
-    const handleSelectExistingReport =
-      useCallback(
-        async (
-          reportId: string,
-        ) => {
-          if (
-            !onAddToExistingReport
-          ) {
-            return;
-          }
-
-          try {
-            await onAddToExistingReport(
-              reportId,
-            );
-
-            closeReportMenu();
-          } catch (error) {
-            console.error(
-              '[SearchVideoModal] Failed to add item to report:',
-              error,
-            );
-          }
-        },
-        [
-          closeReportMenu,
-          onAddToExistingReport,
-        ],
-      );
+    const handleSelectExistingReport = useCallback(
+      async (
+        reportId: string,
+      ) => {
+        if (
+          !onAddToExistingReport
+        ) {
+          return;
+        }
+        try {
+          await onAddToExistingReport(
+            reportId,
+          );
+          closeReportMenu();
+        } catch (error) {
+          console.error(
+            '[SearchVideoModal] Failed to add item to report:',
+            error,
+          );
+        }
+      },
+      [
+        closeReportMenu,
+        onAddToExistingReport,
+      ],
+    );
 
 
     const handleSearchByImageClick =
@@ -629,13 +640,78 @@ export const SearchVideoModal:
                 "
               />
             </div>
+
+            <div>
+              <label
+                htmlFor="report-situation-description"
+                className="
+                  mb-1
+                  block
+                  text-sm
+                  font-medium
+                  text-gray-700
+                  dark:text-gray-300
+                "
+              >
+                상황 설명
+              </label>
+
+              <textarea
+                id="report-situation-description"
+                value={reportSituationDescription}
+                onChange={event =>
+                  setReportSituationDescription(
+                    event.target.value,
+                  )
+                }
+                placeholder="해당 장면의 상황을 입력하세요."
+                rows={4}
+                maxLength={2000}
+                disabled={creatingReport}
+                className="
+                  min-h-[100px]
+                  w-full
+                  resize-y
+                  rounded-md
+                  border
+                  border-gray-300
+                  bg-white
+                  px-3
+                  py-2
+                  text-sm
+                  text-gray-900
+                  outline-none
+                  focus:border-[#76b900]
+              
+                  disabled:cursor-not-allowed
+                  disabled:opacity-60
+              
+                  dark:border-gray-700
+                  dark:bg-neutral-800
+                  dark:text-gray-100
+                "
+              />
+
+              <div
+                className="
+                  mt-1
+                  text-right
+                  text-xs
+                  text-gray-500
+                  dark:text-gray-400
+                "
+              >
+                {reportSituationDescription.length}/2000
+              </div>
+            </div>
               
             <button
               type="button"
               disabled={
                 creatingReport ||
                 !reportTitle.trim() ||
-                !reportAuthor.trim()
+                !reportAuthor.trim() ||
+                !reportSituationDescription.trim()
               }
               onClick={handleReportMenuOpen}
               className="

@@ -787,8 +787,9 @@ export const SearchResultsMessage: React.FC<
       const report = {
         id: reportId,
         title: values.title,
-        createdAt: values.createdAt,
+        createdAt: new Date().toISOString(),
         author: values.author,
+        description: values.situationDescription?.trim() ?? '',
         query: normalizedSourceQuery,
         items: [
           {
@@ -800,7 +801,7 @@ export const SearchResultsMessage: React.FC<
             ].join('::'),
             videoName: displayVideoName,
             description:
-              activeVideoData.description?.trim() ?? '',
+              values.situationDescription?.trim() ?? '',
             startTime:
               activeVideoData.start_time ?? '',
             endTime:
@@ -809,12 +810,14 @@ export const SearchResultsMessage: React.FC<
               activeVideoData.sensor_id ?? '',
             similarity:
               activeVideoData.similarity ?? 0,
-            pauseTime: values.pauseTime,
-            screenshotUrl: frameDataUrl,
+            pauseTime:
+              values.pauseTime,
+            screenshotUrl:
+              frameDataUrl,
           },
         ],
       };
-
+      
       const response = await fetch('/api/reports', {
         method: 'POST',
         headers: {
