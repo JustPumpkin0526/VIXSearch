@@ -22,14 +22,33 @@ function normalizeReportItems(raw: unknown): ReportSceneItem[] {
   return raw.map((item, index) => {
     const candidate = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
     return {
-      id: typeof candidate.id === 'string' ? candidate.id : `scene-${index}`,
-      videoName: typeof candidate.videoName === 'string' ? candidate.videoName : '검색 결과',
-      description: typeof candidate.description === 'string' ? candidate.description : '',
-      startTime: typeof candidate.startTime === 'string' ? candidate.startTime : '',
-      endTime: typeof candidate.endTime === 'string' ? candidate.endTime : '',
-      sensorId: typeof candidate.sensorId === 'string' ? candidate.sensorId : '',
-      similarity: typeof candidate.similarity === 'number' ? candidate.similarity : 0,
-      screenshotUrl: typeof candidate.screenshotUrl === 'string' ? candidate.screenshotUrl : '',
+      id: typeof candidate.id === 'string'
+        ? candidate.id
+        : `scene-${index}`,
+      videoName: typeof candidate.videoName === 'string'
+          ? candidate.videoName
+          : '검색 결과',
+      description: typeof candidate.description === 'string'
+          ? candidate.description
+          : '',
+      startTime: typeof candidate.startTime === 'string'
+          ? candidate.startTime
+          : '',
+      endTime: typeof candidate.endTime === 'string'
+          ? candidate.endTime
+          : '',
+      sensorId: typeof candidate.sensorId === 'string'
+          ? candidate.sensorId
+          : '',
+      similarity: typeof candidate.similarity === 'number'
+          ? candidate.similarity
+          : 0,
+      pauseTime: typeof candidate.pauseTime === 'number'
+          ? candidate.pauseTime
+          : undefined,
+      screenshotUrl: typeof candidate.screenshotUrl === 'string'
+          ? candidate.screenshotUrl
+          : '',
     };
   });
 }

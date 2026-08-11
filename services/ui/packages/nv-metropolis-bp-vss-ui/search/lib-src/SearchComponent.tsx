@@ -26,7 +26,10 @@ import {
   fetchOwnedVideoLookup,
   OwnedVideoLookup,
 } from './hooks/useSearch';
-import { useSearchByImage } from './hooks/useSearchByImage';
+import {
+  useSearchByImage,
+  fetchPausedFrameDataUrl,
+} from './hooks/useSearchByImage';
 import { extractSearchResultsFromAgentResponse } from './utils/agentResponseParser';
 
 // Components
@@ -363,6 +366,19 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
 
       try {
         const item = activeVideoData;
+        if (!vstApiUrl || !item.sensor_id) {
+          throw new Error(
+            'VST frame API information is missing',
+          );
+        }
+
+        const frameDataUrl = await fetchPausedFrameDataUrl(
+            vstApiUrl,
+            item.sensor_id,
+            item.start_time,
+            values.pauseTime,
+            videoModal.videoUrl,
+          );
         const displayVideoName = resolveAgentDisplayVideoName(item) || item.video_name || '검색 결과';
         const report = {
           id: `report-${Date.now()}-${Math.random()
@@ -387,7 +403,7 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
               sensorId: item.sensor_id,
               similarity: item.similarity,
               pauseTime: values.pauseTime,
-              screenshotUrl: values.frameDataUrl,
+              screenshotUrl: frameDataUrl,
             },
           ],
         };
@@ -455,6 +471,9 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
       creatingReport,
       closeVideoModal,
       resolveAgentDisplayVideoName,
+      filterParams.query,
+      vstApiUrl,
+      videoModal.videoUrl,
     ]);
 
   // Search by Image hook

@@ -527,6 +527,41 @@ async function fetchFrameImageWithFallback(
   );
 }
 
+function imageElementToDataUrl(
+  image: HTMLImageElement,
+): string {
+  const canvas =
+    document.createElement('canvas');
+
+  canvas.width =
+    image.naturalWidth;
+
+  canvas.height =
+    image.naturalHeight;
+
+  const context =
+    canvas.getContext('2d');
+
+  if (!context) {
+    throw new Error(
+      'Failed to create frame canvas',
+    );
+  }
+
+  context.drawImage(
+    image,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+
+  return canvas.toDataURL(
+    'image/jpeg',
+    0.92,
+  );
+}
+
 function extractStartTimeFromVideoUrl(
   videoUrl: string,
 ): string | null {
@@ -599,6 +634,97 @@ function extractStartTimeFromVideoUrl(
   return timestampMs === null
     ? null
     : new Date(timestampMs).toISOString();
+}
+
+export async function fetchPausedFrameDataUrl(
+  vstApiUrl: string,
+  sensorId: string,
+  videoStartTime: string,
+  pauseOffsetSeconds: number,
+  videoUrl: string,
+): Promise<string> {
+  if (!vstApiUrl) {
+    throw new Error(
+      'VST API URL is not configured',
+    );
+  }
+
+  if (!sensorId) {
+    throw new Error(
+      'Sensor ID is missing',
+    );
+  }
+
+  const actualStart =
+    extractStartTimeFromVideoUrl(
+      videoUrl,
+    );
+
+  const baseTime =
+    actualStart ||
+    videoStartTime;
+
+  const startMs =
+    parseTimestamp(baseTime);
+
+  if (startMs === null) {
+    throw new Error(
+      `Invalid video start time: ${baseTime}`,
+    );
+  }
+
+  const safePauseSeconds =
+    Number.isFinite(
+      pauseOffsetSeconds,
+    )
+      ? Math.max(
+          0,
+          pauseOffsetSeconds,
+        )
+      : 0;
+
+  const requestedTimestamp =
+    new Date(
+      startMs +
+        Math.round(
+          safePauseSeconds * 1000,
+        ),
+    ).toISOString();
+
+  const controller =
+    new AbortController();
+
+  const timestampCandidates =
+    buildPictureTimestampCandidates(
+      requestedTimestamp,
+      requestedTimestamp,
+    );
+
+  const imageResult =
+    await fetchFrameImageWithFallback(
+      vstApiUrl,
+      sensorId,
+      timestampCandidates,
+      controller.signal,
+    );
+
+  console.info(
+    '[Report] paused frame loaded',
+    {
+      sensorId,
+      videoStartTime,
+      actualStart,
+      pauseOffsetSeconds:
+        safePauseSeconds,
+      requestedTimestamp,
+      imageTimestamp:
+        imageResult.timestamp,
+    },
+  );
+
+  return imageElementToDataUrl(
+    imageResult.frameImage,
+  );
 }
 
 export const useSearchByImage = ({
