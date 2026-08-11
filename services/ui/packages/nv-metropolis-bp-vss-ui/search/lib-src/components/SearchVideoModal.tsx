@@ -364,6 +364,17 @@ export const SearchVideoModal:
       ]);
 
 
+    const handleVideoSeeked =
+      useCallback(
+        (
+          currentTime: number,
+        ) => {
+          setPauseTime(currentTime);
+        },
+        [],
+      );
+
+
     const handleShowExistingReports =
       useCallback(async () => {
         setShowExistingReports(true);
@@ -913,6 +924,9 @@ export const SearchVideoModal:
           }
           onVideoPlay={
             handleVideoPlay
+          }
+          onVideoSeeked={
+            handleVideoSeeked
           }
           videoRef={handleVideoRef}
           footer={

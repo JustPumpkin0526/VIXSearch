@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 
 export interface VideoModalProps {
   isOpen: boolean;
@@ -7,6 +7,7 @@ export interface VideoModalProps {
   onClose: () => void;
   onVideoPause?: (currentTime: number) => void;
   onVideoPlay?: (currentTime: number) => void;
+  onVideoSeeked?: (currentTime: number) => void;
   videoRef?: React.Ref<HTMLVideoElement>;
   footer?: React.ReactNode;
   sidePanel?: React.ReactNode;
@@ -19,11 +20,29 @@ export const VideoModal: React.FC<VideoModalProps> = ({
   onClose,
   onVideoPause,
   onVideoPlay,
+  onVideoSeeked,
   videoRef,
   footer,
   sidePanel,
 }) => {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stablyPlayingRef = useRef(false);
+  const seekStartedWhilePlayingRef = useRef(false);
+
+  const cancelPendingPause = useCallback(() => {
+    if (pauseTimerRef.current !== null) {
+      clearTimeout(pauseTimerRef.current);
+      pauseTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(
+    () => () => {
+      cancelPendingPause();
+    },
+    [cancelPendingPause],
+  );
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -130,10 +149,34 @@ export const VideoModal: React.FC<VideoModalProps> = ({
               crossOrigin="anonymous"
               className="h-full w-full bg-black object-contain"
               onPause={(event) => {
-                onVideoPause?.(event.currentTarget.currentTime);
+                const currentTime = event.currentTarget.currentTime;
+
+                cancelPendingPause();
+                pauseTimerRef.current = setTimeout(() => {
+                  pauseTimerRef.current = null;
+                  stablyPlayingRef.current = false;
+                  onVideoPause?.(currentTime);
+                }, 0);
               }}
               onPlay={(event) => {
+                cancelPendingPause();
+                stablyPlayingRef.current = true;
                 onVideoPlay?.(event.currentTarget.currentTime);
+              }}
+              onSeeking={() => {
+                seekStartedWhilePlayingRef.current =
+                  stablyPlayingRef.current;
+                cancelPendingPause();
+              }}
+              onSeeked={(event) => {
+                if (
+                  event.currentTarget.paused &&
+                  !seekStartedWhilePlayingRef.current
+                ) {
+                  onVideoSeeked?.(event.currentTarget.currentTime);
+                }
+
+                seekStartedWhilePlayingRef.current = false;
               }}
               onError={() => {
                 console.error('Video failed to load:', videoUrl);

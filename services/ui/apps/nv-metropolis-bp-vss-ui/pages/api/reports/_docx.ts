@@ -10,7 +10,6 @@ import {
   TableCell,
   TableRow,
   TextRun,
-  VerticalAlign,
   WidthType,
 } from 'docx';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
@@ -107,7 +106,45 @@ function formatDateTime(value: string | undefined): string {
     return value;
   }
 
-  return parsed.toLocaleString('ko-KR');
+  return new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(parsed);
+}
+
+function formatPlaybackTime(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value)) return '-';
+  const totalSeconds = Math.max(0, Math.floor(value));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [hours, minutes, seconds]
+    .map((part) => String(part).padStart(2, '0'))
+    .join(':');
+}
+
+function formatSimilarity(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value)) return '-';
+  return value <= 1 ? value.toFixed(3) : value.toFixed(1);
+}
+
+function buildDocumentNumber(report: ReportPayload): string {
+  const date = new Date(report.createdAt);
+  const datePart = Number.isNaN(date.getTime())
+    ? 'UNKNOWN'
+    : `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+  return `VIX-${datePart}-${safeText(report.id, 'REPORT').slice(0, 8)}`;
+}
+
+function buildSceneTime(item: ReportSceneItem): string {
+  if (item.startTime || item.endTime) {
+    return `${safeText(item.startTime)} ~ ${safeText(item.endTime)}`;
+  }
+  return formatPlaybackTime(item.pauseTime);
 }
 
 function buildReportQuestion(report: ReportPayload): string {
@@ -194,43 +231,41 @@ function paragraphDivider(): Paragraph {
 
 function buildInfoTable(report: ReportPayload): Table {
   return new Table({
-    width: { size: 42, type: WidthType.PERCENTAGE },
-    alignment: AlignmentType.RIGHT,
+    width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
-      ['작성자', safeText(report.author, 'VSS 시스템')],
-      ['작성 일자', formatDateTime(report.createdAt)],
-    ].map(([label, value]) => new TableRow({
+      ['문서번호', buildDocumentNumber(report), '작성자', safeText(report.author, 'VSS 시스템')],
+      ['생성일시', formatDateTime(report.createdAt), '검색 결과', `${report.items.length}건`],
+    ].map(([label1, value1, label2, value2]) => new TableRow({
       children: [
         new TableCell({
-          width: { size: 35, type: WidthType.PERCENTAGE },
-          shading: { fill: 'E9EEF5' },
+          width: { size: 15, type: WidthType.PERCENTAGE }, shading: { fill: 'E8F5EF' },
           margins: { top: 100, bottom: 100, left: 100, right: 100 },
-          children: [
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: label, bold: true, size: 20 })],
-            }),
-          ],
+          children: [new Paragraph({ children: [new TextRun({ text: label1, bold: true, size: 19, color: '176B52' })] })],
         }),
         new TableCell({
-          width: { size: 65, type: WidthType.PERCENTAGE },
+          width: { size: 35, type: WidthType.PERCENTAGE },
           margins: { top: 100, bottom: 100, left: 100, right: 100 },
-          children: [
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: value, size: 20 })],
-            }),
-          ],
+          children: [new Paragraph({ children: [new TextRun({ text: value1, size: 19 })] })],
+        }),
+        new TableCell({
+          width: { size: 15, type: WidthType.PERCENTAGE }, shading: { fill: 'E8F5EF' },
+          margins: { top: 100, bottom: 100, left: 100, right: 100 },
+          children: [new Paragraph({ children: [new TextRun({ text: label2, bold: true, size: 19, color: '176B52' })] })],
+        }),
+        new TableCell({
+          width: { size: 35, type: WidthType.PERCENTAGE },
+          margins: { top: 100, bottom: 100, left: 100, right: 100 },
+          children: [new Paragraph({ children: [new TextRun({ text: value2, size: 19 })] })],
         }),
       ],
     })),
     borders: {
-      top: { style: BorderStyle.SINGLE, size: 1, color: 'C8D1DC' },
-      bottom: { style: BorderStyle.SINGLE, size: 1, color: 'C8D1DC' },
-      left: { style: BorderStyle.SINGLE, size: 1, color: 'C8D1DC' },
-      right: { style: BorderStyle.SINGLE, size: 1, color: 'C8D1DC' },
-      insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: 'C8D1DC' },
-      insideVertical: { style: BorderStyle.SINGLE, size: 1, color: 'C8D1DC' },
+      top: { style: BorderStyle.SINGLE, size: 1, color: 'D7E2DD' },
+      bottom: { style: BorderStyle.SINGLE, size: 1, color: 'D7E2DD' },
+      left: { style: BorderStyle.SINGLE, size: 1, color: 'D7E2DD' },
+      right: { style: BorderStyle.SINGLE, size: 1, color: 'D7E2DD' },
+      insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: 'D7E2DD' },
+      insideVertical: { style: BorderStyle.SINGLE, size: 1, color: 'D7E2DD' },
     },
   });
 }
@@ -238,56 +273,7 @@ function buildInfoTable(report: ReportPayload): Table {
 async function buildWordSceneTable(
   report: ReportPayload,
 ): Promise<Table> {
-  const rows: TableRow[] = [
-    new TableRow({
-      children: [
-        new TableCell({
-          width: {
-            size: 12,
-            type: WidthType.PERCENTAGE,
-          },
-          shading: {
-            fill: 'E9EEF5',
-          },
-          children: [
-            new Paragraph({
-              alignment:
-                AlignmentType.CENTER,
-              children: [
-                new TextRun({
-                  text: 'ID',
-                  bold: true,
-                  size: 22,
-                }),
-              ],
-            }),
-          ],
-        }),
-        new TableCell({
-          width: {
-            size: 88,
-            type: WidthType.PERCENTAGE,
-          },
-          shading: {
-            fill: 'E9EEF5',
-          },
-          children: [
-            new Paragraph({
-              alignment:
-                AlignmentType.CENTER,
-              children: [
-                new TextRun({
-                  text: '결과 장면',
-                  bold: true,
-                  size: 22,
-                }),
-              ],
-            }),
-          ],
-        }),
-      ],
-    }),
-  ];
+  const rows: TableRow[] = [];
 
   for (
     const [index, item]
@@ -329,44 +315,46 @@ async function buildWordSceneTable(
           }),
         ];
 
-    rows.push(
-      new TableRow({
+    rows.push(new TableRow({
+      children: [new TableCell({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        margins: { top: 140, bottom: 140, left: 160, right: 160 },
         children: [
-          new TableCell({
-            width: {
-              size: 12,
-              type:
-                WidthType.PERCENTAGE,
-            },
-            verticalAlign: VerticalAlign.CENTER,
+          new Paragraph({
+            spacing: { after: 100 },
             children: [
-              new Paragraph({
-                alignment:
-                  AlignmentType.CENTER,
-                children: [
-                  new TextRun({
-                    text: String(
-                      index + 1,
-                    ).padStart(2, '0'),
-                    bold: true,
-                    size: 22,
-                  }),
-                ],
-              }),
+              new TextRun({ text: `결과 ${String(index + 1).padStart(2, '0')}`, bold: true, size: 23, color: '176B52' }),
+              new TextRun({ text: `    ${safeText(item.videoName, '영상명 없음')}`, bold: true, size: 22, color: '24313A' }),
             ],
           }),
-
-          new TableCell({
-            width: {
-              size: 88,
-              type:
-                WidthType.PERCENTAGE,
-            },
-            children: imageChildren,
+          ...imageChildren,
+          new Paragraph({
+            spacing: { before: 120, after: 40 },
+            children: [
+              new TextRun({ text: '영상 구간  ', bold: true, size: 19, color: '176B52' }),
+              new TextRun({ text: buildSceneTime(item), size: 19 }),
+              new TextRun({ text: '    캡처 시점  ', bold: true, size: 19, color: '176B52' }),
+              new TextRun({ text: formatPlaybackTime(item.pauseTime), size: 19 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { after: 70 },
+            children: [
+              new TextRun({ text: '유사도  ', bold: true, size: 19, color: '176B52' }),
+              new TextRun({ text: formatSimilarity(item.similarity), size: 19 }),
+              new TextRun({ text: '    센서 ID  ', bold: true, size: 19, color: '176B52' }),
+              new TextRun({ text: safeText(item.sensorId), size: 19 }),
+            ],
+          }),
+          new Paragraph({
+            children: [
+              new TextRun({ text: '장면 설명  ', bold: true, size: 19, color: '176B52' }),
+              new TextRun({ text: safeText(item.description), size: 19 }),
+            ],
           }),
         ],
-      }),
-    );
+      })],
+    }));
   }
 
   return new Table({
@@ -401,11 +389,7 @@ async function buildWordSceneTable(
         size: 1,
         color: 'C8D1DC',
       },
-      insideVertical: {
-        style: BorderStyle.SINGLE,
-        size: 1,
-        color: 'C8D1DC',
-      },
+      insideVertical: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
     },
   });
 }
@@ -510,25 +494,20 @@ export async function buildAccidentReportWordBuffer(report: ReportPayload): Prom
       {
         children: [
           new Paragraph({
-            text: 'VIXSearch Search Report',
             heading: HeadingLevel.TITLE,
-            alignment:
-              AlignmentType.CENTER,
-            spacing: {
-              before: 120,
-              after: 80,
-            },
+            spacing: { before: 80, after: 40 },
+            border: { bottom: { color: '176B52', space: 8, style: BorderStyle.SINGLE, size: 18 } },
+            children: [
+              new TextRun({ text: 'VIXSearch', bold: true, size: 34, color: '176B52' }),
+              new TextRun({ text: '                                      SEARCH RESULT REPORT', bold: true, size: 18, color: '52616B' }),
+            ],
           }),
         
           new Paragraph({
-            text: safeText(
-              report.title,
-              '검색 보고서',
-            ),
-            alignment:
-              AlignmentType.CENTER,
+            children: [new TextRun({ text: safeText(report.title, '검색 결과 보고서'), bold: true, size: 30, color: '24313A' })],
             spacing: {
-              after: 120,
+              before: 140,
+              after: 140,
             },
           }),
         
@@ -539,9 +518,10 @@ export async function buildAccidentReportWordBuffer(report: ReportPayload): Prom
           new Paragraph({
             children: [
               new TextRun({
-                text: '사용자 질문',
+                text: '검색 개요',
                 bold: true,
                 size: 24,
+                color: '176B52',
               }),
             ],
           }),
@@ -554,9 +534,7 @@ export async function buildAccidentReportWordBuffer(report: ReportPayload): Prom
             children: [
               new TextRun({
                 text:
-                  buildReportQuestion(
-                    report,
-                  ),
+                  `검색어  ${buildReportQuestion(report)}\n검색 대상  ${report.items.map((item) => safeText(item.videoName)).filter((value, index, values) => values.indexOf(value) === index).join(', ') || '-'}\n검색 결과  ${report.items.length}건`,
                 size: 22,
               }),
             ],
@@ -564,6 +542,8 @@ export async function buildAccidentReportWordBuffer(report: ReportPayload): Prom
         
           paragraphDivider(),
         
+          new Paragraph({ children: [new TextRun({ text: '검색 결과 장면', bold: true, size: 24, color: '176B52' })], spacing: { after: 100 } }),
+
           sceneTable,
         
           paragraphDivider(),
@@ -571,9 +551,10 @@ export async function buildAccidentReportWordBuffer(report: ReportPayload): Prom
           new Paragraph({
             children: [
               new TextRun({
-                text: '부가 설명',
+                text: '분석 요약',
                 bold: true,
                 size: 24,
+                color: '176B52',
               }),
             ],
           }),
@@ -593,6 +574,10 @@ export async function buildAccidentReportWordBuffer(report: ReportPayload): Prom
               }),
             ],
           }),
+
+          new Paragraph({ spacing: { before: 260 }, border: { top: { color: 'D7E2DD', style: BorderStyle.SINGLE, size: 6, space: 8 } }, children: [
+            new TextRun({ text: '본 보고서는 VIXSearch 검색 결과를 기반으로 자동 생성되었습니다.', size: 17, color: '6B7780' }),
+          ] }),
         ],
       },
     ],
@@ -773,15 +758,19 @@ export async function buildAccidentReportPdfBuffer(report: ReportPayload): Promi
   let y = 790;
   const left = 48;
   const maxWidth = 500;
-  page.drawText('VIXSearch Search Report', {
-    x: 160,
+  page.drawText('VIXSearch', {
+    x: left,
     y,
-    size: 20,
+    size: 22,
     font: boldFont,
-    color: rgb(0.07, 0.22, 0.44),
+    color: rgb(0.09, 0.42, 0.32),
+  });
+  page.drawText('SEARCH RESULT REPORT', {
+    x: 400, y: y + 3, size: 9.5, font: boldFont, color: rgb(0.32, 0.38, 0.42),
   });
   y -= 18;
-  y -= 30;
+  page.drawLine({ start: { x: left, y }, end: { x: 547, y }, thickness: 2.5, color: rgb(0.09, 0.42, 0.32) });
+  y -= 34;
 
   ({ page, y } = drawWrappedText(
     pdfDoc,
@@ -791,64 +780,39 @@ export async function buildAccidentReportPdfBuffer(report: ReportPayload): Promi
       '검색 보고서',
     ),
     boldFont,
-    14,
+    17,
     left,
     y,
     maxWidth,
     18,
   ));
-  drawDivider(page, y);
-  y -= 28;
+  y -= 8;
 
   const infoRows = [
-    `작성자: ${safeText(report.author, 'VSS 시스템')}`,
-    `작성 일자: ${formatDateTime(report.createdAt)}`,
+    `문서번호  ${buildDocumentNumber(report)}     작성자  ${safeText(report.author, 'VSS 시스템')}`,
+    `생성일시  ${formatDateTime(report.createdAt)}     검색 결과  ${report.items.length}건`,
   ];
   for (const row of infoRows) {
-    ({ page, y } = drawWrappedText(pdfDoc, page, row, regularFont, 10.5, 340, y, 200, 14));
+    ({ page, y } = drawWrappedText(pdfDoc, page, row, regularFont, 9.5, left + 10, y, 480, 15));
   }
 
   y -= 10;
   drawDivider(page, y);
   y -= 28;
 
-  ({ page, y } = drawWrappedText(pdfDoc, page, '사용자 질문:', boldFont, 12, left, y, maxWidth, 16));
-  ({ page, y } = drawWrappedText(pdfDoc, page, buildReportQuestion(report), regularFont, 11, 120, y + 16, 420, 16));
+  ({ page, y } = drawWrappedText(pdfDoc, page, '검색 개요', boldFont, 12, left, y, maxWidth, 16));
+  ({ page, y } = drawWrappedText(pdfDoc, page, `검색어  ${buildReportQuestion(report)}`, regularFont, 10.5, left + 10, y - 4, 480, 15));
+  ({ page, y } = drawWrappedText(pdfDoc, page, `검색 대상  ${report.items.map((item) => safeText(item.videoName)).filter((value, index, values) => values.indexOf(value) === index).join(', ') || '-'}`, regularFont, 10.5, left + 10, y, 480, 15));
   y -= 16;
   drawDivider(page, y);
   y -= 28;
   y -= 8;
 
-  ({ page, y } = drawWrappedText(
-    pdfDoc,
-    page,
-    'ID',
-    boldFont,
-    11,
-    left,
-    y,
-    40,
-    16,
-  ));
-
-  ({ page, y } = drawWrappedText(
-    pdfDoc,
-    page,
-    '결과 장면',
-    boldFont,
-    11,
-    left + 60,
-    y + 16,
-    430,
-    16,
-  ));
-
-  y -= 12;
-  drawDivider(page, y);
-  y -= 16;
+  ({ page, y } = drawWrappedText(pdfDoc, page, '검색 결과 장면', boldFont, 12, left, y, maxWidth, 16));
+  y -= 8;
 
   for (const [index, item] of report.items.entries()) {
-    if (y < 330) {
+    if (y < 390) {
       page =
         pdfDoc.addPage(
           [595.28, 841.89],
@@ -856,30 +820,27 @@ export async function buildAccidentReportPdfBuffer(report: ReportPayload): Promi
       y = 790;
     }
 
-    page.drawText(
-      String(index + 1).padStart(
-        2,
-        '0',
-      ),
-      {
-        x: left,
-        y,
-        size: 11,
-        font: boldFont,
-      },
-    );
+    page.drawRectangle({ x: left, y: y - 4, width: 499, height: 24, color: rgb(0.91, 0.96, 0.94) });
+    page.drawText(`결과 ${String(index + 1).padStart(2, '0')}   ${safeText(item.videoName, '영상명 없음')}`, {
+      x: left + 10, y: y + 3, size: 10.5, font: boldFont, color: rgb(0.09, 0.42, 0.32),
+    });
+    y -= 34;
 
     const imageResult = await drawImageBlock(
       pdfDoc,
       page,
       item.screenshotUrl,
       y,
-      left + 60,
+      left + 40,
       420,
     );
 
     page = imageResult.page;
-    y = imageResult.y - 10;
+    y = imageResult.y - 4;
+
+    ({ page, y } = drawWrappedText(pdfDoc, page, `영상 구간  ${buildSceneTime(item)}     캡처 시점  ${formatPlaybackTime(item.pauseTime)}`, regularFont, 9.5, left + 10, y, 480, 14));
+    ({ page, y } = drawWrappedText(pdfDoc, page, `유사도  ${formatSimilarity(item.similarity)}     센서 ID  ${safeText(item.sensorId)}`, regularFont, 9.5, left + 10, y, 480, 14));
+    ({ page, y } = drawWrappedText(pdfDoc, page, `장면 설명  ${safeText(item.description)}`, regularFont, 9.5, left + 10, y, 480, 14));
 
     drawDivider(page, y);
     y -= 16;
@@ -890,7 +851,7 @@ export async function buildAccidentReportPdfBuffer(report: ReportPayload): Promi
   ({ page, y } = drawWrappedText(
     pdfDoc,
     page,
-    '부가 설명',
+    '분석 요약',
     boldFont,
     12,
     left,
@@ -916,6 +877,20 @@ export async function buildAccidentReportPdfBuffer(report: ReportPayload): Promi
     maxWidth,
     15,
   ));
+
+  const pages = pdfDoc.getPages();
+  pages.forEach((reportPage, index) => {
+    reportPage.drawLine({
+      start: { x: 48, y: 38 }, end: { x: 547, y: 38 }, thickness: 0.5,
+      color: rgb(0.82, 0.87, 0.85),
+    });
+    reportPage.drawText('VIXSearch 검색 결과 기반 자동 생성 보고서', {
+      x: 48, y: 23, size: 7.5, font: regularFont, color: rgb(0.42, 0.47, 0.50),
+    });
+    reportPage.drawText(`${index + 1} / ${pages.length}`, {
+      x: 515, y: 23, size: 7.5, font: regularFont, color: rgb(0.42, 0.47, 0.50),
+    });
+  });
 
   const bytes = await pdfDoc.save();
   return Buffer.from(bytes);
