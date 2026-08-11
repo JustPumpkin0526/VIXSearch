@@ -12,7 +12,11 @@ import {
   useFilter,
   useSearchByImage,
   type SearchData,
+  type NewReportFormValues,
 } from '@nv-metropolis-bp-vss-ui/search';
+import {
+  fetchReportFrameDataUrl,
+} from '@nv-metropolis-bp-vss-ui/report';
 
 type CriticResult = {
   result: 'confirmed' | 'rejected' | 'unverified' | string;
@@ -30,6 +34,7 @@ type ReportItem = {
   endTime: string;
   sensorId: string;
   similarity: number;
+  pauseTime?: number;
   screenshotUrl: string;
 };
 
@@ -684,12 +689,28 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
     cancelSearchByImage,
   ]);
 
-  const handleCreateReport = React.useCallback(async () => {
+  const handleCreateReport = React.useCallback(async (values: NewReportFormValues) => {
     if (!activeVideoData || creatingReport) {
       return;
     }
   
     setCreatingReport(true);
+    
+    const clipStartTime =
+      videoModal.actualStartTime ||
+      activeVideoData.start_time;
+
+    const reportStreamId =
+      videoModal.streamId ||
+      activeVideoData.sensor_id;
+
+    const frameDataUrl =
+      await fetchReportFrameDataUrl(
+        vstApiUrl,
+        reportStreamId,
+        clipStartTime,
+        values.pauseTime,
+      );
   
     try {
       const token = window.localStorage.getItem('vss.auth.token');
@@ -709,8 +730,9 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
       
       const report = {
         id: reportId,
-        title: `${displayVideoName} 보고서`,
-        createdAt: new Date().toISOString(),
+        title: values.title,
+        createdAt: values.createdAt,
+        author: values.author,
         items: [
           {
             id: [
@@ -725,7 +747,8 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
             endTime: activeVideoData.end_time ?? '',
             sensorId: activeVideoData.sensor_id ?? '',
             similarity: activeVideoData.similarity ?? 0,
-            screenshotUrl: activeVideoData.screenshot_url ?? '',
+            pauseTime: values.pauseTime,
+            screenshotUrl: frameDataUrl,
           },
         ],
       };
@@ -784,6 +807,9 @@ export const SearchResultsMessage: React.FC<SearchResultsMessageProps> = ({ resu
     creatingReport,
     sensorIdToNameMap,
     closeVideoModal,
+    vstApiUrl,
+    videoModal.actualStartTime,
+    videoModal.streamId,
   ]);
 
   const handleRefresh = React.useCallback(() => {
