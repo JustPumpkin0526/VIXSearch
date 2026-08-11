@@ -11,6 +11,11 @@ export interface FetchVideoUrlParams {
   showObjectsBbox?: boolean;
 }
 
+export interface FetchVideoUrlResult {
+  videoUrl: string;
+  actualStartTime: string;
+}
+
 /**
  * Check if a video URL is accessible by attempting to load it in a video element.
  * More reliable than HEAD requests as some servers don't support HEAD.
@@ -140,8 +145,8 @@ export const replaceVideoUrlBase = (
 export const fetchVideoUrlFromVst = async (
   vstApiUrl: string,
   params: FetchVideoUrlParams,
-  signal?: AbortSignal
-): Promise<string> => {
+  signal?: AbortSignal,
+): Promise<FetchVideoUrlResult> => {
   const { sensorId, startTime, endTime, objectIds, showObjectsBbox } = params;
   const hasObjectIds =
     showObjectsBbox === true &&
@@ -183,11 +188,27 @@ export const fetchVideoUrlFromVst = async (
   }
 
   const data = await response.json();
-  let finalUrl = data.videoUrl ?? '';
 
-  if (data.videoUrl && vstApiUrl) {
-    finalUrl = replaceVideoUrlBase(data.videoUrl, vstApiUrl);
+  let finalUrl =
+    typeof data.videoUrl === 'string'
+      ? data.videoUrl
+      : '';
+  
+  if (finalUrl && vstApiUrl) {
+    finalUrl = replaceVideoUrlBase(
+      finalUrl,
+      vstApiUrl,
+    );
   }
-
-  return finalUrl;
+  
+  const actualStartTime =
+    typeof data.startTime === 'string' &&
+    data.startTime
+      ? data.startTime
+      : startTime;
+  
+  return {
+    videoUrl: finalUrl,
+    actualStartTime,
+  };
 };

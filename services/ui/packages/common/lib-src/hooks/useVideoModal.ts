@@ -17,6 +17,7 @@ export interface VideoModalState {
   isOpen: boolean;
   videoUrl: string;
   title: string;
+  actualStartTime: string;
 }
 
 /** Data required to fetch and display a video clip from VST API */
@@ -55,6 +56,7 @@ export const useVideoModal = (
     isOpen: false,
     videoUrl: '',
     title: '',
+    actualStartTime: '',
   });
   const [loadingAlertId, setLoadingAlertId] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -80,7 +82,7 @@ export const useVideoModal = (
         const { video_name, start_time, end_time, sensor_id, object_ids } =
           videoData;
 
-        const finalVideoUrl = await fetchVideoUrlFromVst(
+        const videoResult = await fetchVideoUrlFromVst(
           vstApiUrl,
           {
             sensorId: sensor_id,
@@ -89,15 +91,17 @@ export const useVideoModal = (
             objectIds: object_ids,
             showObjectsBbox: showBbox,
           },
-          abortController.signal
+          abortController.signal,
         );
 
         if (abortController.signal.aborted) return;
 
         setVideoModal({
           isOpen: true,
-          videoUrl: finalVideoUrl,
+          videoUrl: videoResult.videoUrl,
           title: video_name,
+          actualStartTime:
+            videoResult.actualStartTime,
         });
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') {
@@ -113,13 +117,21 @@ export const useVideoModal = (
     [vstApiUrl]
   );
 
-  const openVideoModalFromUrl = useCallback((title: string, videoUrl: string) => {
-    setVideoModal({
-      isOpen: true,
-      videoUrl,
-      title,
-    });
-  }, []);
+  const openVideoModalFromUrl = useCallback(
+    (
+      title: string,
+      videoUrl: string,
+      actualStartTime = '',
+    ) => {
+      setVideoModal({
+        isOpen: true,
+        videoUrl,
+        title,
+        actualStartTime,
+      });
+    },
+    [],
+  );
 
   const openVideoModalFromAlert = useCallback(
     async (alert: AlertLike) => {
@@ -178,7 +190,7 @@ export const useVideoModal = (
 
         const objectIds = alert.metadata?.objectIds;
 
-        const finalVideoUrl = await fetchVideoUrlFromVst(
+        const videoResult  = await fetchVideoUrlFromVst(
           vstApiUrl,
           {
             sensorId,
@@ -192,7 +204,11 @@ export const useVideoModal = (
 
         if (abortController.signal.aborted) return;
 
-        openVideoModalFromUrl(title, finalVideoUrl);
+        openVideoModalFromUrl(
+          title,
+          videoResult.videoUrl,
+          videoResult.actualStartTime,
+        );
       } catch (err) {
         if (abortController.signal.aborted) {
           return;
@@ -213,6 +229,7 @@ export const useVideoModal = (
       isOpen: false,
       videoUrl: '',
       title: '',
+      actualStartTime: '',
     });
   }, []);
 

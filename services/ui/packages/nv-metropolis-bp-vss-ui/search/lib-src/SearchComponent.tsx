@@ -26,10 +26,8 @@ import {
   fetchOwnedVideoLookup,
   OwnedVideoLookup,
 } from './hooks/useSearch';
-import {
-  useSearchByImage,
-  fetchPausedFrameDataUrl,
-} from './hooks/useSearchByImage';
+import { useSearchByImage } from './hooks/useSearchByImage';
+import { fetchReportFrameDataUrl } from '@nv-metropolis-bp-vss-ui/report';
 import { extractSearchResultsFromAgentResponse } from './utils/agentResponseParser';
 
 // Components
@@ -372,13 +370,14 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
           );
         }
 
-        const frameDataUrl = await fetchPausedFrameDataUrl(
-            vstApiUrl,
-            item.sensor_id,
-            item.start_time,
-            values.pauseTime,
-            videoModal.videoUrl,
-          );
+        const clipStartTime = videoModal.actualStartTime || item.start_time;
+
+        const frameDataUrl = await fetchReportFrameDataUrl(
+          vstApiUrl,
+          item.sensor_id,
+          clipStartTime,
+          values.pauseTime,
+        );
         const displayVideoName = resolveAgentDisplayVideoName(item) || item.video_name || '검색 결과';
         const report = {
           id: `report-${Date.now()}-${Math.random()
