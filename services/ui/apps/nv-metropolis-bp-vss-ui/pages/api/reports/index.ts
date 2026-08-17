@@ -28,9 +28,18 @@ function normalizeReportItems(raw: unknown): ReportSceneItem[] {
       videoName: typeof candidate.videoName === 'string'
           ? candidate.videoName
           : '검색 결과',
+      locationName: typeof candidate.locationName === 'string'
+          ? candidate.locationName
+          : undefined,
       description: typeof candidate.description === 'string'
           ? candidate.description
           : '',
+      comment: typeof candidate.comment === 'string'
+          ? candidate.comment
+          : undefined,
+      query: typeof candidate.query === 'string'
+          ? candidate.query
+          : undefined,
       startTime: typeof candidate.startTime === 'string'
           ? candidate.startTime
           : '',
@@ -116,7 +125,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         description,
         content,
         wordCount,
-        items: normalizeReportItems(body.items),
+        items: normalizeReportItems(body.items).map((it) => ({
+          ...it,
+          locationName: it.locationName ?? (typeof body.place === 'string' ? body.place : undefined),
+        })),
       };
       const wordBuffer = await buildAccidentReportWordBuffer(reportPayload);
       reportPayload.wordFileName = createWordFileName(title, reportId);
@@ -197,9 +209,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const content = typeof body.content === 'string'
         ? body.content
         : (typeof existingJson.content === 'string' ? existingJson.content : '');
-      const items = Array.isArray(body.items)
-        ? normalizeReportItems(body.items)
-        : normalizeReportItems(existingJson.items);
+      const existingItems = normalizeReportItems(existingJson.items);
+      const appendItem = body.appendItem && typeof body.appendItem === 'object'
+        ? normalizeReportItems([body.appendItem])[0]
+        : undefined;
+      const maybeAppend = appendItem
+        ? existingItems.some((item) => item.id === appendItem.id)
+          ? existingItems
+          : [...existingItems, appendItem]
+        : Array.isArray(body.items)
+          ? normalizeReportItems(body.items)
+          : existingItems;
+      const items = maybeAppend.map((it) => ({
+        ...it,
+        locationName: it.locationName ?? (typeof body.place === 'string' ? body.place : undefined),
+      }));
       const wordCount = typeof body.wordCount === 'number' ? body.wordCount : countWords(content);
 
       const reportPayload: ReportPayload = {

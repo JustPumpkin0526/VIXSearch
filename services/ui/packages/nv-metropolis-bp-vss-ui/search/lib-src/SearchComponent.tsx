@@ -398,6 +398,7 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
                 item.video_name ?? '',
               ].join('::'),
               videoName: displayVideoName,
+              locationName: values.place?.trim() || displayVideoName,
               description: item.description?.trim() ?? '',
               startTime: item.start_time,
               endTime: item.end_time,

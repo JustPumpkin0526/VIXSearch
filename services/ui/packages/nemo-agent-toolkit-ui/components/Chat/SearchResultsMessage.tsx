@@ -11,6 +11,7 @@ import {
   VideoSearchList,
   useFilter,
   useSearchByImage,
+  type AddToExistingReportFormValues,
   type SearchData,
   type NewReportFormValues,
 } from '@nv-metropolis-bp-vss-ui/search';
@@ -29,7 +30,10 @@ const OPEN_REPORT_TAB_EVENT = 'vss:open-report-tab';
 type ReportItem = {
   id: string;
   videoName: string;
+  locationName?: string;
   description: string;
+  comment?: string;
+  query?: string;
   startTime: string;
   endTime: string;
   sensorId: string;
@@ -516,10 +520,23 @@ export const SearchResultsMessage: React.FC<
     closeVideoModal,
   } = useVideoModal(vstApiUrl);
 
-  const buildCurrentReportItem = React.useCallback((): ReportItem | null => {
+  const buildCurrentReportItem = React.useCallback((
+    values: AddToExistingReportFormValues,
+    screenshotUrl: string,
+  ): ReportItem | null => {
     if (!activeVideoData) {
       return null;
     }
+
+    const displayVideoName =
+      sensorIdToNameMap.get(activeVideoData.sensor_id) ||
+      activeVideoData.video_name ||
+      '검색 결과';
+    const normalizedDescription =
+      values.situationDescription.trim();
+    const normalizedPauseTime = Number.isFinite(values.pauseTime)
+      ? Math.max(0, values.pauseTime)
+      : 0;
 
     return {
       id: [
@@ -527,16 +544,28 @@ export const SearchResultsMessage: React.FC<
         activeVideoData.start_time ?? '',
         activeVideoData.end_time ?? '',
         activeVideoData.video_name ?? '',
+        Math.round(normalizedPauseTime * 1000),
       ].join('::'),
-      videoName: activeVideoData.video_name || '검색 결과',
-      description: activeVideoData.description?.trim() ?? '',
+      videoName: displayVideoName,
+      locationName: displayVideoName,
+      description: normalizedDescription,
+      comment: normalizedDescription,
+      query:
+        typeof sourceQuery === 'string'
+          ? sourceQuery.trim()
+          : '',
       startTime: activeVideoData.start_time ?? '',
       endTime: activeVideoData.end_time ?? '',
       sensorId: activeVideoData.sensor_id ?? '',
       similarity: activeVideoData.similarity ?? 0,
-      screenshotUrl: activeVideoData.screenshot_url ?? '',
+      pauseTime: normalizedPauseTime,
+      screenshotUrl,
     };
-  }, [activeVideoData]);
+  }, [
+    activeVideoData,
+    sensorIdToNameMap,
+    sourceQuery,
+  ]);
 
   const loadExistingReports = React.useCallback(async () => {
     setLoadingReports(true);
@@ -578,14 +607,37 @@ export const SearchResultsMessage: React.FC<
   }, []);
 
   const handleAddToExistingReport = React.useCallback(
-    async (reportId: string) => {
+    async (
+      reportId: string,
+      values: AddToExistingReportFormValues,
+    ) => {
       if (!activeVideoData || creatingReport) {
         return;
       }
 
-      const reportItem = buildCurrentReportItem();
+      const clipStartTime =
+        videoModal.actualStartTime ||
+        activeVideoData.start_time;
+      const reportStreamId =
+        videoModal.streamId ||
+        activeVideoData.sensor_id;
 
-      if (!reportItem) {
+      if (!vstApiUrl.trim()) {
+        window.alert('VST API URL이 설정되지 않았습니다.');
+        return;
+      }
+
+      if (!reportStreamId?.trim()) {
+        window.alert(
+          '보고서 프레임의 Stream ID를 확인할 수 없습니다.',
+        );
+        return;
+      }
+
+      if (!clipStartTime?.trim()) {
+        window.alert(
+          '검색 결과 클립의 시작 시간을 확인할 수 없습니다.',
+        );
         return;
       }
 
@@ -598,29 +650,21 @@ export const SearchResultsMessage: React.FC<
           throw new Error('Authentication token is missing');
         }
 
-        let reports = availableReports;
-
-        if (reports.length === 0) {
-          reports = await loadExistingReports();
-        }
-
-        const targetReport = reports.find((report) => report.id === reportId);
-
-        if (!targetReport) {
-          throw new Error(`Report not found: ${reportId}`);
-        }
-
-        const existingItems = Array.isArray(targetReport.items)
-          ? targetReport.items
-          : [];
-
-        const alreadyExists = existingItems.some(
-          (item) => item.id === reportItem.id,
+        const frameDataUrl = await fetchReportFrameDataUrl(
+          vstApiUrl,
+          reportStreamId,
+          clipStartTime,
+          values.pauseTime,
         );
 
-        const items = alreadyExists
-          ? existingItems
-          : [...existingItems, reportItem];
+        const reportItem = buildCurrentReportItem(
+          values,
+          frameDataUrl,
+        );
+
+        if (!reportItem) {
+          throw new Error('Report item could not be created');
+        }
 
         const response = await fetch('/api/reports', {
           method: 'PATCH',
@@ -629,13 +673,29 @@ export const SearchResultsMessage: React.FC<
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            id: targetReport.id,
-            items,
+            id: reportId,
+            appendItem: reportItem,
           }),
         });
 
         if (!response.ok) {
-          throw new Error(`Failed to update report: ${response.status}`);
+          const errorText = await response.text();
+          throw new Error(
+            `Failed to update report: ${response.status} ${errorText}`,
+          );
+        }
+
+        const responsePayload = await response.json();
+        const updatedReport = responsePayload?.report as StoredReport | undefined;
+
+        if (updatedReport?.id) {
+          setAvailableReports((current) =>
+            current.map((report) =>
+              report.id === updatedReport.id
+                ? updatedReport
+                : report,
+            ),
+          );
         }
 
         window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
@@ -644,7 +704,7 @@ export const SearchResultsMessage: React.FC<
           new CustomEvent(OPEN_REPORT_TAB_EVENT, {
             detail: {
               tabId: 'report',
-              reportId: targetReport.id,
+              reportId,
             },
           }),
         );
@@ -665,10 +725,11 @@ export const SearchResultsMessage: React.FC<
     [
       activeVideoData,
       creatingReport,
-      availableReports,
-      loadExistingReports,
       buildCurrentReportItem,
       closeVideoModal,
+      videoModal.actualStartTime,
+      videoModal.streamId,
+      vstApiUrl,
     ],
   );
 
@@ -798,10 +859,17 @@ export const SearchResultsMessage: React.FC<
               activeVideoData.start_time ?? '',
               activeVideoData.end_time ?? '',
               activeVideoData.video_name ?? '',
+              Math.round(
+                Math.max(0, values.pauseTime) * 1000,
+              ),
             ].join('::'),
             videoName: displayVideoName,
+            locationName: values.place?.trim() || displayVideoName,
             description:
               values.situationDescription?.trim() ?? '',
+            comment:
+              values.situationDescription?.trim() ?? '',
+            query: normalizedSourceQuery,
             startTime:
               activeVideoData.start_time ?? '',
             endTime:

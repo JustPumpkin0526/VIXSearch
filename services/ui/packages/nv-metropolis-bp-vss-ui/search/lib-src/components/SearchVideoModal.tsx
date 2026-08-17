@@ -53,6 +53,13 @@ export interface NewReportFormValues {
   author: string;
   situationDescription: string;
   pauseTime: number;
+  place?: string;
+}
+
+export interface AddToExistingReportFormValues {
+  situationDescription: string;
+  pauseTime: number;
+  place?: string;
 }
 
 
@@ -81,6 +88,7 @@ export interface SearchVideoModalProps {
 
   onAddToExistingReport?: (
     reportId: string,
+    values: AddToExistingReportFormValues,
   ) => void | Promise<void>;
 
   onLoadExistingReports?:
@@ -154,6 +162,11 @@ export const SearchVideoModal:
     const [
       reportSituationDescription,
       setReportSituationDescription,
+    ] = useState('');
+
+    const [
+      reportPlace,
+      setReportPlace,
     ] = useState('');
 
 
@@ -259,6 +272,8 @@ export const SearchVideoModal:
 
       setReportTitle('');
       setReportAuthor('');
+      setReportSituationDescription('');
+      setReportPlace('');
     }, [
       isOpen,
       videoUrl,
@@ -379,9 +394,11 @@ export const SearchVideoModal:
             situationDescription:
               normalizedSituationDescription,
             pauseTime,
+            place: reportPlace.trim(),
           });
         
           setReportSituationDescription('');
+          setReportPlace('');
           closeReportMenu();
         } catch (error) {
           console.error(
@@ -393,6 +410,7 @@ export const SearchVideoModal:
         reportTitle,
         reportAuthor,
         reportSituationDescription,
+        reportPlace,
         pauseTime,
         onCreateReport,
         closeReportMenu,
@@ -402,15 +420,27 @@ export const SearchVideoModal:
       async (
         reportId: string,
       ) => {
+        const normalizedSituationDescription =
+          reportSituationDescription.trim();
+
         if (
-          !onAddToExistingReport
+          !onAddToExistingReport ||
+          !normalizedSituationDescription
         ) {
           return;
         }
         try {
           await onAddToExistingReport(
             reportId,
+            {
+              situationDescription:
+                normalizedSituationDescription,
+              pauseTime,
+              place: reportPlace.trim(),
+            },
           );
+          setReportSituationDescription('');
+          setReportPlace('');
           closeReportMenu();
         } catch (error) {
           console.error(
@@ -422,6 +452,9 @@ export const SearchVideoModal:
       [
         closeReportMenu,
         onAddToExistingReport,
+        pauseTime,
+        reportPlace,
+        reportSituationDescription,
       ],
     );
 
@@ -460,7 +493,8 @@ export const SearchVideoModal:
     const showReportPanel =
       paused &&
       !searchByImageOverlay &&
-      !!onCreateReport;
+      (!!onCreateReport ||
+        !!onAddToExistingReport);
 
 
     if (!isOpen) {
@@ -643,6 +677,56 @@ export const SearchVideoModal:
 
             <div>
               <label
+                htmlFor="report-place"
+                className="
+                  mb-1
+                  block
+                  text-sm
+                  font-medium
+                  text-gray-700
+                  dark:text-gray-300
+                "
+              >
+                장소명
+              </label>
+
+              <input
+                id="report-place"
+                type="text"
+                value={reportPlace}
+                onChange={event =>
+                  setReportPlace(
+                    event.target.value,
+                  )
+                }
+                placeholder="장소명을 입력하세요."
+                maxLength={200}
+                disabled={creatingReport}
+                className="
+                  w-full
+                  rounded-md
+                  border
+                  border-gray-300
+                  bg-white
+                  px-3
+                  py-2
+                  text-sm
+                  text-gray-900
+                  outline-none
+                  focus:border-[#76b900]
+
+                  disabled:cursor-not-allowed
+                  disabled:opacity-60
+
+                  dark:border-gray-700
+                  dark:bg-neutral-800
+                  dark:text-gray-100
+                "
+              />
+            </div>
+
+            <div>
+              <label
                 htmlFor="report-situation-description"
                 className="
                   mb-1
@@ -709,8 +793,6 @@ export const SearchVideoModal:
               type="button"
               disabled={
                 creatingReport ||
-                !reportTitle.trim() ||
-                !reportAuthor.trim() ||
                 !reportSituationDescription.trim()
               }
               onClick={handleReportMenuOpen}
@@ -847,6 +929,13 @@ export const SearchVideoModal:
                   <div className="py-1">
                     <button
                       type="button"
+                      disabled={
+                        creatingReport ||
+                        !reportTitle.trim() ||
+                        !reportAuthor.trim() ||
+                        !reportSituationDescription.trim() ||
+                        !onCreateReport
+                      }
                       onClick={() =>
                         void handleSubmitNewReport()
                       }
@@ -858,6 +947,8 @@ export const SearchVideoModal:
                         text-sm
                         text-gray-900
                         hover:bg-gray-100
+                        disabled:cursor-not-allowed
+                        disabled:opacity-50
                     
                         dark:text-gray-100
                         dark:hover:bg-neutral-800

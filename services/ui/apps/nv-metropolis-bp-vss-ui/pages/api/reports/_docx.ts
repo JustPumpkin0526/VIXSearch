@@ -69,6 +69,7 @@ export type ReportSceneItem = {
   locationName?: string;
   description: string;
   comment?: string;
+  query?: string;
   startTime?: string;
   endTime?: string;
   sensorId?: string;
@@ -129,9 +130,12 @@ function buildDocumentNumber(report: ReportPayload): string {
   return `VIX-${datePart}-${safeText(report.id, "REPORT").slice(0, 8)}`;
 }
 
-function buildReportQuestion(report: ReportPayload): string {
+function buildReportQuestion(
+  report: ReportPayload,
+  item?: ReportSceneItem,
+): string {
   return safeText(
-    report.query || report.description || report.title,
+    item?.query || report.query || report.description || report.title,
     "검색어가 제공되지 않았습니다.",
   );
 }
@@ -142,6 +146,55 @@ function buildLocationName(item: ReportSceneItem): string {
 
 function buildAdditionalComment(item: ReportSceneItem): string {
   return safeText(item.comment || item.description);
+}
+
+function formatSceneTime(value: string | number | undefined): string {
+  if (value === undefined || value === null || value === "") {
+    return "";
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const totalSeconds = Math.max(0, Math.floor(value));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    return [hours, minutes, seconds]
+      .map((part) => String(part).padStart(2, "0"))
+      .join(":");
+  }
+
+  const text = String(value).trim();
+  if (!text) {
+    return "";
+  }
+
+  const timeMatch = text.match(/T(\d{2}:\d{2}:\d{2})/);
+  return timeMatch?.[1] || text;
+}
+
+function buildSceneTimestamp(item: ReportSceneItem): string {
+  const startTime = formatSceneTime(item.startTime);
+  const endTime = formatSceneTime(item.endTime);
+  const pauseTime = formatSceneTime(item.pauseTime);
+  const clipRange =
+    startTime && endTime
+      ? `${startTime} - ${endTime}`
+      : startTime || endTime;
+
+  if (clipRange && pauseTime) {
+    return `${clipRange} (${pauseTime})`;
+  }
+
+  if (clipRange) {
+    return clipRange;
+  }
+
+  if (pauseTime) {
+    return `(${pauseTime})`;
+  }
+
+  return "-";
 }
 
 function getImageExtension(
@@ -392,11 +445,15 @@ async function buildWordSceneTable(report: ReportPayload): Promise<Table> {
       }),
       new TableRow({
         cantSplit: true,
+        children: [labelCell("타임스탬프(캡쳐한 장면의 시간대)"), valueCell(buildSceneTimestamp(item))],
+      }),
+      new TableRow({
+        cantSplit: true,
         children: [labelCell("장소명"), valueCell(buildLocationName(item))],
       }),
       new TableRow({
         cantSplit: true,
-        children: [labelCell("검색어"), valueCell(buildReportQuestion(report))],
+        children: [labelCell("검색어"), valueCell(buildReportQuestion(report, item))],
       }),
       new TableRow({
         cantSplit: true,
@@ -445,15 +502,31 @@ async function buildWordSceneTable(report: ReportPayload): Promise<Table> {
   });
 }
 
-function buildReportHeader(report: ReportPayload): Table {
+function buildReportTitle(report: ReportPayload): Paragraph {
+  return new Paragraph({
+    alignment: AlignmentType.CENTER,
+    keepNext: true,
+    spacing: { before: 0, after: 140 },
+    children: [
+      new TextRun({
+        text: safeText(report.title, "검색 결과 보고서"),
+        bold: true,
+        size: 28,
+        color: "52616B",
+      }),
+    ],
+  });
+}
+
+function buildReportHeader(): Table {
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
       new TableRow({
         children: [
           new TableCell({
-            width: { size: 45, type: WidthType.PERCENTAGE },
-            margins: { top: 40, bottom: 100, left: 0, right: 80 },
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            margins: { top: 20, bottom: 100, left: 0, right: 0 },
             children: [
               new Paragraph({
                 children: [
@@ -462,24 +535,6 @@ function buildReportHeader(report: ReportPayload): Table {
                     bold: true,
                     size: 34,
                     color: "176B52",
-                  }),
-                ],
-              }),
-            ],
-          }),
-          new TableCell({
-            width: { size: 55, type: WidthType.PERCENTAGE },
-            verticalAlign: VerticalAlign.CENTER,
-            margins: { top: 80, bottom: 100, left: 80, right: 0 },
-            children: [
-              new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [
-                  new TextRun({
-                    text: safeText(report.title, "검색 결과 보고서"),
-                    bold: true,
-                    size: 22,
-                    color: "52616B",
                   }),
                 ],
               }),
@@ -613,8 +668,20 @@ export async function buildAccidentReportWordBuffer(
   const doc = new Document({
     sections: [
       {
+        properties: {
+          page: {
+            margin: {
+              top: 360,
+              right: 720,
+              bottom: 720,
+              left: 720,
+            },
+          },
+        },
         children: [
-          buildReportHeader(report),
+          buildReportTitle(report),
+
+          buildReportHeader(),
 
           new Paragraph({ spacing: { after: 120 } }),
 
@@ -784,20 +851,13 @@ export async function buildAccidentReportPdfBuffer(
   }
 
   let page = pdfDoc.addPage([595.28, 841.89]);
-  let y = 790;
+  let y = 812;
   const left = 48;
-  page.drawText("VIXSearch", {
-    x: left,
-    y,
-    size: 22,
-    font: boldFont,
-    color: rgb(0.09, 0.42, 0.32),
-  });
   const headerTitle = safeText(report.title, "검색 결과 보고서");
-  let headerTitleSize = 11;
+  let headerTitleSize = 14;
   while (
-    headerTitleSize > 7.5 &&
-    boldFont.widthOfTextAtSize(headerTitle, headerTitleSize) > 300
+    headerTitleSize > 9 &&
+    boldFont.widthOfTextAtSize(headerTitle, headerTitleSize) > 499
   ) {
     headerTitleSize -= 0.5;
   }
@@ -806,11 +866,19 @@ export async function buildAccidentReportPdfBuffer(
     headerTitleSize,
   );
   page.drawText(headerTitle, {
-    x: 245 + (547 - 245 - headerTitleWidth) / 2,
-    y: y + 3,
+    x: left + (499 - headerTitleWidth) / 2,
+    y,
     size: headerTitleSize,
     font: boldFont,
     color: rgb(0.32, 0.38, 0.42),
+  });
+  y -= 34;
+  page.drawText("VIXSearch", {
+    x: left,
+    y,
+    size: 22,
+    font: boldFont,
+    color: rgb(0.09, 0.42, 0.32),
   });
   y -= 18;
   page.drawLine({
@@ -851,8 +919,9 @@ export async function buildAccidentReportPdfBuffer(
     const textSize = 9.5;
     const lineHeight = 13;
     const detailRows = [
+      { label: "타임스탬프", value: buildSceneTimestamp(item) },
       { label: "장소명", value: buildLocationName(item) },
-      { label: "검색어", value: buildReportQuestion(report) },
+      { label: "검색어", value: buildReportQuestion(report, item) },
       { label: "추가 커멘트", value: buildAdditionalComment(item) },
     ].map((detail) => {
       const lines = wrapPdfText(
