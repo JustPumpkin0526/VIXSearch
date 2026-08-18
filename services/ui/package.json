@@ -21,6 +21,7 @@
         "clean": "turbo run clean"
     },
     "dependencies": {
+        "ioredis": "^6.0.0",
         "next": "15.5.18",
         "pg": "^8.22.0",
         "postcss": "8.5.10"

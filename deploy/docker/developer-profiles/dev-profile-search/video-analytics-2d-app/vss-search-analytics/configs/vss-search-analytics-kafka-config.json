@@ -110,7 +110,7 @@
 		},
 		{
 			"name": "stateManagementFilter",
-			"value": "[\"Person\"]"
+			"value": "[\"person\",\"car\"]"
 		}
 	]
 }

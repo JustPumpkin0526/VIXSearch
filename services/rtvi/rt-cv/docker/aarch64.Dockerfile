@@ -20,7 +20,10 @@ FROM ${BASE_IMAGE}
 COPY src/metropolis_perception_app.c /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/metropolis_perception_app.c
 COPY src/perception_utc.c /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/perception_utc.c
 COPY src/metropolis_perception_app.h /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/metropolis_perception_app.h
+COPY src/korean_plate.c /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/korean_plate.c
+COPY src/korean_plate.h /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/korean_plate.h
 COPY src/Makefile /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/Makefile
+COPY deepstream_app.c /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/deepstream-app/deepstream_app.c
 COPY tests/ /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/tests/
 
 ENV CUDA_VER=13.0
