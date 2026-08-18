@@ -155,14 +155,62 @@ export default async function handler(
   try {
     const agentBaseUrl = resolveAgentBaseUrl();
 
+    const imageBuffer = Buffer.from(
+      body.imageBase64.replace(
+        /^data:image\/[a-zA-Z0-9.+-]+;base64,/,
+        '',
+      ),
+      'base64',
+    );
+
+    const formData = new FormData();
+
+    formData.append(
+      'file',
+      new Blob(
+        [imageBuffer],
+        {
+          type: contentType,
+        },
+      ),
+      `search-image.${
+        contentType === 'image/png'
+          ? 'png'
+          : contentType === 'image/webp'
+            ? 'webp'
+            : 'jpg'
+      }`,
+    );
+
+    formData.append(
+      'min_similarity',
+      String(body.minSimilarity ?? 0),
+    );
+    
+    if (
+      Array.isArray(body.sensorIds) &&
+      body.sensorIds.length > 0
+    ) {
+      formData.append(
+        'sensor_ids',
+        body.sensorIds.join(','),
+      );
+    }
+
+    const requestUrl = new URL(
+      `${agentBaseUrl}/api/v1/image-search`,
+    );
+
+    requestUrl.searchParams.set(
+      'top_k',
+      String(maxResults),
+    );
+
     const response = await fetch(
-      `${agentBaseUrl}/api/v1/image_search`,
+      requestUrl,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(agentRequest),
+        body: formData,
       },
     );
 

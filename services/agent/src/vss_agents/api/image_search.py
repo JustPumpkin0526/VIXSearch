@@ -5,7 +5,11 @@ from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI
+from fastapi import File
+from fastapi import Form
+from fastapi import HTTPException
+from fastapi import UploadFile
 from PIL import Image
 from PIL import UnidentifiedImageError
 
@@ -24,12 +28,22 @@ def register_image_search_route(app: FastAPI) -> None:
     """Register the cropped-image upload and object-similarity search API."""
 
     @app.post("/api/v1/image-search")
-    async def image_search(file: UploadFile = File(...), top_k: int = 10) -> dict:
+    async def image_search(file: UploadFile = File(...), top_k: int = 10, min_similarity: float = Form(0.0), sensor_ids: str | None = Form(None)) -> dict:
         if not (file.content_type or "").startswith("image/"):
             raise HTTPException(status_code=415, detail="Only image files are supported")
         payload = await file.read()
         if not payload or len(payload) > _MAX_IMAGE_BYTES:
             raise HTTPException(status_code=413, detail="Image must be between 1 byte and 2 MiB")
+
+        allowed_sensor_ids = (
+            [
+                value.strip()
+                for value in sensor_ids.split(",")
+                if value.strip()
+            ]
+            if sensor_ids
+            else None
+        )
 
         _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         # DeepStream's Vision Encoder accepts JPEG (and PPM), not PNG/WebP.
@@ -51,9 +65,16 @@ def register_image_search_route(app: FastAPI) -> None:
                 query_embedding=embedding,
                 index=DEFAULT_BEHAVIOR_INDEX,
                 es=es,
-                top_k=max(1, min(top_k, 100)),
-                min_similarity=0.0,
+                top_k=max(
+                    1,
+                    min(top_k, 100),
+                ),
+                min_similarity=min(
+                    1.0,
+                    max(0.0, min_similarity),
+                ),
                 source_type="video_file",
+                video_sources=allowed_sensor_ids,
             )
             await enrich_attribute_results(
                 results,

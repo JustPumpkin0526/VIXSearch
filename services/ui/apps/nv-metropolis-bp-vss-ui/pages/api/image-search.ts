@@ -156,7 +156,7 @@ export default async function handler(
     const agentBaseUrl = resolveAgentBaseUrl();
 
     const response = await fetch(
-      `${agentBaseUrl}/api/v1/image_search`,
+      `${agentBaseUrl}/api/v1/image-search`, 
       {
         method: 'POST',
         headers: {

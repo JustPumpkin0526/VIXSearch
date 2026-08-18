@@ -417,13 +417,13 @@ _ACTION_CRITIC_MAX_PER_VIDEO = 2
 _ACTION_CRITIC_MIN_TIME_SEPARATION_SECONDS = 20
 
 
-def _select_action_critic_candidates(results: list["SearchResult"]) -> list["SearchResult"]:
+def _select_action_critic_candidates(results: list[SearchResult], limit: int) -> list[SearchResult]:
     """Select diverse video/time candidates so one high-scoring moment cannot dominate Critic input."""
     selected: list[SearchResult] = []
     selected_by_sensor: dict[str, list[datetime]] = {}
 
     for result in results:
-        if len(selected) >= _ACTION_CRITIC_CANDIDATE_COUNT:
+        if len(selected) >= limit:
             break
         try:
             start_dt = iso8601_to_datetime(result.start_time)
@@ -2187,12 +2187,21 @@ async def execute_core_search(
                 critic_results: dict[VideoInfo, CriticVideoResult] = {}
 
                 # Call critic agent - use screenshot_url as video_url for critic
-                critic_limit = min(100,max(1,int(search_input.critic_max_results)))
-                logger.info(
-                    "[Search] critic_max_results from SearchInput=%s resolved critic_limit=%d",
-                    getattr(search_input, 'critic_max_results', None),
-                    critic_limit,
-                )
+                critic_limit = min(100, max(1, int(search_input.critic_max_results)))
+
+                candidate_source = search_results
+
+                if action_query_plan:
+                    critic_candidates = (
+                        _select_action_critic_candidates(
+                            candidate_source,
+                            critic_limit,
+                        )
+                    )
+                else:
+                    critic_candidates = candidate_source[
+                        :critic_limit
+                    ]
 
                 # Prepare critic limit (from user input) and defer actual Critic
                 # invocation until after candidate re-selection so a single,
@@ -2209,7 +2218,7 @@ async def execute_core_search(
                 critic_candidates = (
                     _select_action_critic_candidates(candidate_source) if action_query_plan else candidate_source
                 )
-                search_videos = []
+                search_videos = search_videos[:critic_limit]
                 critic_to_result_info: dict[VideoInfo, VideoInfo] = {}
                 for result in critic_candidates:
                     result_info = VideoInfo(
@@ -2237,12 +2246,16 @@ async def execute_core_search(
                     )
                 if len(search_videos) > 0:
                     critic_input = {
-                        "query": action_query_plan.canonical_query if action_query_plan else original_query,
+                        "query": (
+                            action_query_plan.canonical_query
+                            if action_query_plan
+                            else original_query
+                        ),
                         "videos": search_videos,
-                        # Broaden VLM validation only for action/event searches.
-                        # Critic configuration remains the safe default for all
-                        # other search types.
-                        "evaluation_count": _ACTION_CRITIC_CANDIDATE_COUNT if action_query_plan else None,
+                        "evaluation_count": min(
+                            critic_limit,
+                            len(search_videos),
+                        ),
                     }
                     logger.info(f"[Search] Critic agent input: {critic_input}")
                     with TimeMeasure("search: critic agent verification"):

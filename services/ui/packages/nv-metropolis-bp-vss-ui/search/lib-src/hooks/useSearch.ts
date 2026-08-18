@@ -45,6 +45,15 @@ function buildRequestBody(
       ? videoSources || []
       : scopeVideoSources;
 
+  const normalizedSimilarity =
+    Math.min(
+      1,
+      Math.max(
+        0,
+        Number(similarity) || 0,
+      ),
+    );
+  
   return {
     query,
     video_sources: effectiveVideoSources,
@@ -57,7 +66,9 @@ function buildRequestBody(
         endDate || null,
       ),
     min_cosine_similarity:
-      Number(similarity).toFixed(2),
+      normalizedSimilarity,
+    result_min_similarity:
+      normalizedSimilarity,
     top_k: topK,
     agent_mode: agentMode,
     source_type: 'video_file',

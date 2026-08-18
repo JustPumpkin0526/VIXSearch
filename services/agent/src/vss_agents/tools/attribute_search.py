@@ -859,105 +859,156 @@ async def search_by_license_plate(
     # If no results, attempt a transliteration fallback (Latinized) as a last resort
     if not results:
         try:
-            # Use translator directly (sync via thread) to produce a Latin form
-            translated = await asyncio.to_thread(_get_translator().translate, license_plate)
-            if translated and translated != license_plate:
-                logger.info("No plate results for %s — retrying with transliterated plate %s", license_plate, translated)
-                # Build new plate_query for translated form
-                if translated.startswith("*") and len(translated) > 1:
-                    retry_plate_query = {"wildcard": {"objects.info.licensePlate": translated}}
-                elif translated.endswith("*") and len(translated) > 1:
-                    retry_plate_query = {"prefix": {"objects.info.licensePlate": translated[:-1]}}
-                else:
-                    retry_plate_query = {"term": {"objects.info.licensePlate": translated}}
+            translated = await asyncio.to_thread(
+                _get_translator().translate,
+                license_plate,
+            )
 
-                # Replace plate_query inside filters (first element)
-                try:
-                    new_filters = list(filters)
-                    new_filters[0] = {
-                        "nested": {
-                            "path": "objects",
-                            "query": retry_plate_query,
-                            "inner_hits": {
-                                "name": "license_plate_objects",
-                                "size": 10,
-                                "_source": ["objects.id", "objects.type", "objects.bbox", "objects.info"],
-                            },
+            if translated and translated != license_plate:
+                if translated.startswith("*") and len(translated) > 1:
+                    retry_plate_query: dict[str, Any] = {
+                        "wildcard": {
+                            "objects.info.licensePlate": translated,
                         }
                     }
-                    retry_body = {**body, "query": {"bool": {"filter": new_filters}}}
-                    try:
-                        logger.debug("search_by_license_plate retry ES body: %s", json.dumps(retry_body, ensure_ascii=False))
-                    except Exception:
-                        pass
-                    retry_response = await es.search(index=search_index, body=retry_body)
-                    # process retry_response similarly to above
-                    retry_tracks: dict[tuple[str, str], dict[str, Any]] = {}
-                    for hit in retry_response.get("hits", {}).get("hits", []):
-                        source = hit.get("_source", {})
-                        sensor_id = str(source.get("sensorId", ""))
-                        timestamp = source.get("timestamp")
-                        if not sensor_id or not timestamp:
-                            continue
-                        inner_hits = hit.get("inner_hits", {}).get("license_plate_objects", {}).get("hits", {}).get("hits", [])
-                        for inner_hit in inner_hits:
-                            obj = inner_hit.get("_source", {})
-                            object_id = str(obj.get("id", ""))
-                            if not object_id:
-                                continue
-                            key = (sensor_id, object_id)
-                            track = retry_tracks.setdefault(
-                                key,
-                                {
-                                    "sensor_id": sensor_id,
-                                    "object_id": object_id,
-                                    "object_type": str(obj.get("type", "car")),
-                                    "start": timestamp,
-                                    "end": timestamp,
-                                    "bbox": obj.get("bbox"),
-                                },
-                            )
-                            if timestamp < track["start"]:
-                                track["start"] = timestamp
-                            if timestamp > track["end"]:
-                                track["end"] = timestamp
-                            if track["bbox"] is None and obj.get("bbox") is not None:
-                                track["bbox"] = obj.get("bbox")
+                elif translated.endswith("*") and len(translated) > 1:
+                    retry_plate_query = {
+                        "prefix": {
+                            "objects.info.licensePlate": translated[:-1],
+                        }
+                    }
+                else:
+                    retry_plate_query = {
+                        "term": {
+                            "objects.info.licensePlate": translated,
+                        }
+                    }
 
-                    retry_results: list[AttributeSearchResult] = []
-                    for track in retry_tracks.values():
-                        start = str(track["start"])
-                        end = str(track["end"])
-                        if start == end:
-                            instant = datetime.fromisoformat(start.replace("Z", "+00:00"))
-                            start = (instant - timedelta(seconds=2.5)).isoformat().replace("+00:00", "Z")
-                            end = (instant + timedelta(seconds=2.5)).isoformat().replace("+00:00", "Z")
-                        retry_results.append(
-                            AttributeSearchResult(
-                                screenshot_url=None,
-                                metadata=AttributeSearchMetadata(
-                                    sensor_id=track["sensor_id"],
-                                    object_id=track["object_id"],
-                                    object_type=track["object_type"],
-                                    frame_timestamp=str(track["start"]),
-                                    start_time=start,
-                                    end_time=end,
-                                    bbox=track["bbox"],
-                                    behavior_score=1.0,
-                                    frame_score=1.0,
-                                    video_name=track["sensor_id"],
-                                ),
-                            )
+                new_filters = list(filters)
+                new_filters[0] = {
+                    "nested": {
+                        "path": "objects",
+                        "query": retry_plate_query,
+                        "inner_hits": {
+                            "name": "license_plate_objects",
+                            "size": 10,
+                            "_source": [
+                                "objects.id",
+                                "objects.type",
+                                "objects.bbox",
+                                "objects.info",
+                            ],
+                        },
+                    }
+                }
+
+                retry_body = {
+                    **body,
+                    "query": {
+                        "bool": {
+                            "filter": new_filters,
+                        }
+                    },
+                }
+
+                retry_response = await es.search(
+                    index=search_index,
+                    body=retry_body,
+                )
+
+                retry_tracks: dict[
+                    tuple[str, str],
+                    dict[str, Any],
+                ] = {}
+                for hit in retry_response.get("hits", {}).get("hits", []):
+                    source = hit.get("_source", {})
+                    sensor_id = str(source.get("sensorId", ""))
+                    timestamp = source.get("timestamp")
+                    if not sensor_id or not timestamp:
+                        continue
+
+                    inner_hits = (
+                        hit.get("inner_hits", {})
+                        .get("license_plate_objects", {})
+                        .get("hits", {})
+                        .get("hits", [])
+                    )
+                    for inner_hit in inner_hits:
+                        obj = inner_hit.get("_source", {})
+                        object_id = str(obj.get("id", ""))
+                        if not object_id:
+                            continue
+
+                        key = (sensor_id, object_id)
+                        track = retry_tracks.setdefault(
+                            key,
+                            {
+                                "sensor_id": sensor_id,
+                                "object_id": object_id,
+                                "object_type": str(obj.get("type", "car")),
+                                "start": timestamp,
+                                "end": timestamp,
+                                "bbox": obj.get("bbox"),
+                            },
                         )
-                    if retry_results:
-                        logger.info(
-                            "License plate retry matched %d track(s) for transliterated plate %s",
-                            len(retry_results),
-                            translated,
+                        if timestamp < track["start"]:
+                            track["start"] = timestamp
+                        if timestamp > track["end"]:
+                            track["end"] = timestamp
+                        if (
+                            track["bbox"] is None
+                            and obj.get("bbox") is not None
+                        ):
+                            track["bbox"] = obj.get("bbox")
+
+                retry_results: list[AttributeSearchResult] = []
+                for track in retry_tracks.values():
+                    start = str(track["start"])
+                    end = str(track["end"])
+                    if start == end:
+                        instant = datetime.fromisoformat(
+                            start.replace("Z", "+00:00")
                         )
-                        return retry_results[:top_k]
+                        start = (
+                            instant - timedelta(seconds=2.5)
+                        ).isoformat().replace("+00:00", "Z")
+                        end = (
+                            instant + timedelta(seconds=2.5)
+                        ).isoformat().replace("+00:00", "Z")
+
+                    retry_results.append(
+                        AttributeSearchResult(
+                            screenshot_url=None,
+                            metadata=AttributeSearchMetadata(
+                                sensor_id=track["sensor_id"],
+                                object_id=track["object_id"],
+                                object_type=track["object_type"],
+                                frame_timestamp=str(track["start"]),
+                                start_time=start,
+                                end_time=end,
+                                bbox=track["bbox"],
+                                behavior_score=1.0,
+                                frame_score=1.0,
+                                video_name=track["sensor_id"],
+                            ),
+                        )
+                    )
+
+                logger.info(
+                    "License plate transliteration retry matched %d "
+                    "track(s): %s -> %s",
+                    len(retry_results),
+                    license_plate,
+                    translated,
+                )
+
+                if retry_results:
+                    return retry_results[:top_k]
+
         except Exception:
-            logger.exception("Plate transliteration retry failed")
+            logger.exception(
+                "Plate transliteration retry failed"
+            )
 
     return results[:top_k]
 

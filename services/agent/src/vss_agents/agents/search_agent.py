@@ -57,6 +57,7 @@ from vss_agents.tools.search import SearchOutput
 from vss_agents.tools.search import SearchResult
 from vss_agents.tools.search import execute_core_search
 from vss_agents.tools.vst.utils import get_name_to_stream_id_map
+from vss_agents.utils.license_plate import split_korean_license_plate
 from vss_agents.utils.time_convert import datetime_to_iso8601
 from vss_agents.utils.time_convert import iso8601_to_datetime
 
@@ -755,7 +756,11 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
 
     # Load function references (for execute_core_search)
     embed_search_fn = await builder.get_function(config.embed_search_tool)
-    attribute_search_fn = None  # Function reference for fusion_search_rerank
+    attribute_search_fn = (
+        await builder.get_function(config.attribute_search_tool)
+        if config.attribute_search_tool is not None
+        else None
+    )
 
     stream_name_resolver = _StreamNameResolver(config.vst_internal_url)
 
@@ -768,10 +773,29 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
     if config.critic_agent:
         critic_agent = await builder.get_function(config.critic_agent)
 
-    logger.info("Search agent initialized with direct tool references")
+    logger.info(
+        "Search agent initialized with direct tool references: "
+        "attribute_search=%s",
+        attribute_search_fn is not None,
+    )
 
     async def _execute_search(search_agent_input: SearchAgentInput) -> SearchOutput:
         """Non-streaming search execution. Returns SearchOutput directly."""
+
+        license_plate, semantic_query = split_korean_license_plate(
+            search_agent_input.query
+        )
+        if license_plate:
+            if attribute_search_fn is None:
+                raise ValueError(
+                    "attribute_search_tool is required for license plate search"
+                )
+            logger.info(
+                "Search agent recognized license plate: plate=%s, "
+                "semantic_query=%r",
+                license_plate,
+                semantic_query,
+            )
 
         timestamp_start = None
         timestamp_end = None
@@ -858,6 +882,7 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
         """
         query = search_agent_input.query
         agent_mode = search_agent_input.agent_mode
+        license_plate, semantic_query = split_korean_license_plate(query)
         use_attribute_search_flag = (
             search_agent_input.use_attribute_search
             if search_agent_input.use_attribute_search
@@ -875,6 +900,38 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             "Search agent executing: %s",
             search_agent_input.model_dump_json(),
         )
+
+        if license_plate:
+            if attribute_search_fn is None:
+                error_message = (
+                    "attribute_search_tool is required for license plate search"
+                )
+                logger.error(error_message)
+                yield AgentMessageChunk(
+                    type=AgentMessageChunkType.ERROR,
+                    content=error_message,
+                )
+                output = AgentOutput(
+                    messages=["License plate search is not configured"],
+                    status="error",
+                    error_message=error_message,
+                    metadata={
+                        "query": query,
+                        "license_plate": license_plate,
+                    },
+                )
+                yield AgentMessageChunk(
+                    type=AgentMessageChunkType.FINAL,
+                    content=output.model_dump_json(),
+                )
+                return
+
+            logger.info(
+                "Search agent recognized license plate: plate=%s, "
+                "semantic_query=%r",
+                license_plate,
+                semantic_query,
+            )
 
         timestamp_start = None
         timestamp_end = None
