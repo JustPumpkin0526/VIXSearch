@@ -61,6 +61,11 @@ RUN --mount=type=cache,id=uv_cache_${TARGETARCH},target=/root/.cache/uv,sharing=
     . .venv/bin/activate && \
     uv sync --frozen --no-dev --no-editable --link-mode copy
 
+# Bundle the Korean-to-English query translation model so runtime searches do not
+# depend on network access or pay a first-request download penalty.
+RUN --mount=type=cache,id=hf_cache_${TARGETARCH},target=/root/.cache/huggingface,sharing=private \
+    .venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='Helsinki-NLP/opus-mt-tc-big-ko-en', local_dir='/vss-agent/models/opus-mt-tc-big-ko-en', allow_patterns=['config.json', 'generation_config.json', 'model.safetensors', 'source.spm', 'target.spm'])"
+
 RUN uv pip uninstall setuptools
 RUN rm -rf /vss-agent/.venv/lib/python3.13/site-packages/setuptools
 RUN find /vss-agent/.venv -name "*.exe" -delete
@@ -154,6 +159,7 @@ COPY --from=security-patches /patches/libssl3-extracted/usr/lib/*-linux-gnu*/lib
 
 # Copy application without any dev needs
 COPY --from=builder --chown=root:root --chmod=0555 /vss-agent/.venv /vss-agent/.venv
+COPY --from=builder --chown=root:root --chmod=0555 /vss-agent/models /vss-agent/models
 COPY --from=builder --chown=root:root --chmod=0555 /vss-agent/third_party/ffmpeg /vss-agent/third_party/ffmpeg
 COPY --from=builder --chown=root:root --chmod=0444 /vss-agent/LICENSE-3rd-party.txt /vss-agent/LICENSE-3rd-party.txt
 COPY --from=builder --chown=root:root --chmod=0444 /vss-agent/NVIDIA-Software-License-Agreement.pdf /vss-agent/NVIDIA-Software-License-Agreement.pdf

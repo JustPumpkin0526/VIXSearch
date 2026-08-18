@@ -88,6 +88,8 @@ services:
           memory: 1g
     volumes:
       - $VSS_DATA_DIR/models/:/opt/storage/
+      # Shared with vss-agent for Chat uploaded-image similarity searches.
+      - $VSS_DATA_DIR/image-search:/image-search:ro
       - $VSS_APPS_DIR/developer-profiles/dev-profile-search/video-analytics-2d-app/deepstream/scripts/download-vision-encoder.sh:/opt/scripts/download-vision-encoder.sh:ro
     environment:
       VISION_ENCODER_MODEL: ${VISION_ENCODER_MODEL:-siglip_v2}
@@ -114,6 +116,12 @@ services:
 
       # Models directory — RT-DETR + vision encoder models (downloaded by init container)
       - $VSS_DATA_DIR/models/:/opt/storage/
+      # Shared with vss-agent for cropped-image similarity searches.
+      - $VSS_DATA_DIR/image-search:/image-search:ro
+      # Locally trained LPR assets and a separate writable TensorRT engine cache.
+      - $VSS_APPS_DIR/../../model/:/opt/models/custom:ro
+      - $VSS_APPS_DIR/../../model/engines/:/opt/engines/lpr
+
     command:
       - bash
       - -c
@@ -128,6 +136,9 @@ services:
       DS_SHOW_SENSOR_ID: "false"
       VISION_ENCODER_MODEL: ${VISION_ENCODER_MODEL:-siglip_v2}
       VISION_ENCODER_VERSION: ${VISION_ENCODER_VERSION:-v1.1}
+      # Keep RAW/META/CANDIDATE/REJECT diagnostics off unless explicitly requested.
+      LPR_DEBUG: ${LPR_DEBUG:-0}
+      LPR_LABEL_FILE: /opt/models/custom/obd_lpcs_kr.c89.cls
     depends_on:
       perception-2d-init:
         condition: service_completed_successfully

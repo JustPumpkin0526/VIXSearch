@@ -71,6 +71,11 @@ fi
 
 NUM_NVDEC_ENGINES=$(nvdec_get_count)
 echo "GPU has $NUM_NVDEC_ENGINES decode engines"
+# File embedding can otherwise start one decoder per NVDEC engine (plus one).
+# Keep the automatic value for existing deployments, but permit profiles with
+# shared GPU workloads to cap decoder pressure explicitly.
+NUM_DECODERS_PER_GPU="${RTVI_NUM_DECODERS_PER_GPU:-$(( NUM_NVDEC_ENGINES + 1 ))}"
+echo "Using $NUM_DECODERS_PER_GPU video decoders per GPU"
 
 export CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps-rtvi
 
@@ -243,7 +248,7 @@ start_rtvi_server() {
         --model-path "$MODEL_PATH" --num-gpus $NUM_GPUS \
         --vlm-model-type $VLM_MODEL_TO_USE \
         --vlm-batch-size $VLM_BATCH_SIZE \
-        --asset-dir $ASSET_STORAGE_DIR --num-decoders-per-gpu $(( NUM_NVDEC_ENGINES + 1)) \
+        --asset-dir $ASSET_STORAGE_DIR --num-decoders-per-gpu $NUM_DECODERS_PER_GPU \
         $EXTRA_ARGS &
     check_rtvi_process_status
 }
