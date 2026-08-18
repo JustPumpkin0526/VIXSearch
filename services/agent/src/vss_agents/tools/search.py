@@ -417,7 +417,10 @@ _ACTION_CRITIC_MAX_PER_VIDEO = 2
 _ACTION_CRITIC_MIN_TIME_SEPARATION_SECONDS = 20
 
 
-def _select_action_critic_candidates(results: list[SearchResult], limit: int) -> list[SearchResult]:
+def _select_action_critic_candidates(
+    results: list["SearchResult"],
+    limit: int,
+) -> list["SearchResult"]:
     """Select diverse video/time candidates so one high-scoring moment cannot dominate Critic input."""
     selected: list[SearchResult] = []
     selected_by_sensor: dict[str, list[datetime]] = {}
@@ -1235,9 +1238,6 @@ async def execute_core_search(
         if contains_hangul(semantic_query):
             semantic_query = await translate_query_if_korean(semantic_query)
         search_input.query = " ".join(value for value in (license_plate, semantic_query) if value)
-
-    if contains_hangul(search_input.query):
-        search_input.query = await translate_query_if_korean(search_input.query)
         
     decomposed: DecomposedQuery | None = None
     original_query = search_input.query
@@ -1607,7 +1607,11 @@ async def execute_core_search(
                 "query": plate_attributes,
                 "license_plate": license_plate,
                 "source_type": search_input.source_type,
-                "video_sources": search_input.video_sources,
+                "video_sources": (
+                    attribute_video_sources
+                    if attribute_video_sources is not None
+                    else search_input.video_sources
+                ),
                 "timestamp_start": search_input.timestamp_start,
                 "timestamp_end": search_input.timestamp_end,
                 "top_k": top_k,
