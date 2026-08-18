@@ -19,6 +19,7 @@ from datetime import datetime
 from datetime import timedelta
 import json
 import logging
+import re
 from typing import Any
 from typing import Literal
 from typing import Union
@@ -47,8 +48,11 @@ from vss_agents.agents.data_models import AgentMessageChunkType
 from vss_agents.tools.attribute_search import DEFAULT_BEHAVIOR_INDEX
 from vss_agents.tools.attribute_search import resolve_index_by_source_type
 from vss_agents.tools.embed_search import EmbedSearchOutput
+from vss_agents.tools.vst.utils import get_sensor_id_from_stream_id
 from vss_agents.tools.vst.utils import get_streams_info
 from vss_agents.utils.es_client import VSSESClient
+from vss_agents.utils.license_plate import extract_korean_license_plate
+from vss_agents.utils.license_plate import remove_korean_license_plate
 from vss_agents.utils.query_translation import contains_hangul
 from vss_agents.utils.query_translation import translate_query_if_korean
 from vss_agents.utils.reasoning_utils import get_llm_reasoning_bind_kwargs
@@ -69,6 +73,7 @@ Extract the following parameters from the user query:
 - query: The main search description including actions AND attributes (e.g., "person moving with white pants")
 - video_sources: Always return an empty list []. Do not extract, infer, or select any video source from the user query. Video source filtering is handled separately by the application.
 - source_type: "rtsp" if referring to live/camera streams, "video_file" if referring to uploaded video files (default: "video_file")
+- license_plate: A Korean vehicle license plate normalized without spaces or hyphens. Keep it out of query and attributes because it is searched by exact match.
 - timestamp_start: Start time in ISO format (e.g., "2025-01-01T13:00:00Z"). Use 2025-01-01 as the base date.
 - timestamp_end: End time in ISO format (e.g., "2025-01-01T14:00:00Z"). Use 2025-01-01 as the base date.
 - attributes: List of visual descriptions for objects from the RT-CV detector classes "person", "car", "head", "wheelchair", "stroller", "license_plate", and "heavy_machine". Include the object class and visible attributes such as color, shape, clothing, size, subtype, and apparent gender for persons. Preserve a specific car subtype (for example, "hatchback car") instead of replacing it with only "car". Do not include actions or scene context, and do not return a generic object class without a visible attribute.
@@ -138,11 +143,318 @@ class DecomposedQuery(BaseModel):
         default=None,
         description="True if query contains an action/event/activity, False if only visual/physical attributes",
     )
+    license_plate: str | None = Field(
+        default=None,
+        description="Normalized Korean plate: exact (81너9673), suffix (*9673), or prefix (81너*)",
+    )
     object_ids: list[int] | None = Field(
         default=None, description="List of integer object IDs if explicitly mentioned in the query"
     )
     top_k: int | None = Field(default=None, description="Number of results to return")
 
+class ActionQueryPlan(BaseModel):
+    """Search-oriented representation of an action/event query.
+
+    ``canonical_query`` preserves every material condition in the user request.
+    ``alternate_queries`` contains at most two equivalent visual descriptions used
+    for recall-oriented retrieval only; the critic still receives the canonical
+    query.
+    """
+
+    canonical_query: str
+    alternate_queries: list[str] = Field(default_factory=list)
+
+
+ACTION_QUERY_REWRITE_PROMPT = """You rewrite a video-search query for semantic embedding retrieval.
+Return ONLY valid JSON with this schema:
+{{"canonical_query": "...", "alternate_queries": ["...", "..."]}}
+
+The output must be English. Preserve the actor, target, action, action result,
+object, and any explicit visual condition from the original user query. Do not
+invent facts and do not strengthen an action: for example, knocking someone down
+is NOT killing them, pulling is NOT merely holding, and taking a bag is NOT only
+touching it. Produce one concise canonical query and zero to two short visual
+paraphrases. Each paraphrase must preserve the same core action and relationship.
+
+Original user query: {original_query}
+Machine translation, if available: {translated_query}
+Existing search decomposition: {decomposed_query}
+"""
+
+
+_KOREAN_ACTION_GUARDS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
+    (re.compile(r"쓰러뜨|넘어뜨"), ("knocking down", "to the ground")),
+    (re.compile(r"폭행|때리|구타"), ("assaulting", "attacking")),
+    (re.compile(r"잡아당|끌어당"), ("pulling",)),
+    (re.compile(r"빼앗|빼았|강탈"), ("taking", "snatching")),
+    (re.compile(r"밀쳐|밀어|밀다"), ("pushing", "shoving")),
+)
+
+
+def _apply_korean_action_guards(original_query: str, canonical_query: str) -> str:
+    """Restore high-risk action semantics when translation/rewrite drops them.
+
+    This is deliberately a small safety net, not a dictionary-driven query
+    generator. The LLM produces the general solution; these guards protect the
+    action meanings that have repeatedly been mistranslated in incident search.
+    """
+    normalized = canonical_query.lower()
+    missing_terms: list[str] = []
+    for source_pattern, acceptable_terms in _KOREAN_ACTION_GUARDS:
+        if source_pattern.search(original_query) and not any(term in normalized for term in acceptable_terms):
+            missing_terms.append(acceptable_terms[0])
+    if missing_terms:
+        canonical_query = f"{canonical_query.rstrip('. ')}; {' and '.join(missing_terms)}"
+        logger.warning(
+            "Restored action terms omitted by translation/rewrite: original=%r restored=%s",
+            original_query,
+            missing_terms,
+        )
+    return canonical_query
+
+
+def _extract_json_object(text: str) -> dict[str, Any]:
+    """Parse the JSON object from an LLM response that may include reasoning/markdown."""
+    # Nemotron can preserve <think> blocks even when reasoning is disabled.
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    if "```" in cleaned:
+        cleaned = cleaned.replace("```json", "```")
+        parts = cleaned.split("```")
+        if len(parts) >= 2:
+            cleaned = parts[1].strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end <= start:
+        raise ValueError("LLM response did not contain a JSON object")
+    parsed = json.loads(cleaned[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("LLM action query response must be a JSON object")
+    return parsed
+
+
+def _fallback_action_alternatives(canonical_query: str) -> list[str]:
+    """Supply bounded visual paraphrases if an LLM rewrite is unavailable."""
+    normalized = canonical_query.casefold()
+    alternatives: list[str] = []
+    if any(term in normalized for term in ("knock", "knocking", "down", "ground")) and any(
+        term in normalized for term in ("hit", "hitting", "assault", "attack", "beat")
+    ):
+        alternatives.extend(
+            [
+                "a man knocking a woman to the ground and assaulting her",
+                "a man pushing a woman down and attacking her",
+            ]
+        )
+    elif any(term in normalized for term in ("push", "shove")) and any(
+        term in normalized for term in ("down", "ground", "fall")
+    ):
+        alternatives.extend(
+            [
+                "a man shoving a woman to the ground",
+                "a woman falling after a man pushes her",
+            ]
+        )
+    elif any(term in normalized for term in ("pull", "drag")):
+        alternatives.extend(
+            [
+                canonical_query.replace("pulling", "dragging"),
+                canonical_query.replace("pull", "grab and pull"),
+            ]
+        )
+    elif any(term in normalized for term in ("take", "snatch", "steal")):
+        alternatives.extend(
+            [
+                canonical_query.replace("taking", "snatching"),
+                canonical_query.replace("take", "grab and take"),
+            ]
+        )
+
+    seen = {canonical_query.casefold()}
+    deduped: list[str] = []
+    for item in alternatives:
+        if not item:
+            continue
+        key = item.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+        if len(deduped) >= 2:
+            break
+    return deduped
+
+
+def _augment_action_recall_alternatives(canonical_query: str, alternatives: list[str]) -> list[str]:
+    """Add broader action/relationship queries for first-stage recall.
+
+    The canonical query remains strict and is the only query given to Critic.
+    These variants are deliberately less specific so a visually similar event
+    with a different action order can reach the verification stage.
+    """
+    normalized = canonical_query.casefold()
+    recall_queries: list[str] = []
+    is_knockdown_assault = any(term in normalized for term in ("knock", "down", "ground")) and any(
+        term in normalized for term in ("hit", "assault", "attack", "beat")
+    )
+    if is_knockdown_assault:
+        recall_queries.extend(
+            [
+                "a man pushing a woman down",
+                "a man assaulting a woman",
+                "physical confrontation between a man and a woman",
+            ]
+        )
+    elif any(term in normalized for term in ("push", "shove")):
+        recall_queries.extend(["a man pushing a woman", "physical confrontation between a man and a woman"])
+    elif any(term in normalized for term in ("pull", "drag")):
+        recall_queries.extend(["a man pulling a woman", "physical confrontation between a man and a woman"])
+    elif any(term in normalized for term in ("take", "snatch", "steal")):
+        recall_queries.extend(["a man taking a woman's bag", "a man grabbing a woman's belongings"])
+
+    # Prioritize the intentionally broader recall queries. LLM paraphrases are
+    # retained when capacity remains, but must not crowd out the recall tier.
+    seen = {canonical_query.casefold()}
+    ordered = recall_queries + alternatives
+    deduped: list[str] = []
+    for item in ordered:
+        if not item:
+            continue
+        key = item.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+        if len(deduped) >= 3:
+            break
+    return deduped
+
+
+async def build_action_query_plan(
+    original_query: str,
+    translated_query: str,
+    decomposed_query: str,
+    llm: Any,
+) -> ActionQueryPlan:
+    """Build a canonical action query plus a small, semantics-preserving expansion."""
+    fallback = _apply_korean_action_guards(original_query, decomposed_query or translated_query)
+    try:
+        prompt = ACTION_QUERY_REWRITE_PROMPT.format(
+            original_query=original_query,
+            translated_query=translated_query,
+            decomposed_query=decomposed_query,
+        )
+        llm_kwargs = get_llm_reasoning_bind_kwargs(llm, False)
+        llm_to_use = llm.bind(**llm_kwargs) if llm_kwargs else llm
+        system_content = "Return only valid JSON. Do not include markdown or reasoning."
+        thinking_tag = get_thinking_tag(llm, False)
+        if thinking_tag:
+            system_content += f"\n{thinking_tag}"
+        response = await llm_to_use.ainvoke(
+            [
+                SystemMessage(content=system_content),
+                HumanMessage(content=prompt),
+            ]
+        )
+        content = response.content if hasattr(response, "content") else str(response)
+        if isinstance(content, list):
+            content = "\n".join(str(part.get("text", "")) if isinstance(part, dict) else str(part) for part in content)
+        parsed = _extract_json_object(str(content))
+        canonical = str(parsed.get("canonical_query") or fallback).strip()
+        alternatives = [
+            str(item).strip()
+            for item in (parsed.get("alternate_queries") or [])
+            if isinstance(item, str) and item.strip()
+        ]
+        canonical = _apply_korean_action_guards(original_query, canonical)
+        alternatives = _augment_action_recall_alternatives(canonical, alternatives)
+        return ActionQueryPlan(canonical_query=canonical, alternate_queries=alternatives)
+    except Exception:
+        alternatives = _augment_action_recall_alternatives(fallback, _fallback_action_alternatives(fallback))
+        logger.exception(
+            "Action query rewrite failed; using deterministic fallback alternatives=%r",
+            alternatives,
+        )
+        return ActionQueryPlan(canonical_query=fallback, alternate_queries=alternatives)
+
+
+def _fuse_expanded_embed_results(result_lists: list[list["SearchResult"]]) -> list["SearchResult"]:
+    """Fuse parallel query results with reciprocal-rank evidence while retaining UI similarity scale."""
+    if len(result_lists) == 1:
+        # Preserve the exact legacy score and ordering for ordinary single-query
+        # searches. Fusion is only meaningful when expansion produced multiple
+        # result sets.
+        return result_lists[0]
+    fused: dict[tuple[str, str, str], tuple[float, SearchResult]] = {}
+    rrf_k = 60
+    for results in result_lists:
+        for rank, result in enumerate(results, start=1):
+            key = (result.sensor_id, result.start_time, result.end_time)
+            evidence = 1.0 / (rrf_k + rank)
+            previous = fused.get(key)
+            if previous is None:
+                fused[key] = (evidence, result)
+            else:
+                previous_evidence, previous_result = previous
+                if result.similarity > previous_result.similarity:
+                    previous_result = result
+                fused[key] = (previous_evidence + evidence, previous_result)
+
+    if not fused:
+        return []
+    max_evidence = max(evidence for evidence, _ in fused.values())
+    reranked: list[SearchResult] = []
+    for evidence, result in fused.values():
+        # A small bounded boost rewards a clip returned by multiple equivalent
+        # phrasings without replacing the underlying cosine-similarity meaning.
+        result.similarity += 0.05 * evidence / max_evidence
+        reranked.append(result)
+    return sorted(reranked, key=lambda item: item.similarity, reverse=True)
+
+
+_ACTION_CRITIC_WINDOW_PADDING_SECONDS = 10
+_ACTION_CRITIC_CANDIDATE_COUNT = 8
+_ACTION_CRITIC_MAX_PER_VIDEO = 2
+_ACTION_CRITIC_MIN_TIME_SEPARATION_SECONDS = 20
+
+
+def _select_action_critic_candidates(results: list["SearchResult"]) -> list["SearchResult"]:
+    """Select diverse video/time candidates so one high-scoring moment cannot dominate Critic input."""
+    selected: list[SearchResult] = []
+    selected_by_sensor: dict[str, list[datetime]] = {}
+
+    for result in results:
+        if len(selected) >= _ACTION_CRITIC_CANDIDATE_COUNT:
+            break
+        try:
+            start_dt = iso8601_to_datetime(result.start_time)
+        except (ValueError, TypeError):
+            # Keep malformed/un-timestamped results eligible; the Critic will
+            # return unverified if their clip cannot be resolved.
+            start_dt = None
+
+        sensor_candidates = selected_by_sensor.setdefault(result.sensor_id, [])
+        if len(sensor_candidates) >= _ACTION_CRITIC_MAX_PER_VIDEO:
+            continue
+        if start_dt and any(
+            abs((start_dt - prior_start).total_seconds()) < _ACTION_CRITIC_MIN_TIME_SEPARATION_SECONDS
+            for prior_start in sensor_candidates
+        ):
+            continue
+        selected.append(result)
+        if start_dt:
+            sensor_candidates.append(start_dt)
+
+    return selected
+
+
+def _expand_action_critic_window(result: "SearchResult") -> tuple[str, str]:
+    """Return a wider temporal context for compound actions such as push→fall→assault."""
+    try:
+        start_dt = iso8601_to_datetime(result.start_time) - timedelta(seconds=_ACTION_CRITIC_WINDOW_PADDING_SECONDS)
+        end_dt = iso8601_to_datetime(result.end_time) + timedelta(seconds=_ACTION_CRITIC_WINDOW_PADDING_SECONDS)
+        return datetime_to_iso8601(start_dt), datetime_to_iso8601(end_dt)
+    except (ValueError, TypeError):
+        return result.start_time, result.end_time
 
 async def _run_attribute_only_search(
     attribute_list: list[str],
@@ -282,6 +594,11 @@ def attribute_result_to_search_result(
         screenshot_url=validated_result.screenshot_url or "",
         similarity=similarity,
         object_ids=[str(metadata.object_id)],
+        # Carry the source frame identity through to the UI.  Object tracker
+        # IDs are not sufficient on their own because they can be reused.
+        matched_object_timestamp=metadata.frame_timestamp,
+        matched_object_type=metadata.object_type,
+        matched_object_bbox=metadata.bbox,
     )
 
 
@@ -329,7 +646,7 @@ async def decompose_query(
     system_content = "You are a helpful assistant that extracts search parameters from natural language queries. Return only valid JSON."
     if thinking_tag:
         system_content += f"\n{thinking_tag}"
-        logger.debug(f"Added thinking tag to system message: {thinking_tag}")
+        logger.info(f"Added thinking tag to system message: {thinking_tag}")
 
     # Build messages
     messages = [
@@ -364,7 +681,7 @@ async def decompose_query(
             try:
                 top_k = int(extracted["top_k"])
             except (ValueError, TypeError):
-                logger.debug("Failed to parse top_k value: %s", extracted["top_k"])
+                logger.info("Failed to parse top_k value: %s", extracted["top_k"])
 
         # Parse has_action if present
         has_action = None
@@ -372,7 +689,7 @@ async def decompose_query(
             try:
                 has_action = bool(extracted["has_action"])
             except (ValueError, TypeError):
-                logger.debug("Failed to parse has_action value: %s", extracted["has_action"])
+                logger.info("Failed to parse has_action value: %s", extracted["has_action"])
 
         # Parse object_ids if present
         object_ids = None
@@ -382,7 +699,7 @@ async def decompose_query(
                 parsed = [int(oid) for oid in raw_object_ids]
                 object_ids = [oid for oid in parsed if oid > 0] or None
             except (ValueError, TypeError):
-                logger.debug("Failed to parse object_ids: %s", raw_object_ids)
+                logger.info("Failed to parse object_ids: %s", raw_object_ids)
 
         return DecomposedQuery(
             query=extracted.get("query", user_query),
@@ -416,7 +733,7 @@ def _resolve_video_sources_for_search(
             stream_id = name_to_uuid.get(video_source)
             if stream_id:
                 resolved_sources.append(video_source)
-                logger.debug(
+                logger.info(
                     "Keeping RTSP video source '%s' as sensor name; VST stream UUID is '%s'",
                     video_source,
                     stream_id,
@@ -424,10 +741,10 @@ def _resolve_video_sources_for_search(
             elif video_source in uuid_to_name:
                 sensor_name = uuid_to_name[video_source]
                 resolved_sources.append(sensor_name)
-                logger.debug("Resolved RTSP stream UUID '%s' to sensor name '%s'", video_source, sensor_name)
+                logger.info("Resolved RTSP stream UUID '%s' to sensor name '%s'", video_source, sensor_name)
             else:
                 resolved_sources.append(video_source)
-                logger.debug("RTSP video source '%s' not resolved in VST map; keeping original name", video_source)
+                logger.info("RTSP video source '%s' not resolved in VST map; keeping original name", video_source)
         return resolved_sources
 
     resolved_sources = []
@@ -435,10 +752,10 @@ def _resolve_video_sources_for_search(
         stream_id = name_to_uuid.get(video_source)
         if stream_id:
             resolved_sources.append(stream_id)
-            logger.debug("Resolved video source '%s' to UUID '%s'", video_source, stream_id)
+            logger.info("Resolved video source '%s' to UUID '%s'", video_source, stream_id)
         else:
             resolved_sources.append(video_source)
-            logger.debug("Video source '%s' not resolved; will use wildcard filter", video_source)
+            logger.info("Video source '%s' not resolved; will use wildcard filter", video_source)
     return resolved_sources
 
 
@@ -458,7 +775,7 @@ def _apply_weighted_linear_fusion(
         attribute_score = video["normalised_attribute_score"]
         fusion_score = w_embed * embed_score + w_attribute * attribute_score
 
-        logger.debug(
+        logger.info(
             f"Weighted Linear: {video['embed_result'].video_name} - "
             f"embed={embed_score:.3f} (w={w_embed:.2f}), "
             f"attribute={attribute_score:.3f} (w={w_attribute:.2f}), fusion_score={fusion_score:.3f}"
@@ -499,7 +816,7 @@ def _apply_rrf_fusion(
         rank_action = rank
         rrf_score = 1.0 / (rank_action + rrf_k) + rrf_w * video["normalised_attribute_score"]
 
-        logger.debug(
+        logger.info(
             f"RRF: {video['embed_result'].video_name} - "
             f"rank_action={rank_action}, normalised_attribute_score={video['normalised_attribute_score']:.3f}, "
             f"rrf_score={rrf_score:.6f}"
@@ -549,7 +866,7 @@ def _apply_rrf_fusion_with_attribute_rank(
         rank_attribute = attribute_ranks[id(video)]
         rrf_score = 1.0 / (rank_embed + rrf_k) + rrf_w * (1.0 / (rank_attribute + rrf_k))
 
-        logger.debug(
+        logger.info(
             f"RRF (both ranks): {video['embed_result'].video_name} - "
             f"rank_embed={rank_embed}, rank_attribute={rank_attribute}, "
             f"rrf_score={rrf_score:.6f}"
@@ -720,7 +1037,7 @@ async def fusion_search_rerank(
             }
         )
 
-        logger.debug(
+        logger.info(
             f"Collecting scores: {embed_result.video_name} ({embed_result.start_time} to {embed_result.end_time}), "
             f"embed={embed_score:.3f}, normalised_attribute_score={normalised_attribute_score:.3f} "
             f"({len(attribute_scores)}/{len(attributes)} matched)"
@@ -742,8 +1059,11 @@ async def fusion_search_rerank(
     return final_results
 
 
-_SIMILARITY_RATIO_THRESHOLD = 0.9
-
+_SIMILARITY_RATIO_THRESHOLD = 0.8
+# Start each merged result at the concrete frame used for its overlay.  This
+# makes the search-result preview and the Search by Image target agree at
+# clip time 0 instead of showing several seconds of lead-in first.
+_MATCH_CLIP_POSTROLL_SECONDS = 5
 
 def _merge_consecutive_results(results: list["SearchResult"]) -> list["SearchResult"]:
     """Merge consecutive/overlapping SearchResult chunks from the same sensor.
@@ -815,8 +1135,27 @@ def _merge_consecutive_results(results: list["SearchResult"]) -> list["SearchRes
         # Collapse each group into a single SearchResult
         for group in groups:
             first = group[0]
+            # The merged clip spans several matching chunks, but the overlay
+            # needs one concrete object/frame.  Preserve the highest-scoring
+            # chunk's source geometry instead of dropping it during merging.
+            representative = max(group, key=lambda item: item.similarity)
             end_dt = max(iso8601_to_datetime(g.end_time) for g in group)
             similarity = sum(g.similarity for g in group) / len(group)
+
+            clip_start = iso8601_to_datetime(first.start_time)
+            clip_end = end_dt
+            if representative.matched_object_timestamp:
+                try:
+                    match_time = iso8601_to_datetime(representative.matched_object_timestamp)
+                    # Do not exceed the original searchable track window.
+                    clip_start = max(clip_start, match_time)
+                    clip_end = min(clip_end, match_time + timedelta(seconds=_MATCH_CLIP_POSTROLL_SECONDS))
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "Invalid matched-object timestamp for merged result (sensor=%s): %r",
+                        sensor_id,
+                        representative.matched_object_timestamp,
+                    )
 
             seen_ids: set[str] = set()
             merged_object_ids: list[str] = []
@@ -830,12 +1169,15 @@ def _merge_consecutive_results(results: list["SearchResult"]) -> list["SearchRes
                 SearchResult(
                     video_name=first.video_name,
                     description=first.description,
-                    start_time=first.start_time,
-                    end_time=datetime_to_iso8601(end_dt),
+                    start_time=datetime_to_iso8601(clip_start),
+                    end_time=datetime_to_iso8601(clip_end),
                     sensor_id=sensor_id,
                     screenshot_url=first.screenshot_url,
                     similarity=similarity,
                     object_ids=merged_object_ids,
+                    matched_object_timestamp=representative.matched_object_timestamp,
+                    matched_object_type=representative.matched_object_type,
+                    matched_object_bbox=representative.matched_object_bbox,
                     critic_result=None,
                 )
             )
@@ -884,6 +1226,16 @@ async def execute_core_search(
     Yields:
         AgentMessageChunk for progress updates, then SearchOutput as final result
     """
+    # Preserve the exact user text before translation. It is the only reliable
+    # source for detecting a lost Korean action meaning during query planning.
+    raw_user_query = search_input.query
+    license_plate = extract_korean_license_plate(search_input.query)
+    if license_plate or contains_hangul(search_input.query):
+        semantic_query = remove_korean_license_plate(search_input.query)
+        if contains_hangul(semantic_query):
+            semantic_query = await translate_query_if_korean(semantic_query)
+        search_input.query = " ".join(value for value in (license_plate, semantic_query) if value)
+
     if contains_hangul(search_input.query):
         search_input.query = await translate_query_if_korean(search_input.query)
         
@@ -1051,6 +1403,9 @@ async def execute_core_search(
                     video_stream_names=video_stream_names or None,
                 )
 
+            if license_plate:
+                decomposed.license_plate = license_plate
+
             if decomposed.query:
                 search_input.query = decomposed.query
             if decomposed.video_sources:
@@ -1089,6 +1444,8 @@ async def execute_core_search(
                 decomp_summary["top_k"] = decomposed.top_k
             if decomposed.video_sources:
                 decomp_summary["video_sources"] = decomposed.video_sources
+            if decomposed.license_plate:
+                decomp_summary["license_plate"] = decomposed.license_plate
             if decomposed.object_ids:
                 decomp_summary["object_ids"] = decomposed.object_ids
 
@@ -1097,7 +1454,7 @@ async def execute_core_search(
                 content=f"Query decomposed: {json.dumps(decomp_summary)}",
             )
 
-            logger.debug(f"Query decomposed: {decomposed.model_dump()}")
+            logger.info(f"Query decomposed: {decomposed.model_dump()}")
         except Exception as e:
             logger.warning(f"Query decomposition failed, using original query: {e}")
             yield AgentMessageChunk(
@@ -1192,6 +1549,93 @@ async def execute_core_search(
                 attribute_video_sources,
                 unresolved_sources,
             )
+    # For action/event searches, generate a canonical query and a tightly
+    # constrained set of equivalent visual descriptions. Attribute-only and
+    # object-ID paths intentionally remain single-query operations.
+    action_query_plan: ActionQueryPlan | None = None
+    if (
+        search_input.agent_mode
+        and agent_llm
+        and decomposed
+        and decomposed.has_action is True
+        and not license_plate
+        and not decomposed.object_ids
+    ):
+        with TimeMeasure("search: action query planning"):
+            action_query_plan = await build_action_query_plan(
+                original_query=raw_user_query,
+                translated_query=original_query,
+                decomposed_query=search_input.query,
+                llm=agent_llm,
+            )
+        search_input.query = action_query_plan.canonical_query
+        logger.info(
+            "Action query plan: canonical=%r alternatives=%r",
+            action_query_plan.canonical_query,
+            action_query_plan.alternate_queries,
+        )
+        yield AgentMessageChunk(
+            type=AgentMessageChunkType.THOUGHT,
+            content=(
+                "Action query normalized for recall"
+                + (f" with {len(action_query_plan.alternate_queries)} equivalent variants" if action_query_plan.alternate_queries else "")
+            ),
+        )
+
+    # ===== LICENSE PLATE PATH: exact/partial plate match with optional visual attributes =====
+    if license_plate:
+        if not config.attribute_search_tool:
+            raise ValueError("attribute_search_tool is required for license plate search")
+        if attribute_search_fn is None:
+            attribute_search_fn = await builder.get_function(config.attribute_search_tool)
+
+        plate_attributes = decomposed.attributes if decomposed else []
+        if not plate_attributes:
+            semantic_attributes = remove_korean_license_plate(original_query).strip()
+            if semantic_attributes:
+                plate_attributes = [semantic_attributes]
+        top_k = search_input.top_k if search_input.top_k is not None else config.default_max_results
+        yield AgentMessageChunk(
+            type=AgentMessageChunkType.TOOL_CALL,
+            content=(
+                f"Searching license plate {license_plate}"
+                + (f" with attributes: {plate_attributes}" if plate_attributes else "")
+            ),
+        )
+        attribute_results = await attribute_search_fn.ainvoke(
+            {
+                "query": plate_attributes,
+                "license_plate": license_plate,
+                "source_type": search_input.source_type,
+                "video_sources": search_input.video_sources,
+                "timestamp_start": search_input.timestamp_start,
+                "timestamp_end": search_input.timestamp_end,
+                "top_k": top_k,
+                "min_similarity": 0.0,
+                "fuse_multi_attribute": False,
+                "exclude_videos": [],
+            }
+        )
+
+        from vss_agents.tools.attribute_search import AttributeSearchResult
+
+        validated_results = [
+            item if isinstance(item, AttributeSearchResult) else AttributeSearchResult.model_validate(item)
+            for item in (attribute_results or [])
+        ]
+        search_results = [
+            attribute_result_to_search_result(
+                result,
+                description=f"License plate {license_plate} match",
+            )
+            for result in validated_results
+        ]
+        yield AgentMessageChunk(
+            type=AgentMessageChunkType.THOUGHT,
+            content=f"Found {len(search_results)} vehicle track(s) for license plate {license_plate}",
+        )
+        yield SearchOutput(data=search_results, search_messages=[])
+        return
 
     # ===== OBJECT_ID PATH: Direct behavior KNN (bypasses embed_search + fusion) =====
     if decomposed and decomposed.object_ids:
@@ -1255,6 +1699,41 @@ async def execute_core_search(
             f"Object-id behavior search index(es): {object_search_index} (source_type={search_input.source_type})"
         )
 
+        # Extract optional sensor_id and timestamp embedded in the raw query by the UI.
+        # Expected format (lines after the human-readable prefix):
+        #   sensor_id=<name>
+        #   timestamp=<ISO-8601>
+        _raw_query = original_query or search_input.query or ""
+        _sensor_id_match = re.search(r"sensor_id=(\S+)", _raw_query)
+        _timestamp_match = re.search(r"timestamp=(\S+)", _raw_query)
+        _object_sensor_id: str | None = _sensor_id_match.group(1) if _sensor_id_match else None
+        _object_timestamp: str | None = _timestamp_match.group(1) if _timestamp_match else None
+
+        # Search results expose VST stream UUIDs, whereas the behavior index for
+        # uploaded videos stores the friendly sensor name (for example, "subway").
+        # Resolve the UUID here so Search by Image remains reliable even when the
+        # UI has not yet populated its stream-id-to-name map.
+        if _object_sensor_id and getattr(config, "vst_internal_url", None):
+            try:
+                resolved_sensor_id = await get_sensor_id_from_stream_id(
+                    _object_sensor_id, config.vst_internal_url
+                )
+                if resolved_sensor_id != _object_sensor_id:
+                    logger.info(
+                        "Resolved Search-by-Image stream_id %r to behavior sensor_id %r",
+                        _object_sensor_id,
+                        resolved_sensor_id,
+                    )
+                    _object_sensor_id = resolved_sensor_id
+            except Exception as e:
+                # Keep the supplied value for installations whose behavior index
+                # is intentionally keyed by stream UUIDs.
+                logger.warning("Could not resolve Search-by-Image sensor ID %r: %s", _object_sensor_id, e)
+        if _object_sensor_id or _object_timestamp:
+            logger.info(
+                f"Object-id search hint: sensor_id={_object_sensor_id!r} timestamp={_object_timestamp!r}"
+            )
+
         async def _safe_object_search(
             oid: int,
         ) -> list[AttributeSearchResult]:
@@ -1275,6 +1754,13 @@ async def execute_core_search(
                     timestamp_start=search_input.timestamp_start,
                     timestamp_end=search_input.timestamp_end,
                     source_type=search_input.source_type,
+                    sensor_id=_object_sensor_id,
+                    timestamp=_object_timestamp,
+                    frame_api_url=(
+                        f"{config.vst_external_url.rstrip('/')}/video-analytics-api/frames"
+                        if getattr(config, "vst_external_url", None)
+                        else None
+                    ),
                 )
 
             except Exception as e:
@@ -1292,10 +1778,11 @@ async def execute_core_search(
         for obj_results in results_list:
             all_results.extend(obj_results)
 
-        # Deduplicate by object_id, keep highest similarity
+        # Object IDs are tracker-local and can repeat across cameras. Preserve
+        # matches from every video/camera by deduplicating per sensor + object.
         seen: dict = {}
         for r in all_results:
-            key = str(r.metadata.object_id)
+            key = (str(r.metadata.sensor_id), str(r.metadata.object_id))
             if key not in seen or r.metadata.behavior_score > seen[key].metadata.behavior_score:
                 seen[key] = r
         attr_results = sorted(seen.values(), key=lambda r: r.metadata.behavior_score, reverse=True)[:top_k]
@@ -1338,6 +1825,10 @@ async def execute_core_search(
     top_k = search_input.top_k if search_input.top_k is not None else config.default_max_results
     original_top_k = top_k
     top_k = top_k * 2
+    # Incident/action queries benefit from a broader first-stage candidate set:
+    # a relevant time window must not be dropped before Critic verification.
+    if action_query_plan:
+        top_k = max(top_k, 40)
 
     # Build query_params for embed_search (used by embed-only and fusion paths)
     query_params: dict[str, str] = {"query": search_input.query}
@@ -1405,9 +1896,9 @@ async def execute_core_search(
         # Use computed top_k (already defaults to config.default_max_results if None)
         query_params["top_k"] = str(top_k)
 
-        query_input_json = json.dumps({"params": query_params, "source_type": search_input.source_type})
+        # `query_input_json` was previously prepared but never used; remove to avoid linter warning
         # PATH 1: Attribute-only search (attribute_list not empty AND is_attribute_only=True)
-        logger.debug(
+        logger.info(
             f"is_attribute_only: {is_attribute_only}, attribute_list: {attribute_list}, config.attribute_search_tool: {config.attribute_search_tool}"
         )
         if is_attribute_only and attribute_list and config.attribute_search_tool:
@@ -1440,16 +1931,32 @@ async def execute_core_search(
 
         # PATH 2 & 3: Embed search first
         else:
-            # Step 1: Run embed_search using query_input_json set up above (common for both paths)
+            # Step 1: Run embed_search for the canonical action query and its
+            # tightly constrained alternatives, when present.
             logger.info("EXECUTION PATH: Embed search")
 
+            expanded_queries = [search_input.query]
+            if action_query_plan:
+                expanded_queries.extend(action_query_plan.alternate_queries)
+
             yield AgentMessageChunk(
-                type=AgentMessageChunkType.TOOL_CALL, content=f"Running embed search with query: '{search_input.query}'"
+                type=AgentMessageChunkType.TOOL_CALL,
+                content=(
+                    f"Running embed search with query: '{search_input.query}'"
+                    if len(expanded_queries) == 1
+                    else f"Running {len(expanded_queries)} semantic embed searches for the action query"
+                ),
             )
 
             try:
+                async def _run_embed_query(query: str) -> Any:
+                    params = dict(query_params)
+                    params["query"] = query
+                    request_json = json.dumps({"params": params, "source_type": search_input.source_type})
+                    return await embed_search.ainvoke(request_json)
+
                 with TimeMeasure("search: embed search"):
-                    embed_search_output = await embed_search.ainvoke(query_input_json)
+                    embed_search_outputs = await asyncio.gather(*[_run_embed_query(query) for query in expanded_queries])
             except ValueError as e:
                 error_msg = str(e)
                 logger.error(f"Embed search failed: {error_msg}")
@@ -1468,28 +1975,39 @@ async def execute_core_search(
                 yield AgentMessageChunk(type=AgentMessageChunkType.ERROR, content=f"Embed search failed: {error_msg}")
                 raise HTTPException(status_code=status_code, detail=f"Search error: {error_msg}") from e
 
-            if isinstance(embed_search_output, str):
-                embed_output = EmbedSearchOutput.model_validate_json(embed_search_output)
-            elif isinstance(embed_search_output, EmbedSearchOutput):
-                embed_output = embed_search_output
-            else:
-                embed_output = EmbedSearchOutput.model_validate(embed_search_output)
+            result_lists: list[list[SearchResult]] = []
+            for embed_search_output in embed_search_outputs:
+                if isinstance(embed_search_output, str):
+                    embed_output = EmbedSearchOutput.model_validate_json(embed_search_output)
+                elif isinstance(embed_search_output, EmbedSearchOutput):
+                    embed_output = embed_search_output
+                else:
+                    embed_output = EmbedSearchOutput.model_validate(embed_search_output)
 
-            search_results = []
-            for item in embed_output.results:
-                if not item.video_name:
-                    logger.warning("Skipping result with empty video_name")
-                    continue
-                search_results.append(
-                    SearchResult(
-                        video_name=item.video_name,
-                        description=item.description,
-                        start_time=item.start_time,
-                        end_time=item.end_time,
-                        sensor_id=item.sensor_id,
-                        screenshot_url=item.screenshot_url,
-                        similarity=item.similarity_score,
+                result_list: list[SearchResult] = []
+                for item in embed_output.results:
+                    if not item.video_name:
+                        logger.warning("Skipping result with empty video_name")
+                        continue
+                    result_list.append(
+                        SearchResult(
+                            video_name=item.video_name,
+                            description=item.description,
+                            start_time=item.start_time,
+                            end_time=item.end_time,
+                            sensor_id=item.sensor_id,
+                            screenshot_url=item.screenshot_url,
+                            similarity=item.similarity_score,
+                        )
                     )
+                result_lists.append(result_list)
+
+            search_results = _fuse_expanded_embed_results(result_lists)
+            if len(result_lists) > 1:
+                logger.info(
+                    "Expanded action retrieval fused %d query result sets into %d candidates",
+                    len(result_lists),
+                    len(search_results),
                 )
 
             yield AgentMessageChunk(
@@ -1614,6 +2132,12 @@ async def execute_core_search(
                 f"(similarity >= {sim_threshold:.4f}, i.e. {top_pct * 100:.0f}% of max {max_sim:.4f})"
             )
 
+        # Preserve original (pre-merge) results for downstream verification
+        # because merging can collapse multiple distinct clips into one
+        # merged result and unintentionally reduce the number of clips
+        # submitted to the Critic. Keep both views: `raw_search_results`
+        # and `search_results` (merged for UI display).
+        raw_search_results = list(search_results)
         # Merge consecutive chunks from the same sensor into single results
         search_results = _merge_consecutive_results(search_results)
 
@@ -1664,53 +2188,73 @@ async def execute_core_search(
 
                 # Call critic agent - use screenshot_url as video_url for critic
                 critic_limit = min(100,max(1,int(search_input.critic_max_results)))
+                logger.info(
+                    "[Search] critic_max_results from SearchInput=%s resolved critic_limit=%d",
+                    getattr(search_input, 'critic_max_results', None),
+                    critic_limit,
+                )
 
+                # Prepare critic limit (from user input) and defer actual Critic
+                # invocation until after candidate re-selection so a single,
+                # consistent call uses the configured limit.
                 search_videos: list[VideoInfo] = []
 
-                for result in search_results:
-                    info = VideoInfo(
+                    # For action queries, send a diverse subset of video/time
+                # candidates and give the VLM temporal context on both sides of
+                # the embedding hit. This preserves distinct robbery_1 moments
+                # instead of repeatedly validating one adjacent clip.
+                # Use merged `search_results` (UI/display clips) for critic
+                # candidate selection so the Critic evaluates the merged clips.
+                candidate_source = search_results
+                critic_candidates = (
+                    _select_action_critic_candidates(candidate_source) if action_query_plan else candidate_source
+                )
+                search_videos = []
+                critic_to_result_info: dict[VideoInfo, VideoInfo] = {}
+                for result in critic_candidates:
+                    result_info = VideoInfo(
                         sensor_id=result.sensor_id,
                         start_timestamp=result.start_time,
                         end_timestamp=result.end_time,
                     )
-
-                    if (info in confirmed_results or info in rejected_results):
-                        continue
-                    
-                    search_videos.append(info)
-
-                    # UI에서 지정한 최대 분석 개수까지만 구성
-                    if len(search_videos) >= critic_limit:
-                        break
-                    
-                if search_videos:
-                    critic_input = {
-                        "query": original_query,
-                        "videos": search_videos,
-                        "evaluation_count": critic_limit,
-                    }
-
+                    critic_start, critic_end = (
+                        _expand_action_critic_window(result) if action_query_plan else (result.start_time, result.end_time)
+                    )
+                    critic_info = VideoInfo(
+                        sensor_id=result.sensor_id,
+                        start_timestamp=critic_start,
+                        end_timestamp=critic_end,
+                    )
+                    if result_info not in confirmed_results and result_info not in rejected_results:
+                        search_videos.append(critic_info)
+                        critic_to_result_info[critic_info] = result_info
+                if action_query_plan:
                     logger.info(
-                        "[Search] Critic evaluation limit: "
-                        "selected=%d, available=%d, limit=%d",
+                        "[Search] Action Critic candidate selection: %d/%d diverse results, padding=%ss",
                         len(search_videos),
                         len(search_results),
-                        critic_limit,
+                        _ACTION_CRITIC_WINDOW_PADDING_SECONDS,
                     )
-
-                    logger.debug(
-                        "[Search] Critic agent input: %s",
-                        critic_input,
-                    )
-
-                    with TimeMeasure(
-                        "search: critic agent verification"
-                    ):
-                        critic_output = (
-                            await critic_agent.ainvoke(critic_input)
-                        )
-                    logger.debug(f"[Search] Critic output: {critic_output}")
-                    critic_results = {result.video_info: result for result in critic_output.video_results}
+                if len(search_videos) > 0:
+                    critic_input = {
+                        "query": action_query_plan.canonical_query if action_query_plan else original_query,
+                        "videos": search_videos,
+                        # Broaden VLM validation only for action/event searches.
+                        # Critic configuration remains the safe default for all
+                        # other search types.
+                        "evaluation_count": _ACTION_CRITIC_CANDIDATE_COUNT if action_query_plan else None,
+                    }
+                    logger.info(f"[Search] Critic agent input: {critic_input}")
+                    with TimeMeasure("search: critic agent verification"):
+                        critic_output = await critic_agent.ainvoke(critic_input)
+                    logger.info(f"[Search] Critic output: {critic_output}")
+                    # The Critic returns the expanded verification window. Map
+                    # its verdict back to the original search-result window so
+                    # UI annotations and re-search bookkeeping remain correct.
+                    critic_results = {
+                        critic_to_result_info.get(result.video_info, result.video_info): result
+                        for result in critic_output.video_results
+                    }
 
                     for info, video_result in critic_results.items():
                         match video_result.result:
@@ -1766,6 +2310,7 @@ async def execute_core_search(
                     type=AgentMessageChunkType.THOUGHT,
                     content=f"Critic verification complete: {verified_count}/{len(critic_results)} results verified, {unverified_count}/{len(critic_results)} results unverified",
                 )
+
 
             except Exception as e:
                 logger.error(f"[Search] Error calling critic agent: {e}", exc_info=True)
@@ -2052,6 +2597,15 @@ class SearchResult(BaseModel):
     similarity: float = Field(..., description="Cosine similarity score")
     object_ids: list[str] = Field(
         default_factory=list, description="List of object IDs for video generation (from attribute search)"
+    )
+    matched_object_timestamp: str | None = Field(
+        default=None, description="Exact frame timestamp for the matched object embedding"
+    )
+    matched_object_type: str | None = Field(
+        default=None, description="Detector class of the matched object"
+    )
+    matched_object_bbox: dict[str, Any] | None = Field(
+        default=None, description="Bounding box from the exact matched source frame"
     )
     critic_result: CriticResult | None = Field(
         default=None,

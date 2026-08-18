@@ -76,6 +76,7 @@ from vss_agents.agents.postprocessing import POSTPROCESSING_FEEDBACK_MARKER
 from vss_agents.agents.postprocessing import PostprocessingConfig
 from vss_agents.agents.postprocessing import PostprocessingNode
 from vss_agents.utils.asyncmixin import AsyncMixin
+from vss_agents.utils.license_plate import split_korean_license_plate
 from vss_agents.utils.query_translation import contains_hangul
 from vss_agents.utils.query_translation import translate_query_if_korean
 from vss_agents.utils.reasoning_parsing import parse_reasoning_content
@@ -112,7 +113,62 @@ EMPTY_MESSAGES_ERROR = 'No input received in state: "current_message"'
 EMPTY_SCRATCHPAD_ERROR = 'No tool input received in state: "agent_scratchpad"'
 _TOOL_RESULTS_DELIMITER = "\n\n---\n### Latest Tool Results\n"
 _REQUEST_OPTIONS_CONTEXT_MARKERS = ("current_request_options", "previous_request_options")
+_TEXT_TOOL_CALL_PATTERN = re.compile(r"<TOOLCALL>\s*(.*?)\s*</TOOLCALL>", re.IGNORECASE | re.DOTALL)
+_TEXT_SEARCH_AGENT_REQUEST_PATTERN = re.compile(
+    r"<TOOLCALL>.*?\"name\"\s*:\s*\"search_agent\"", re.IGNORECASE | re.DOTALL
+)
+_INVALID_JSON_ESCAPE_PATTERN = re.compile(r'\\(?!["\\\\/bfnrtu])')
 
+
+def _recover_text_tool_calls(content: str) -> list[dict[str, Any]]:
+    """Recover tool calls emitted as text by NIM when its JSON has a bad escape.
+
+    The NIM model normally returns native LangChain tool calls.  In rare cases it
+    instead emits the documented ``<TOOLCALL>`` form, and Korean text can contain
+    a malformed escape such as ``\\h``.  The top agent replaces the search query
+    with the original user message before executing the search, so recovering the
+    call here is safe and lets the normal routing/translation path continue.
+    """
+    match = _TEXT_TOOL_CALL_PATTERN.search(content)
+    if not match:
+        return []
+
+    tool_call_json = match.group(1)
+    try:
+        raw_calls = json.loads(tool_call_json)
+    except json.JSONDecodeError:
+        # Preserve valid JSON escapes while quoting only invalid backslashes.
+        try:
+            raw_calls = json.loads(_INVALID_JSON_ESCAPE_PATTERN.sub(r"\\\\", tool_call_json))
+        except json.JSONDecodeError:
+            logger.warning("Unable to recover malformed text tool call from model output")
+            return []
+
+    if not isinstance(raw_calls, list):
+        return []
+
+    recovered_calls: list[dict[str, Any]] = []
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, dict):
+            continue
+        name = raw_call.get("name")
+        arguments = raw_call.get("arguments", raw_call.get("args", {}))
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                continue
+        if isinstance(name, str) and isinstance(arguments, dict):
+            recovered_calls.append({"name": name, "args": arguments, "id": f"recovered-tool-{uuid4()}"})
+
+    return recovered_calls
+
+
+def _is_incomplete_text_search_request(content: str) -> bool:
+    """Return whether NIM started, but failed to complete, a search tool call."""
+    return bool(_TEXT_SEARCH_AGENT_REQUEST_PATTERN.search(content)) and not bool(
+        _TEXT_TOOL_CALL_PATTERN.search(content)
+    )
 
 class TopAgentRequest(ChatRequestOrMessage):
     """Extended ChatRequestOrMessage with per-request options."""
@@ -777,6 +833,12 @@ class TopAgent(AsyncMixin):
         if not isinstance(question, str):
             question = str(question)
 
+        license_plate, semantic_query = split_korean_license_plate(question.strip())
+        if license_plate and not semantic_query and "search_agent" in self.tools_dict:
+            state.plan = f"1. Call `search_agent` with the recognized license plate `{license_plate}`."
+            logger.info("Plan node bypassed LLM for plate-only query: %s", license_plate)
+            return state
+
         # TODO: Hack for UI to show the uploaded video, use commands "/show" to by pass plan in next release.
         lowered_question = question.lower()
         show_video_prefix = "let's show the videos just uploaded"
@@ -908,6 +970,35 @@ class TopAgent(AsyncMixin):
             state.final_answer = NO_INPUT_ERROR_MESSAGE
             return state
 
+        question_text = _get_content_text(state.current_message).strip()
+        license_plate, semantic_query = split_korean_license_plate(question_text)
+        if (
+            not state.agent_scratchpad
+            and license_plate
+            and not semantic_query
+            and "search_agent" in self.tools_dict
+        ):
+            logger.info("Routing plate-only query directly to search_agent: %s", license_plate)
+            writer(
+                AgentMessageChunk(
+                    type=AgentMessageChunkType.THOUGHT,
+                    content=f"Recognized license plate query: {license_plate}",
+                )
+            )
+            state.agent_scratchpad.append(
+                AIMessage(
+                    content="Routing the recognized license plate directly to video search.",
+                    tool_calls=[
+                        {
+                            "name": "search_agent",
+                            "args": {"query": license_plate},
+                            "id": f"plate-search-{uuid4()}",
+                        }
+                    ],
+                )
+            )
+            return state
+
         question = state.current_message.content
 
         try:
@@ -961,6 +1052,31 @@ class TopAgent(AsyncMixin):
             tool_calls: list[Any] = []
             if isinstance(output_message, AIMessage) and output_message.tool_calls:
                 tool_calls = output_message.tool_calls
+            elif final_result:
+                tool_calls = _recover_text_tool_calls(final_result)
+                if tool_calls:
+                    logger.warning("Recovered %d tool call(s) from malformed text output", len(tool_calls))
+                    # This is an instruction to the agent, not a user-facing answer.
+                    final_result = _TEXT_TOOL_CALL_PATTERN.sub("", final_result).strip()
+                elif (
+                    not state.agent_scratchpad
+                    and "search_agent" in self.tools_dict
+                    and _is_incomplete_text_search_request(final_result)
+                ):
+                    # Long, multi-condition Korean requests can make the local
+                    # model repeat its JSON argument until output is truncated.
+                    # The search agent always replaces this argument with the
+                    # original user query before execution, so call it directly
+                    # instead of surfacing the broken internal tool call.
+                    logger.warning("Falling back to search_agent after incomplete text tool call")
+                    tool_calls = [
+                        {
+                            "name": "search_agent",
+                            "args": {"query": question, "agent_mode": True},
+                            "id": f"fallback-search-{uuid4()}",
+                        }
+                    ]
+                    final_result = ""
 
             # Check if we have a final answer
             if final_result and not tool_calls:
@@ -1055,7 +1171,13 @@ class TopAgent(AsyncMixin):
                     supports_request_options = self._tool_accepts_param(tool_name, "request_options")
 
                     tool_args = {k: v for k, v in tool_call["args"].items() if v is not None}
-                    
+                    if tool_name == "search_agent" and state.current_message is not None:
+                        original_query = _get_content_text(state.current_message).strip()
+                        license_plate, semantic_query = split_korean_license_plate(original_query)
+                        if contains_hangul(semantic_query):
+                            semantic_query = await translate_query_if_korean(semantic_query)
+                        tool_args["query"] = " ".join(value for value in (license_plate, semantic_query) if value)
+
                     if supports_request_options:
                         tool_args["request_options"] = (
                             state.options.model_dump(mode="json")

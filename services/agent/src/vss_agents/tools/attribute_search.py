@@ -18,11 +18,14 @@ from collections.abc import AsyncGenerator
 from datetime import datetime
 from datetime import timedelta
 import logging
+import json
+import asyncio
 import re
 from typing import Any
 from typing import Literal
 from typing import cast
 
+import httpx
 from elasticsearch import AsyncElasticsearch
 from elasticsearch import NotFoundError as ESNotFoundError
 from nat.builder.builder import Builder
@@ -40,6 +43,7 @@ from vss_agents.tools.vst.snapshot import build_screenshot_url
 from vss_agents.utils.es_client import VSSESClient
 from vss_agents.utils.time_measure import TimeMeasure
 from vss_agents.utils.uuid_string import is_standard_uuid_string
+from vss_agents.utils.query_translation import _get_translator
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +143,17 @@ class AttributeSearchInput(BaseModel):
 
     exclude_videos: list[dict[str, str]] = Field(
         default_factory=list, description="List of videos to exclude from results"
+    )
+
+    license_plate: str | None = Field(
+        default=None,
+        description="Normalized Korean plate: exact (81너9673), suffix (*9673), or prefix (81너*)",
+    )
+
+    object_candidates: list[tuple[str, str]] = Field(
+        default_factory=list,
+        description="Internal (sensor ID, object ID) hard filters",
+        exclude=True,
     )
 
 
@@ -468,15 +483,23 @@ async def _fetch_object_embedding(
     object_id: str,
     behavior_index: str | list[str],
     es: AsyncElasticsearch,
+    sensor_id: str | None = None,
+    timestamp: str | None = None,
 ) -> list[float]:
     """Fetch an object's embedding vector from the behavior index by object_id.
 
-    Retrieves the most recent behavior embedding for the given object_id.
-    Used for object re-search (Path B1): user clicks a detected bbox → find more similar objects.
+    Retrieves the behavior embedding for the given object_id from a document that
+    actually has an embedding vector.  When ``sensor_id`` is supplied the search
+    is further narrowed to that sensor.  When ``timestamp`` is supplied the
+    document whose timestamp is closest to the requested time is selected;
+    otherwise the most recent document is used.
 
     Args:
         object_id: The object ID to look up (from SearchResult.object_ids)
         behavior_index: Behavior index name(s) to search
+        es: AsyncElasticsearch client
+        sensor_id: Optional sensor / stream name to disambiguate duplicate object IDs
+        timestamp: Optional ISO-8601 timestamp string; selects the closest document
 
     Returns:
         The embedding vector as list[float]
@@ -485,16 +508,60 @@ async def _fetch_object_embedding(
         ValueError: If object_id not found or has no embedding
     """
     search_index_str = behavior_index if isinstance(behavior_index, str) else ",".join(behavior_index)
+    
+    must_clauses: list[dict] = [
+        {"term": {"object.id.keyword": object_id}},
+        # ``embeddings`` is mapped as ``nested`` in the behavior index. A
+        # top-level exists query never matches nested values, which made every
+        # Search-by-Image object-ID lookup return no source embedding.
+        {
+            "nested": {
+                "path": "embeddings",
+                "query": {"exists": {"field": "embeddings.vector"}},
+            }
+        },
+    ]
+    if sensor_id:
+        must_clauses.append({"term": {"sensor.id.keyword": sensor_id}})
+
+    if timestamp:
+        try:
+            ts_ms = int(datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp() * 1000)
+        except Exception:
+            ts_ms = None
+    else:
+        ts_ms = None
+
+    if ts_ms is not None:
+        sort_clause: list[dict] = [
+            {
+                "_script": {
+                    "type": "number",
+                    "script": {
+                        "lang": "painless",
+                        "source": "Math.abs(doc['timestamp'].value.millis - params.ts)",
+                        "params": {"ts": ts_ms},
+                    },
+                    "order": "asc",
+                }
+            }
+        ]
+    else:
+        sort_clause = [{"timestamp": {"order": "desc"}}]
+
     query = {
-        "query": {"term": {"object.id.keyword": object_id}},
+        "query": {"bool": {"must": must_clauses}},
         "size": 1,
-        "sort": [{"timestamp": {"order": "desc"}}],
+        "sort": sort_clause,
         "_source": ["embeddings.vector"],
     }
     response = await es.search(index=search_index_str, body=query)
     hits = response["hits"]["hits"]
     if not hits:
-        raise ValueError(f"Object ID '{object_id}' not found in behavior index '{search_index_str}'")
+        raise ValueError(
+            f"Object ID '{object_id}' not found in behavior index '{search_index_str}'"
+            + (f" for sensor '{sensor_id}'" if sensor_id else "")
+        )
     embeddings = hits[0]["_source"].get("embeddings", {})
     # Handle both dict {"vector": [...]} and list [{"vector": [...]}] shapes
     if isinstance(embeddings, list):
@@ -504,6 +571,55 @@ async def _fetch_object_embedding(
         raise ValueError(f"Object ID '{object_id}' has no embedding vector")
     return [float(v) for v in vector]
 
+async def _fetch_frame_object_embedding(
+    object_id: str,
+    sensor_id: str,
+    timestamp: str,
+    frame_api_url: str,
+) -> list[float]:
+    """Fetch the selected object's embedding from the frame metadata API.
+
+    Search by Image displays objects from this API.  Some frame-level tracker
+    IDs do not have a corresponding behavior-index document, so this is a
+    fallback for locating the *source* embedding only; the subsequent KNN
+    search still runs against the global behavior index.
+    """
+    requested_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    from_timestamp = (requested_at - timedelta(milliseconds=200)).isoformat(timespec="milliseconds").replace(
+        "+00:00", "Z"
+    )
+    params = {
+        "sensorId": sensor_id,
+        # The frame API validates ISO timestamps with millisecond precision.
+        "fromTimestamp": from_timestamp,
+        "toTimestamp": timestamp,
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(frame_api_url, params=params)
+        response.raise_for_status()
+    frames = response.json().get("frames", [])
+
+    closest_vector: list[float] | None = None
+    closest_delta: float | None = None
+    for frame in frames:
+        frame_timestamp = frame.get("timestamp") or frame.get("frame_timestamp")
+        if not frame_timestamp:
+            continue
+        try:
+            delta = abs((datetime.fromisoformat(frame_timestamp.replace("Z", "+00:00")) - requested_at).total_seconds())
+        except (TypeError, ValueError):
+            continue
+        for obj in frame.get("objects", []):
+            if str(obj.get("id", obj.get("objectId", ""))) != object_id:
+                continue
+            vector = obj.get("embedding", {}).get("vector", [])
+            if vector and (closest_delta is None or delta < closest_delta):
+                closest_vector = [float(value) for value in vector]
+                closest_delta = delta
+
+    if not closest_vector:
+        raise ValueError(f"Object ID '{object_id}' has no frame embedding at '{timestamp}' for sensor '{sensor_id}'")
+    return closest_vector
 
 async def search_by_object_embedding(
     object_id: str,
@@ -515,6 +631,9 @@ async def search_by_object_embedding(
     timestamp_start: datetime | None = None,
     timestamp_end: datetime | None = None,
     source_type: str = "video_file",
+    sensor_id: str | None = None,
+    timestamp: str | None = None,
+    frame_api_url: str | None = None,
 ) -> list["AttributeSearchResult"]:
     """Search for similar objects using a known object's embedding from the behavior index.
 
@@ -535,7 +654,18 @@ async def search_by_object_embedding(
     Returns:
         List of AttributeSearchResult sorted by similarity
     """
-    embedding = await _fetch_object_embedding(object_id, behavior_index, es)
+    try:
+        embedding = await _fetch_object_embedding(object_id, behavior_index, es, sensor_id=sensor_id, timestamp=timestamp)
+    except ValueError as behavior_error:
+        if not (sensor_id and timestamp and frame_api_url):
+            raise
+        logger.info(
+            "Object ID %s is absent from the behavior index; using its frame embedding instead: %s",
+            object_id,
+            behavior_error,
+        )
+        embedding = await _fetch_frame_object_embedding(object_id, sensor_id, timestamp, frame_api_url)
+
     results = await search_by_attributes(
         query_embedding=embedding,
         index=behavior_index,
@@ -581,6 +711,255 @@ async def enrich_attribute_results(
 
     await asyncio.gather(*(_enrich_result(r) for r in results))
 
+async def search_by_license_plate(
+    frames_index: str | list[str],
+    license_plate: str,
+    es: AsyncElasticsearch,
+    timestamp_start: datetime | None = None,
+    timestamp_end: datetime | None = None,
+    video_sources: list[str] | None = None,
+    top_k: int = 10,
+) -> list[AttributeSearchResult]:
+    """Find vehicle tracks by exact, suffix, or prefix license-plate match."""
+    if license_plate.startswith("*") and len(license_plate) > 1:
+        plate_query: dict[str, Any] = {
+            "wildcard": {"objects.info.licensePlate": license_plate}
+        }
+    elif license_plate.endswith("*") and len(license_plate) > 1:
+        plate_query = {
+            "prefix": {"objects.info.licensePlate": license_plate[:-1]}
+        }
+    else:
+        plate_query = {
+            "term": {"objects.info.licensePlate": license_plate}
+        }
+
+    filters: list[dict[str, Any]] = [
+        {
+            "nested": {
+                "path": "objects",
+                "query": plate_query,
+                "inner_hits": {
+                    "name": "license_plate_objects",
+                    "size": 10,
+                    "_source": [
+                        "objects.id",
+                        "objects.type",
+                        "objects.bbox",
+                        "objects.info",
+                    ],
+                },
+            }
+        }
+    ]
+
+    if timestamp_start or timestamp_end:
+        time_range: dict[str, str] = {}
+        if timestamp_start:
+            time_range["gte"] = timestamp_start.isoformat()
+        if timestamp_end:
+            time_range["lte"] = timestamp_end.isoformat()
+        filters.append({"range": {"timestamp": time_range}})
+
+    if video_sources:
+        source_should: list[dict[str, Any]] = []
+        for source in video_sources:
+            escaped = source.replace("\\", "\\\\").replace("*", "\\*").replace("?", "\\?")
+            source_should.append({"term": {"sensorId.keyword": source}})
+            source_should.append({"wildcard": {"sensorId.keyword": f"*{escaped}*"}})
+        filters.append(
+            {
+                "bool": {
+                    "should": source_should,
+                    "minimum_should_match": 1,
+                }
+            }
+        )
+
+    search_index = frames_index if isinstance(frames_index, str) else ",".join(frames_index)
+    fetch_size = min(max(top_k * 100, 200), 2000)
+    body = {
+        "size": fetch_size,
+        "query": {"bool": {"filter": filters}},
+        "sort": [{"timestamp": {"order": "asc"}}],
+        "_source": ["sensorId", "timestamp"],
+    }
+    # Debug: log the exact ES query body for diagnostics
+    try:
+        logger.debug("search_by_license_plate ES body: %s", json.dumps(body, ensure_ascii=False))
+    except Exception:
+        pass
+
+    response = await es.search(index=search_index, body=body)
+
+    tracks: dict[tuple[str, str], dict[str, Any]] = {}
+    for hit in response.get("hits", {}).get("hits", []):
+        source = hit.get("_source", {})
+        sensor_id = str(source.get("sensorId", ""))
+        timestamp = source.get("timestamp")
+        if not sensor_id or not timestamp:
+            continue
+        inner_hits = hit.get("inner_hits", {}).get("license_plate_objects", {}).get("hits", {}).get("hits", [])
+        for inner_hit in inner_hits:
+            obj = inner_hit.get("_source", {})
+            object_id = str(obj.get("id", ""))
+            if not object_id:
+                continue
+            key = (sensor_id, object_id)
+            track = tracks.setdefault(
+                key,
+                {
+                    "sensor_id": sensor_id,
+                    "object_id": object_id,
+                    "object_type": str(obj.get("type", "car")),
+                    "start": timestamp,
+                    "end": timestamp,
+                    "bbox": obj.get("bbox"),
+                },
+            )
+            if timestamp < track["start"]:
+                track["start"] = timestamp
+            if timestamp > track["end"]:
+                track["end"] = timestamp
+            if track["bbox"] is None and obj.get("bbox") is not None:
+                track["bbox"] = obj.get("bbox")
+
+    results: list[AttributeSearchResult] = []
+    for track in tracks.values():
+        start = str(track["start"])
+        end = str(track["end"])
+        if start == end:
+            instant = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            start = (instant - timedelta(seconds=2.5)).isoformat().replace("+00:00", "Z")
+            end = (instant + timedelta(seconds=2.5)).isoformat().replace("+00:00", "Z")
+        results.append(
+            AttributeSearchResult(
+                screenshot_url=None,
+                metadata=AttributeSearchMetadata(
+                    sensor_id=track["sensor_id"],
+                    object_id=track["object_id"],
+                    object_type=track["object_type"],
+                    frame_timestamp=str(track["start"]),
+                    start_time=start,
+                    end_time=end,
+                    bbox=track["bbox"],
+                    behavior_score=1.0,
+                    frame_score=1.0,
+                    video_name=track["sensor_id"],
+                ),
+            )
+        )
+
+    logger.info(
+        "License plate search matched %d track(s) for %s",
+        len(results),
+        license_plate,
+    )
+
+    # If no results, attempt a transliteration fallback (Latinized) as a last resort
+    if not results:
+        try:
+            # Use translator directly (sync via thread) to produce a Latin form
+            translated = await asyncio.to_thread(_get_translator().translate, license_plate)
+            if translated and translated != license_plate:
+                logger.info("No plate results for %s — retrying with transliterated plate %s", license_plate, translated)
+                # Build new plate_query for translated form
+                if translated.startswith("*") and len(translated) > 1:
+                    retry_plate_query = {"wildcard": {"objects.info.licensePlate": translated}}
+                elif translated.endswith("*") and len(translated) > 1:
+                    retry_plate_query = {"prefix": {"objects.info.licensePlate": translated[:-1]}}
+                else:
+                    retry_plate_query = {"term": {"objects.info.licensePlate": translated}}
+
+                # Replace plate_query inside filters (first element)
+                try:
+                    new_filters = list(filters)
+                    new_filters[0] = {
+                        "nested": {
+                            "path": "objects",
+                            "query": retry_plate_query,
+                            "inner_hits": {
+                                "name": "license_plate_objects",
+                                "size": 10,
+                                "_source": ["objects.id", "objects.type", "objects.bbox", "objects.info"],
+                            },
+                        }
+                    }
+                    retry_body = {**body, "query": {"bool": {"filter": new_filters}}}
+                    try:
+                        logger.debug("search_by_license_plate retry ES body: %s", json.dumps(retry_body, ensure_ascii=False))
+                    except Exception:
+                        pass
+                    retry_response = await es.search(index=search_index, body=retry_body)
+                    # process retry_response similarly to above
+                    retry_tracks: dict[tuple[str, str], dict[str, Any]] = {}
+                    for hit in retry_response.get("hits", {}).get("hits", []):
+                        source = hit.get("_source", {})
+                        sensor_id = str(source.get("sensorId", ""))
+                        timestamp = source.get("timestamp")
+                        if not sensor_id or not timestamp:
+                            continue
+                        inner_hits = hit.get("inner_hits", {}).get("license_plate_objects", {}).get("hits", {}).get("hits", [])
+                        for inner_hit in inner_hits:
+                            obj = inner_hit.get("_source", {})
+                            object_id = str(obj.get("id", ""))
+                            if not object_id:
+                                continue
+                            key = (sensor_id, object_id)
+                            track = retry_tracks.setdefault(
+                                key,
+                                {
+                                    "sensor_id": sensor_id,
+                                    "object_id": object_id,
+                                    "object_type": str(obj.get("type", "car")),
+                                    "start": timestamp,
+                                    "end": timestamp,
+                                    "bbox": obj.get("bbox"),
+                                },
+                            )
+                            if timestamp < track["start"]:
+                                track["start"] = timestamp
+                            if timestamp > track["end"]:
+                                track["end"] = timestamp
+                            if track["bbox"] is None and obj.get("bbox") is not None:
+                                track["bbox"] = obj.get("bbox")
+
+                    retry_results: list[AttributeSearchResult] = []
+                    for track in retry_tracks.values():
+                        start = str(track["start"])
+                        end = str(track["end"])
+                        if start == end:
+                            instant = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                            start = (instant - timedelta(seconds=2.5)).isoformat().replace("+00:00", "Z")
+                            end = (instant + timedelta(seconds=2.5)).isoformat().replace("+00:00", "Z")
+                        retry_results.append(
+                            AttributeSearchResult(
+                                screenshot_url=None,
+                                metadata=AttributeSearchMetadata(
+                                    sensor_id=track["sensor_id"],
+                                    object_id=track["object_id"],
+                                    object_type=track["object_type"],
+                                    frame_timestamp=str(track["start"]),
+                                    start_time=start,
+                                    end_time=end,
+                                    bbox=track["bbox"],
+                                    behavior_score=1.0,
+                                    frame_score=1.0,
+                                    video_name=track["sensor_id"],
+                                ),
+                            )
+                        )
+                    if retry_results:
+                        logger.info(
+                            "License plate retry matched %d track(s) for transliterated plate %s",
+                            len(retry_results),
+                            translated,
+                        )
+                        return retry_results[:top_k]
+        except Exception:
+            logger.exception("Plate transliteration retry failed")
+
+    return results[:top_k]
 
 async def _search_behavior(
     index: str | list[str],
@@ -592,6 +971,7 @@ async def _search_behavior(
     timestamp_end: datetime | None = None,
     video_sources: list[str] | None = None,
     source_type: str = "video_file",
+    object_candidates: list[tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Search behavior embeddings and return candidates."""
 
@@ -653,6 +1033,27 @@ async def _search_behavior(
                     }
                 }
             )
+
+    if object_candidates:
+        candidate_should = [
+            {
+                "bool": {
+                    "filter": [
+                        {"term": {"sensor.id.keyword": sensor_id}},
+                        {"term": {"object.id.keyword": object_id}},
+                    ]
+                }
+            }
+            for sensor_id, object_id in object_candidates
+        ]
+        filter_clauses.append(
+            {
+                "bool": {
+                    "should": candidate_should,
+                    "minimum_should_match": 1,
+                }
+            }
+        )
 
     # Build KNN query with filters INSIDE (so filters are applied during KNN search, not after)
     # Fetch more candidates to account for duplicates - we'll deduplicate and return top_k later
@@ -1064,6 +1465,7 @@ async def search_by_attributes(
     enable_frame_lookup: bool = True,
     exclude_videos: list[dict[str, str]] | None = None,
     source_type: str = "video_file",
+    object_candidates: list[tuple[str, str]] | None = None,
 ) -> list[AttributeSearchResult]:
     """Search for objects by attribute embeddings and return scores per object-video pair."""
     exclude_videos = exclude_videos or []
@@ -1080,6 +1482,7 @@ async def search_by_attributes(
                 timestamp_end=timestamp_end,
                 video_sources=video_sources,
                 source_type=source_type,
+                object_candidates=object_candidates,
             )
 
         # Phase 2: Perform frame lookups (if enabled) to get more accurate bbox, timestamp, and frame_score
@@ -1183,6 +1586,7 @@ async def search_single_attribute(
         enable_frame_lookup=enable_frame_lookup,
         source_type=search_input.source_type,
         exclude_videos=search_input.exclude_videos,
+        object_candidates=search_input.object_candidates,
     )
 
 
@@ -1225,6 +1629,34 @@ async def search_attributes(
     logger.info(f"Search index(es): {search_index} (source_type={source_type})")
     if search_frames_index:
         logger.info(f"Frames index(es): {search_frames_index} (source_type={source_type})")
+
+    if search_input.license_plate:
+        if not search_frames_index:
+            logger.error("frames_index is required for license plate search")
+            return []
+        plate_results = await search_by_license_plate(
+            frames_index=search_frames_index,
+            license_plate=search_input.license_plate,
+            es=es,
+            timestamp_start=search_input.timestamp_start,
+            timestamp_end=search_input.timestamp_end,
+            video_sources=search_input.video_sources,
+            top_k=max(search_input.top_k, 100),
+        )
+        if not plate_results:
+            return []
+        visual_queries = [query for query in queries if query.strip()]
+        if not visual_queries:
+            await enrich_attribute_results(
+                plate_results,
+                vst_internal_url=vst_internal_url,
+                vst_external_url=vst_external_url,
+            )
+            return plate_results[: search_input.top_k]
+        queries = visual_queries
+        search_input.object_candidates = [
+            (result.metadata.sensor_id, result.metadata.object_id) for result in plate_results
+        ]
 
     if search_input.fuse_multi_attribute:
         # FUSE MODE: Current behavior - fuse object IDs for single screenshot
@@ -1277,6 +1709,7 @@ async def _fuse_multi_attribute(
         min_similarity=search_input.min_similarity,
         fuse_multi_attribute=True,  # Preserve flag
         exclude_videos=search_input.exclude_videos,
+        object_candidates=search_input.object_candidates,
     )
 
     tasks = [
@@ -1378,6 +1811,7 @@ async def _append_multi_attribute(
         min_similarity=search_input.min_similarity,
         fuse_multi_attribute=False,  # Preserve flag
         exclude_videos=search_input.exclude_videos,
+        object_candidates=search_input.object_candidates,
     )
 
     # Search each attribute independently

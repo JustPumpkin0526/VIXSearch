@@ -22,6 +22,7 @@ import logging
 
 from fastapi import FastAPI
 from nat.builder.workflow_builder import WorkflowBuilder
+from nat.builder.framework_enum import LLMFrameworkEnum
 from nat.data_models.config import Config
 from nat.front_ends.fastapi.fastapi_front_end_plugin_worker import FastApiFrontEndPluginWorker
 
@@ -31,6 +32,8 @@ from vss_agents.api.video_delete import register_video_delete_routes
 from vss_agents.api.video_ingest import register_video_upload
 from vss_agents.api.video_ingest import register_video_upload_complete
 from vss_agents.api.video_search_ingest import register_video_search_ingest_routes
+from vss_agents.api.image_search import register_image_search_route
+from vss_agents.api.critic_description import register_critic_description_route
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +71,16 @@ class CustomFastApiFrontEndWorker(FastApiFrontEndPluginWorker):
 
         # Register custom streaming routes per capability flags in streaming_ingest
         self._register_streaming_routes(app)
+
+        # The description route only translates the Critic JSON already attached
+        # to a result. It uses the workflow LLM but never runs Critic/VLM again.
+        llm_name = getattr(getattr(self.config, "workflow", None), "llm_name", None)
+        if llm_name:
+            llm = await builder.get_llm(llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+            register_critic_description_route(app, llm)
+            logger.info("Registered /api/v1/critic-description using workflow LLM '%s'", llm_name)
+        else:
+            logger.warning("Workflow LLM is unavailable; Critic Korean description route was not registered")        
 
     def _register_streaming_routes(self, app: FastAPI) -> None:
         """Register the custom video / RTSP / delete routes.
@@ -119,3 +132,4 @@ class CustomFastApiFrontEndWorker(FastApiFrontEndPluginWorker):
         register_rtsp_ingest_routes(app, self.config)
         register_rtsp_delete_routes(app, self.config)
         register_video_delete_routes(app, self.config)
+        register_image_search_route(app)

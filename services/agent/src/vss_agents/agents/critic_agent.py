@@ -255,8 +255,11 @@ async def critic_agent(config: CriticAgentConfig, builder: Builder) -> AsyncGene
                         start_iso, end_iso = await get_timeline(stream_id)
                         video_start_dt = iso8601_to_datetime(start_iso)
                         # Sometimes the end timestamp is after the video end timestamp, so we need to clip the end offset.
-                        start_offset = _convert_to_seconds(video.start_timestamp, video_start_dt)
-                        end_offset = _convert_to_seconds(video.end_timestamp, video_start_dt)
+                        # Search may intentionally add lead-in context before a
+                        # candidate window. Never pass a negative offset to the
+                        # video endpoint when that context crosses video start.
+                        start_offset = max(0.0, _convert_to_seconds(video.start_timestamp, video_start_dt))
+                        end_offset = max(start_offset, _convert_to_seconds(video.end_timestamp, video_start_dt))
                         clip_end_offset = _convert_to_seconds(end_iso, video_start_dt)
                         if end_offset > clip_end_offset:
                             end_offset = clip_end_offset

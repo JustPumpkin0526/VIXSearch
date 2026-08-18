@@ -331,11 +331,23 @@ def _effective_critic_max_results(search_agent_input: SearchAgentInput) -> int:
         value = getattr(request_options, "critic_max_results",None)
 
         if value is not None:
-            return min(100,max(1,int(value)))
+            resolved_val = min(100,max(1,int(value)))
+            logger.info(
+                "[SearchAgent] request_options.critic_max_results provided: %s -> resolved=%d",
+                value,
+                resolved_val,
+            )
+            return resolved_val
 
     # Search Agent를 직접 호출하는 경우의 fallback
     if (search_agent_input.critic_max_results is not None):
-        return min(100, max(1, int(search_agent_input.critic_max_results)))
+        resolved_val = min(100, max(1, int(search_agent_input.critic_max_results)))
+        logger.info(
+            "[SearchAgent] search_agent_input.critic_max_results provided: %s -> resolved=%d",
+            search_agent_input.critic_max_results,
+            resolved_val,
+        )
+        return resolved_val
 
     return 5
 

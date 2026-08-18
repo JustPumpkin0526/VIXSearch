@@ -38,6 +38,7 @@ class RTVICVEmbedClient(EmbedClient):
         """
         self.endpoint = endpoint.rstrip("/")
         self.text_embeddings_url = f"{self.endpoint}/api/v1/generate_text_embeddings"
+        self.image_embeddings_url = f"{self.endpoint}/api/v1/generate_image_embeddings"
         # Bounded LRU cache for text embeddings (with per-key async locks)
         self._text_cache = LRUEmbeddingCache(maxsize=_TEXT_EMBEDDING_CACHE_MAXSIZE)
 
@@ -109,8 +110,39 @@ class RTVICVEmbedClient(EmbedClient):
 
     @override
     async def get_image_embedding(self, image_url: str) -> list[float]:
-        """Image embeddings not supported by RTVI CV client."""
-        raise NotImplementedError("Image embeddings not supported by RTVI CV client")
+        """Generate an image embedding with the RTVI CV Vision Encoder.
+
+        ``image_url`` must be a path visible inside the RTVI CV container.  The
+        DeepStream REST API reads the image from that path; it does not download
+        HTTP URLs itself.
+        """
+        payload = {
+            "image_path": image_url,
+            "model": "siglip_v2_v1.1",
+        }
+
+        try:
+            timeout = httpx.Timeout(connect=30.0, read=120.0, write=120.0, pool=30.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(self.image_embeddings_url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+
+            if not result.get("data") or not isinstance(result["data"], list):
+                raise ValueError("RTVI CV response missing or empty 'data' field")
+
+            embedding_data = result["data"][0]
+            if not isinstance(embedding_data, dict) or not isinstance(embedding_data.get("embedding"), list):
+                raise ValueError("RTVI CV image response missing 'data[0].embedding'")
+
+            return cast("list[float]", embedding_data["embedding"])
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to get image embedding from RTVI CV: {e}")
+            raise
+        except (KeyError, IndexError, TypeError, ValueError) as e:
+            logger.error(f"Failed to parse RTVI CV image response: {e}")
+            raise ValueError(f"Invalid RTVI CV image response format: {e}") from e
+
 
     @override
     async def get_video_embedding(self, video_url: str) -> list[float]:
