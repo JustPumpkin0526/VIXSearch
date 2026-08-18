@@ -79,6 +79,7 @@ export interface SearchVideoModalProps {
   onSearchByImageRequest?: (
     pauseOffsetSeconds: number,
   ) => void;
+  searchByImageTargetOffsetSeconds?: number;
   searchByImageFooter?: React.ReactNode;
   searchByImageOverlay?: React.ReactNode;
 
@@ -111,6 +112,7 @@ export const SearchVideoModal:
 
     searchByImageEnabled = false,
     onSearchByImageRequest,
+    searchByImageTargetOffsetSeconds,
     searchByImageFooter,
     searchByImageOverlay,
 
@@ -196,7 +198,7 @@ export const SearchVideoModal:
             y: Math.max(padding, y),
           });
         },
-        [],
+        []
       );
 
 
@@ -459,15 +461,16 @@ export const SearchVideoModal:
     );
 
 
-    const handleSearchByImageClick =
-      useCallback(() => {
-        onSearchByImageRequest?.(
-          pauseTime,
-        );
-      }, [
-        onSearchByImageRequest,
-        pauseTime,
-      ]);
+    const handleSearchByImageClick = useCallback(() => {
+      const targetOffset = searchByImageTargetOffsetSeconds;
+      const offset = targetOffset != null ? targetOffset : pauseTime;
+      if (targetOffset != null && videoElement) {
+        videoElement.pause();
+        videoElement.currentTime = targetOffset;
+        setPauseTime(targetOffset);
+      }
+      if (onSearchByImageRequest) onSearchByImageRequest(offset);
+    }, [onSearchByImageRequest, pauseTime, searchByImageTargetOffsetSeconds, videoElement]);
 
 
     const showSearchByImageButton =
@@ -687,7 +690,7 @@ export const SearchVideoModal:
                   dark:text-gray-300
                 "
               >
-                장소명
+                발생 장소
               </label>
 
               <input
@@ -737,7 +740,7 @@ export const SearchVideoModal:
                   dark:text-gray-300
                 "
               >
-                상황 설명
+                상세 내용
               </label>
 
               <textarea
@@ -992,7 +995,7 @@ export const SearchVideoModal:
           isOpen={isOpen}
           videoUrl={videoUrl}
           title={title}
-          onClose={onClose}
+          onClose={creatingReport ? (() => {}) : onClose}
           onVideoPause={
             handleVideoPause
           }
@@ -1047,6 +1050,25 @@ export const SearchVideoModal:
               </VideoModalTooltip>
             </div>,
             videoOverlayHost,
+          )}
+
+        {creatingReport &&
+          createPortal(
+            <div
+              className="fixed inset-0 z-[9999] flex items-center justify-center"
+              onClick={e => e.stopPropagation()}
+              onMouseDown={e => e.stopPropagation()}
+              onPointerDown={e => e.stopPropagation()}
+              role="status"
+              aria-live="polite"
+            >
+              <div className="absolute inset-0 bg-black opacity-40" />
+              <div className="relative z-10 flex flex-col items-center gap-3 rounded-md bg-white/90 p-6 shadow-lg dark:bg-neutral-900/90">
+                <div className="animate-spin h-8 w-8 border-4 border-t-transparent rounded-full border-white dark:border-gray-300" />
+                <div className="text-sm font-medium text-gray-900 dark:text-gray-100">보고서 처리 중... 잠시만 기다려주세요.</div>
+              </div>
+            </div>,
+            document.body,
           )}
 
         {videoOverlayHost &&

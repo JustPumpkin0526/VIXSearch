@@ -67,4 +67,30 @@ const formatDateToLocalISO = (date: Date | null): string | null => {
     return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
 }
 
-export { formatDatetime, formatTime, formatDateToLocalISO, parseDateAsLocal };
+interface LicensePlateSearchData {
+    license_plate?: string;
+    description?: string;
+}
+
+const KOREAN_PLATE_PATTERN = /^(?:(?:서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)?\d{2,3}[가-힣]\d{4})$/;
+const PARTIAL_PLATE_PATTERN = /^(?:\*\d{4}|[0-9가-힣]{1,9}\*)$/;
+
+/** Extract a normalized exact or partial plate from an explicit field or Agent description. */
+const extractLicensePlate = (item?: LicensePlateSearchData | null): string | null => {
+    if (!item) return null;
+
+    const explicitPlate = item.license_plate?.replace(/[\s-]+/g, "");
+    if (explicitPlate && (KOREAN_PLATE_PATTERN.test(explicitPlate) || PARTIAL_PLATE_PATTERN.test(explicitPlate))) {
+        return explicitPlate;
+    }
+
+    const descriptionMatch = item.description?.match(/(?:license\s*plate|차번|번호판)\s*[:=]?\s*([*0-9가-힣-]+)\s+(?:match|일치)/i);
+    const descriptionPlate = descriptionMatch?.[1]?.replace(/[\s-]+/g, "");
+    if (descriptionPlate && (KOREAN_PLATE_PATTERN.test(descriptionPlate) || PARTIAL_PLATE_PATTERN.test(descriptionPlate))) {
+        return descriptionPlate;
+    }
+
+    return null;
+};
+
+export { formatDatetime, formatTime, formatDateToLocalISO, parseDateAsLocal, extractLicensePlate };

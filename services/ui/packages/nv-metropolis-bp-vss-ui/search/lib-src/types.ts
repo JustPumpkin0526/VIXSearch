@@ -40,7 +40,14 @@ export interface SearchData {
   similarity: number;
   screenshot_url: string;
   object_ids: string[];
+  /** Exact frame timestamp for object_ids, when returned by image similarity search. */
+  matched_object_timestamp?: string;
+  /** Detector class and source-frame rectangle of the matched image embedding. */
+  matched_object_type?: string;
+  matched_object_bbox?: BboxCoords;
   critic_result?: CriticResult;
+  /** Normalized exact or partial Korean license-plate query associated with this result. */
+  license_plate?: string;
 }
 
 export interface VideoGroupSearchScope {
@@ -139,6 +146,8 @@ export interface BboxObject {
   bbox: BboxCoords;
   /** Object class/type from detector (e.g. "Person", "Vehicle"). Optional — not all backends return it. */
   type?: string;
+  /** True when this detector/tracker object ID matched the current search result. */
+  isSearchMatch?: boolean;
 }
 
 /**

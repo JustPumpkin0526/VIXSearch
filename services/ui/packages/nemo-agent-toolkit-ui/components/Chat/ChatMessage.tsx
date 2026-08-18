@@ -30,6 +30,8 @@ import { BotAvatar } from '@/components/Avatar/BotAvatar';
 import { getReactMarkDownCustomComponents } from '../Markdown/CustomComponents';
 import { MemoizedReactMarkdown } from '../Markdown/MemoizedReactMarkdown';
 
+// Import search modal from search package
+import { SearchVideoModal, useSearchByImage } from '@nv-metropolis-bp-vss-ui/search';
 import DOMPurify from 'isomorphic-dompurify';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
@@ -107,6 +109,18 @@ export const ChatMessage: FC<Props> = memo(
     const [messagedCopied, setMessageCopied] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [isPlaying, setIsPlaying] = useState(false);
+    const [openSearchModal, setOpenSearchModal] = useState(false);
+    const [searchInitImage, setSearchInitImage] = useState<string | null>(null);
+    // Provide VST/MDX endpoints to the hook if available (use public env vars as fallback)
+    const vstApiUrl = typeof window !== 'undefined' && (window as any).__NEXT_DATA__?.env?.NEXT_PUBLIC_VST_API_URL
+      ? (window as any).__NEXT_DATA__.env.NEXT_PUBLIC_VST_API_URL
+      : process.env.NEXT_PUBLIC_VST_API_URL;
+
+    const mdxWebApiUrl = typeof window !== 'undefined' && (window as any).__NEXT_DATA__?.env?.NEXT_PUBLIC_MDX_API_URL
+      ? (window as any).__NEXT_DATA__.env.NEXT_PUBLIC_MDX_API_URL
+      : process.env.NEXT_PUBLIC_MDX_API_URL;
+
+    const { startSearchByImage } = useSearchByImage({ vstApiUrl, mdxWebApiUrl });
     const speechSynthesisRef = useRef<SpeechSynthesisUtterance | null>(null);
 
     // Memoize the markdown components - DO NOT include isStreaming in deps
@@ -332,6 +346,7 @@ export const ChatMessage: FC<Props> = memo(
     }
 
     return (
+      <>
       <div
         data-testid={message.role === 'assistant' ? 'chat-message-assistant' : 'chat-message-user'}
         className={`group md:px-4 ${
@@ -401,6 +416,16 @@ export const ChatMessage: FC<Props> = memo(
                     >
                       {prepareContent({ message, role: 'user' })}
                     </ReactMarkdown>
+                    {message.attachments?.filter((attachment) => attachment.type === 'image').map((attachment, index) => (
+                      <figure key={`${message.id || messageIndex}-image-${index}`} className="mt-3 mb-0 w-fit max-w-full">
+                        <img
+                          src={attachment.content}
+                          alt="검색 기준 이미지"
+                          className="max-h-56 max-w-full rounded-md border border-black/15 object-contain dark:border-white/20"
+                        />
+                        <figcaption className="mt-1 text-xs text-gray-500 dark:text-gray-400">검색 기준 이미지</figcaption>
+                      </figure>
+                    ))}
                   </div>
                 )}
 
@@ -414,6 +439,19 @@ export const ChatMessage: FC<Props> = memo(
                         <IconEdit size={20} />
                       </button>
                     )}
+                    {/* Search trigger button - opens SearchVideoModal */}
+                    <button
+                      className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+                      onClick={() => {
+                        // If this message has an image attachment, pass it as initial image to search modal
+                        const img = message.attachments?.find((a) => a.type === 'image')?.content ?? null;
+                        setSearchInitImage(img ?? null);
+                        setOpenSearchModal(true);
+                      }}
+                      title="Open Search"
+                    >
+                      🔎
+                    </button>
                     <button
                       className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
                       onClick={handleDeleteMessage}
@@ -557,7 +595,31 @@ export const ChatMessage: FC<Props> = memo(
           </div>
         </div>
       </div>
+      {openSearchModal && (
+        <SearchVideoModal
+          open={openSearchModal}
+          onClose={() => setOpenSearchModal(false)}
+          defaultScope="plate"
+          initialImage={searchInitImage}
+          onSearch={(imageData: string | Blob) => {
+            // close modal and notify global image-search listener used by SearchComponent
+            setOpenSearchModal(false);
+
+            try {
+              const detail: Record<string, unknown> = { imageUrl: typeof imageData === 'string' ? imageData : undefined, scope: 'plate' };
+              window.dispatchEvent(new CustomEvent('vss-image-search', { detail }));
+            } catch (e) {
+              console.warn('failed to dispatch vss-image-search', e);
+            }
+          }}
+        />
+      )}
+      </>
     );
   },
 );
 ChatMessage.displayName = 'ChatMessage';
+
+// Render SearchVideoModal at module root so it can be toggled from message
+export default ChatMessage;
+

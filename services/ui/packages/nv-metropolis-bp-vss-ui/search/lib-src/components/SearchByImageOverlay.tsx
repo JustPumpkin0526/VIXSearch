@@ -96,6 +96,7 @@ export const SearchByImageOverlay: React.FC<SearchByImageOverlayProps> = ({
   frameData.objects.forEach((obj, idx) => {
     const isSelected = obj.id === selectedObjectId;
     const isHovered = obj.id === hoveredObjectId;
+    const isSearchMatch = obj.isSearchMatch === true;
 
     const x = obj.bbox.leftX * scaleFactor;
     const y = obj.bbox.topY * scaleFactor;
@@ -112,7 +113,7 @@ export const SearchByImageOverlay: React.FC<SearchByImageOverlayProps> = ({
         width={w}
         height={h}
         fill="transparent"
-        stroke={isSelected ? '#76b900' : '#ffffff'}
+        stroke={isSelected ? '#ffb000' : isSearchMatch ? '#76b900' : '#ffffff'}
         strokeWidth={strokeWidth}
         shadowColor="#000000"
         shadowBlur={isSelected ? 14 : isHovered ? 10 : 6}

@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { useCallback, useRef, useState } from 'react';
-
-import {
-  BboxObject,
-  SearchByImageFrameData,
-} from '../types';
+import { SearchByImageFrameData, BboxObject, BboxCoords } from '../types';
 
 interface UseSearchByImageOptions {
   vstApiUrl?: string;
@@ -18,6 +14,17 @@ interface SearchByImageState {
   error: string | null;
   frameData: SearchByImageFrameData | null;
 }
+
+/**
+ * The frame index and the object-embedding index can be recorded at slightly
+ * different cadences. Query around the matched instant, then choose the
+ * closest indexed frame rather than assuming an exact timestamp exists.
+ */
+const FRAME_LOOKUP_WINDOW_MS = 1_000;
+// A tracker ID alone does not identify an object across arbitrary frames. Only
+// highlight it when the paused frame is the exact matched frame (within index
+// cadence), otherwise leave every box white and let the user choose manually.
+const MATCH_TIMESTAMP_TOLERANCE_MS = 250;
 
 interface FrameApiBbox {
   leftX?: number;
@@ -613,8 +620,7 @@ export const useSearchByImage = ({
       frameData: null,
     });
 
-  const abortRef =
-    useRef<AbortController | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const startSearchByImage =
     useCallback(
@@ -624,6 +630,10 @@ export const useSearchByImage = ({
         videoStartTime: string,
         pauseOffsetSeconds: number,
         videoUrl: string,
+        matchedObjectIds?: string[],
+        matchedObjectTimestamp?: string,
+        matchedObjectType?: string,
+        matchedObjectBbox?: BboxCoords
       ) => {
         if (!vstApiUrl) {
           setState({

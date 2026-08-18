@@ -61,7 +61,13 @@ function transformToSearchData(data: unknown[]): SearchData[] {
     end_time: item.end_time || '',
     sensor_id: item.sensor_id || '',
     object_ids: Array.isArray(item.object_ids) ? item.object_ids : [],
+    matched_object_timestamp: item.matched_object_timestamp || undefined,
+    matched_object_type: typeof item.matched_object_type === 'string' ? item.matched_object_type : undefined,
+    matched_object_bbox: item.matched_object_bbox && typeof item.matched_object_bbox === 'object'
+      ? item.matched_object_bbox
+      : undefined,
     critic_result: item.critic_result || undefined,
+    license_plate: item.license_plate || undefined,
   }));
 }
 

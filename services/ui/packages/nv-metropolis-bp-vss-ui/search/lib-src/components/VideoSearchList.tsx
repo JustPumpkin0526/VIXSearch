@@ -10,7 +10,7 @@ import { Button } from '@nvidia/foundations-react-core';
 import { IconInbox, IconCheck } from '@tabler/icons-react';
 import { Whisper, Tooltip } from 'rsuite';
 import { SearchData, QueryDataContext } from '../types';
-import { formatTime, parseDateAsLocal } from '../utils/Formatter';
+import { extractLicensePlate, formatTime, parseDateAsLocal } from '../utils/Formatter';
 
 const AddContextButton: React.FC<{
   item: SearchData;
@@ -418,6 +418,7 @@ const VideoCard: React.FC<VideoCardProps> = ({
 }) => {
   const [isOpeningVideo, setIsOpeningVideo] = useState(false);
   const openingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const licensePlate = extractLicensePlate(item);
 
   useEffect(() => {
     return () => {
@@ -580,7 +581,14 @@ const VideoCard: React.FC<VideoCardProps> = ({
             </span>
           </div>
         </div>
-
+        {licensePlate && (
+          <div data-testid="search-result-license-plate" className="flex items-center gap-1.5">
+            <span className={isDark ? 'text-xs text-gray-400' : 'text-xs text-gray-600'}>Plate:</span>
+            <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+              {licensePlate}
+            </span>
+          </div>
+        )}
         {item.critic_result && (
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5">

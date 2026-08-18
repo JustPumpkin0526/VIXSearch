@@ -450,6 +450,7 @@ export const Chat = () => {
       chatMessageSpeakerEnabled,
       chatMessageCopyEnabled,
       interactionModalCancelEnabled,
+      agentApiUrlBase,
     },
     storageKeyPrefix,
     handleUpdateConversation,
@@ -1962,12 +1963,86 @@ export const Chat = () => {
         ...stripUploadConversationScope(message),
         id: uuidv4(),
       };
+      
+      // A cropped image in Chat is an object-similarity search, not a VLM
+      // attachment.  Keep the image visible in the user message and insert a
+      // normal Search API JSON response so the Search tab can render its cards.
+      const imageAttachment = messageWithNewId.attachments?.find((attachment) => attachment.type === 'image');
+      if (imageAttachment && selectedConversation) {
+        // The Search tab listens for this event and keeps the same reference
+        // image visible while the resulting clips are played.
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('vss-image-search', {
+            detail: { imageUrl: imageAttachment.content },
+          }));
+        }
+        homeDispatch({ field: 'loading', value: true });
+        homeDispatch({ field: 'messageIsStreaming', value: true });
+        try {
+          const imageResponse = await fetch(imageAttachment.content);
+          const imageBlob = await imageResponse.blob();
+          const form = new FormData();
+          form.append('file', imageBlob, 'cropped-image.jpg');
+          const response = await fetch(`${(agentApiUrlBase || '').replace(/\/$/, '')}/image-search`, {
+            method: 'POST',
+            body: form,
+          });
+          if (!response.ok) throw new Error(await response.text());
+          const result = await response.json();
+          const count = Array.isArray(result.data) ? result.data.length : 0;
+          const assistantMessage: Message = {
+            id: uuidv4(),
+            role: 'assistant',
+            content: `Found ${count} visually similar object${count === 1 ? '' : 's'}.\n\n\`\`\`json\n${JSON.stringify(result)}\n\`\`\``,
+          };
+          const updatedConversation = {
+            ...selectedConversation,
+            messages: [...selectedConversation.messages, messageWithNewId, assistantMessage],
+            isHomepageConversation: undefined,
+          };
+          const { single, all } = updateConversation(updatedConversation, conversationsRef.current || [], storageKeyPrefix);
+          selectedConversationRef.current = single;
+          conversationsRef.current = all;
+          homeDispatch({ field: 'selectedConversation', value: single });
+          homeDispatch({ field: 'conversations', value: all });
+          saveConversation(single, storageKeyPrefix);
+          saveConversations(all, storageKeyPrefix);
+          onAnswerComplete?.();
+          onAnswerCompleteWithContent?.(assistantMessage.content);
+        } catch (error) {
+          toast.error(`Image search failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+        } finally {
+          homeDispatch({ field: 'loading', value: false });
+          homeDispatch({ field: 'messageIsStreaming', value: false });
+        }
+        return;
+      }
 
       // Set the active user message ID for WebSocket message tracking
       activeUserMessageId.current = messageWithNewId.id;
 
       // Notify embedder that a message was submitted (e.g. so Search tab can disable content until response completes)
       onMessageSubmitted?.();
+
+      // Detect Korean license plate patterns in plain text messages and dispatch global plate-search event
+      try {
+        const contentText = typeof messageWithNewId.content === 'string' ? messageWithNewId.content.trim() : '';
+        if (contentText) {
+          // Korean plate patterns: optional region + 2-3 digits + Hangul + 4 digits, or partial/masked patterns
+          const KOREAN_PLATE_PATTERN = /^(?:(?:서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)?\d{2,3}[가-힣]\d{4})$/;
+          const PARTIAL_PLATE_PATTERN = /^(?:\*\d{4}|[0-9가-힣]{1,9}\*)$/;
+
+          const normalized = contentText.replace(/[\s-]+/g, '');
+          if (KOREAN_PLATE_PATTERN.test(normalized) || PARTIAL_PLATE_PATTERN.test(normalized)) {
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('vss-plate-search', { detail: { plate: normalized } }));
+            }
+          }
+        }
+      } catch (e) {
+        // swallow detection errors — non-critical
+        console.warn('Plate detection error', e);
+      }
 
       // chat with bot
       if (selectedConversation) {
@@ -2798,6 +2873,45 @@ export const Chat = () => {
       });
   }, [selectedConversation]);
 
+  // Detect license plates present in assistant messages and dispatch plate-search
+  useEffect(() => {
+    try {
+      const msgs = selectedConversation?.messages;
+      if (!msgs || msgs.length === 0) return;
+
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (m.role !== 'assistant') continue;
+        let text = '';
+        if (typeof m.content === 'string') text = m.content;
+        else if (m.content && typeof m.content === 'object') {
+          text = m.content.text || '';
+          if (!text && Array.isArray((m.content as any).messages)) {
+            text = (m.content as any).messages.map((x: any) => x.text || '').join(' ');
+          }
+        }
+
+        if (!text) continue;
+
+        const normalized = text.replace(/[\s\-]+/g, '');
+        const KOREAN_PLATE_PATTERN = /(?:(?:서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)?\d{2,3}[가-힣]\d{4})/g;
+        const PARTIAL_PLATE_PATTERN = /(?:\*\d{4}|[0-9가-힣]{1,9}\*)/g;
+
+        const exact = normalized.match(KOREAN_PLATE_PATTERN)?.[0];
+        const partial = normalized.match(PARTIAL_PLATE_PATTERN)?.[0];
+        const plate = exact || partial;
+        if (plate && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('vss-plate-search', { detail: { plate } }));
+          break;
+        }
+      }
+    } catch (e) {
+      // non-fatal
+      // eslint-disable-next-line no-console
+      console.warn('[Chat] plate detection error', e);
+    }
+  }, [selectedConversation]);
+
   useEffect(() => {
     // Only set up the observer if we're actually streaming
     if (!messageIsStreaming) {
@@ -2919,12 +3033,6 @@ export const Chat = () => {
               message.role === 'assistant'
                 ? findPreviousUserQuery(arr, index)
                 : '';
-
-            console.log('[Chat] sourceQuery:', {
-              messageIndex: index,
-              messageRole: message.role,
-              sourceQuery,
-            });
 
             return (
               <MemoizedChatMessage

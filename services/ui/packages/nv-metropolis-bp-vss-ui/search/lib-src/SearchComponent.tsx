@@ -29,6 +29,7 @@ import {
 import { useSearchByImage } from './hooks/useSearchByImage';
 import { fetchReportFrameDataUrl } from '@nv-metropolis-bp-vss-ui/report';
 import { extractSearchResultsFromAgentResponse } from './utils/agentResponseParser';
+import { extractLicensePlate } from './utils/Formatter';
 
 // Components
 import { SearchHeader } from './components/SearchHeader';
@@ -345,6 +346,10 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
 
   // Track which SearchData item is currently playing so Search by Image knows sensorId + start_time.
   const [activeVideoData, setActiveVideoData] = React.useState<SearchData | null>(null);
+  // Data URL of the image used for the current Chat image-similarity search.
+  const [searchReferenceImage, setSearchReferenceImage] = React.useState<string | null>(null);
+  const [criticDescriptions, setCriticDescriptions] = React.useState<Record<string, string>>({});
+  const [criticDescriptionLoading, setCriticDescriptionLoading] = React.useState(false);
 
   const [creatingReport, setCreatingReport] =
     React.useState(false);
@@ -519,19 +524,44 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
     (pauseOffsetSeconds: number) => {
       if (!activeVideoData) return;
       const sensorName = sensorIdToNameMap.get(activeVideoData.sensor_id) || activeVideoData.sensor_id;
-      startSearchByImage(activeVideoData.sensor_id, sensorName, activeVideoData.start_time, pauseOffsetSeconds, videoModal.videoUrl);
+      const matchedTimestamp = activeVideoData.matched_object_timestamp;
+      startSearchByImage(
+        activeVideoData.sensor_id,
+        sensorName,
+        // For image-search results, query the exact frame which produced the
+        // match instead of whichever point in the result clip was paused.
+        matchedTimestamp || activeVideoData.start_time,
+        matchedTimestamp ? 0 : pauseOffsetSeconds,
+        videoModal.videoUrl,
+        activeVideoData.object_ids,
+        activeVideoData.matched_object_timestamp,
+        activeVideoData.matched_object_type,
+        activeVideoData.matched_object_bbox
+      );
     },
     [activeVideoData, startSearchByImage, videoModal.videoUrl, sensorIdToNameMap]
   );
 
+  const searchByImageTargetOffsetSeconds = React.useMemo(() => {
+    if (!activeVideoData?.matched_object_timestamp || !activeVideoData.start_time) return undefined;
+    const target = new Date(activeVideoData.matched_object_timestamp).getTime();
+    const clipStart = new Date(activeVideoData.start_time).getTime();
+    if (Number.isNaN(target) || Number.isNaN(clipStart)) return undefined;
+    return Math.max(0, (target - clipStart) / 1000);
+  }, [activeVideoData]);
+
   const handleSearchByImageConfirm = React.useCallback((objectId: string) => {
     if (!submitChatMessage) return;
-    const prompt = `Find similar objects matching object_id=${objectId}`;
+    const sensorId = searchByImageFrameData?.sensorName;
+    const timestamp = searchByImageFrameData?.timestamp;
+    let prompt = `Find similar objects matching object_id=${objectId}`;
+    if (sensorId) prompt += `\nsensor_id=${sensorId}`;
+    if (timestamp) prompt += `\ntimestamp=${timestamp}`;
     submitChatMessage(prompt);
     cancelSearchByImage();
     closeVideoModal();
     setActiveVideoData(null);
-  }, [submitChatMessage, cancelSearchByImage, closeVideoModal]);
+  }, [submitChatMessage, cancelSearchByImage, closeVideoModal, searchByImageFrameData]);
 
   const refetchStreamsRef = React.useRef(refetchStreams);
   const getPendingQueryRef = React.useRef<() => string>(() => '');
@@ -660,11 +690,81 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
     const unsubscribe = registerSidebarChatEventSubscriber((event) => {
       if (event.type === 'messageSubmitted') {
         setAgentSearchResults(null);
+        setSearchReferenceImage(null);
         clearSearchResults?.();
       }
     });
     return typeof unsubscribe === 'function' ? unsubscribe : undefined;
   }, [registerSidebarChatEventSubscriber, clearSearchResults]);
+
+  React.useEffect(() => {
+    const handleImageSearch = (event: Event) => {
+      const imageUrl = (event as CustomEvent<{ imageUrl?: string }>).detail?.imageUrl;
+      setSearchReferenceImage(typeof imageUrl === 'string' ? imageUrl : null);
+    };
+    window.addEventListener('vss-image-search', handleImageSearch);
+    return () => window.removeEventListener('vss-image-search', handleImageSearch);
+  }, []);
+
+  // Listen for plate-search events dispatched from Chat and forward to agent/search
+  React.useEffect(() => {
+    const lastProcessedPlateRef = { current: { plate: '' as string | null, ts: 0 } } as { current: { plate: string | null; ts: number } };
+
+    const handlePlateSearch = (event: Event) => {
+      try {
+        const plate = (event as CustomEvent<{ plate?: string }>).detail?.plate;
+        if (!plate || typeof plate !== 'string') return;
+
+        // Deduplicate: ignore repeated same plate within 1s window
+        try {
+          const now = Date.now();
+          if (lastProcessedPlateRef.current.plate === plate && now - lastProcessedPlateRef.current.ts < 1000) {
+            // eslint-disable-next-line no-console
+            console.debug('[SearchComponent] ignoring duplicate plate event', plate);
+            return;
+          }
+          lastProcessedPlateRef.current.plate = plate;
+          lastProcessedPlateRef.current.ts = now;
+        } catch (e) {
+          // ignore dedupe errors
+        }
+
+        // Debug: log handler invocation and available props
+        // eslint-disable-next-line no-console
+        console.info('[SearchComponent] handlePlateSearch invoked', { plate, hasAddCtx: Boolean(addChatQueryContext), hasWrapped: Boolean(wrappedSubmitChatMessage), hasSubmit: Boolean(submitChatMessage) });
+
+        // Add as chat query context if provider exists (sidebar context chips)
+        try {
+          addChatQueryContext?.({
+            id: `plate:${plate}`,
+            label: `${plate}`,
+            contextType: 'license_plate',
+            data: { license_plate: plate },
+          });
+        } catch (e) {
+          // non-fatal
+          // eslint-disable-next-line no-console
+          console.warn('[SearchComponent] addChatQueryContext failed', e);
+        }
+
+        // Trigger agent-mode search via submitChatMessage path if available
+        // Send the raw normalized plate (no prefix) so agent's plate extractor can detect it
+        const payload = `${plate}`;
+        if (wrappedSubmitChatMessage) {
+          wrappedSubmitChatMessage(payload);
+        } else if (submitChatMessage) {
+          submitChatMessage(payload);
+        }
+      } catch (err) {
+        // swallow
+        // eslint-disable-next-line no-console
+        console.warn('[SearchComponent] plate-search handling error', err);
+      }
+    };
+
+    window.addEventListener('vss-plate-search', handlePlateSearch);
+    return () => window.removeEventListener('vss-plate-search', handlePlateSearch);
+  }, [addChatQueryContext, wrappedSubmitChatMessage, submitChatMessage]);
 
   const controlsComponent = React.useMemo(
     () => (
@@ -706,6 +806,8 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
       />
     );
   }, [searchByImageActive, searchByImageFrameData, searchByImageSelectedObjectId, handleSearchByImageConfirm, cancelSearchByImage, isDark]);
+
+  
 
   // Build Search by Image overlay element when Search by Image is active
   const searchByImageOverlayElement = React.useMemo(() => {
@@ -751,8 +853,109 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
     return <div className="h-full min-h-0">{content}</div>;
   }, [searchByImageActive, searchByImageLoading, searchByImageError, searchByImageFrameData, searchByImageSelectedObjectId]);
 
+  const activeLicensePlate = extractLicensePlate(activeVideoData);
+  const activeCriticDescriptionKey = React.useMemo(() => {
+    const critic = activeVideoData?.critic_result;
+    if (!activeVideoData || !critic) return undefined;
+    return JSON.stringify({
+      sensorId: activeVideoData.sensor_id,
+      timestamp: activeVideoData.matched_object_timestamp || activeVideoData.start_time,
+      criteria: critic.criteria_met,
+    });
+  }, [activeVideoData]);
+
+  React.useEffect(() => {
+    const critic = activeVideoData?.critic_result;
+    if (!critic || !activeCriticDescriptionKey || criticDescriptions[activeCriticDescriptionKey] || !agentApiUrl) {
+      setCriticDescriptionLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setCriticDescriptionLoading(true);
+    fetch(`${(agentApiUrl || '').replace(/\/$/, '')}/critic-description`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ criteria_met: critic.criteria_met }),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await response.text());
+        return response.json() as Promise<{ description?: string }>;
+      })
+      .then((result) => {
+        const description = result.description?.trim();
+        if (description) {
+          setCriticDescriptions((current) => ({ ...current, [activeCriticDescriptionKey]: description }));
+        }
+      })
+      .catch((error) => {
+        if (error.name !== 'AbortError') {
+          console.error('[SearchComponent] Failed to generate Critic description:', error);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCriticDescriptionLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [activeVideoData?.critic_result, activeCriticDescriptionKey, agentApiUrl, criticDescriptions]);
+
+  const criticSummary = React.useMemo(() => {
+    const critic = activeVideoData?.critic_result;
+    if (!critic) return undefined;
+
+    const sentence = activeCriticDescriptionKey && criticDescriptions[activeCriticDescriptionKey]
+      ? criticDescriptions[activeCriticDescriptionKey]
+      : criticDescriptionLoading
+        ? '검증 설명을 생성하고 있습니다…'
+        : '검증 설명을 불러올 수 없습니다.';
+    const timestamp = activeVideoData.matched_object_timestamp || activeVideoData.start_time;
+
+    return (
+      <div data-testid="video-modal-critic-summary" className={`px-4 py-3 text-base leading-6 ${isDark ? 'bg-slate-900 text-gray-100' : 'bg-slate-50 text-gray-900'}`}>
+        <div><span className="font-bold">파일명: </span><span>{activeVideoData.video_name}</span></div>
+        <div><span className="font-bold">시간: </span><span>{timestamp}</span></div>
+        <div><span className="font-bold">설명: </span><span>{sentence}</span></div>
+      </div>
+    );
+  }, [activeVideoData, activeCriticDescriptionKey, criticDescriptionLoading, criticDescriptions, isDark]);
+
+  const videoModalFooter = React.useMemo(() => {
+    const referenceImageSummary = searchReferenceImage && activeVideoData ? (
+      <div data-testid="video-modal-search-reference-image" className={`flex items-center gap-3 border-b px-4 py-3 ${isDark ? 'border-gray-700 bg-slate-900 text-gray-100' : 'border-gray-200 bg-slate-50 text-gray-900'}`}>
+        <img src={searchReferenceImage} alt="검색 기준 이미지" className="h-20 w-20 rounded border border-black/20 bg-white object-contain" />
+        <div className="min-w-0">
+          <div className="font-bold">검색 기준 이미지</div>
+          <div className="text-sm text-gray-600 dark:text-gray-300">이 이미지와 유사한 객체를 검색한 결과입니다.</div>
+        </div>
+      </div>
+    ) : undefined;
+    if (!referenceImageSummary && !criticSummary && !searchByImageFooterElement) return undefined;
+    return (
+      <div>
+        {referenceImageSummary}
+        {criticSummary}
+        {searchByImageFooterElement}
+      </div>
+    );
+  }, [activeVideoData, criticSummary, isDark, searchByImageFooterElement, searchReferenceImage]);
+
+  const baseModalTitle = activeLicensePlate ? (
+    <span className="inline-flex items-center gap-2">
+      <span>{videoModal.title}</span>
+      <span
+        data-testid="video-modal-license-plate"
+        className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
+      >
+        Plate: {activeLicensePlate}
+      </span>
+    </span>
+  ) : videoModal.title;
+
   const modalTitle = searchByImageActive ? (
     <span className="inline-flex items-baseline gap-2">
+      <span className="inline-flex items-center gap-2">{baseModalTitle}</span>
       <span className="inline-flex items-center gap-2">
         <span>{videoModal.title}</span>
       </span>
@@ -766,9 +969,7 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
         </VideoModalTooltip>)
       </span>
     </span>
-  ) : (
-    videoModal.title
-  );
+  ) : baseModalTitle;
 
   const visibleSearchResults =
     React.useMemo(() => {
@@ -865,7 +1066,8 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
         onClose={handleCloseVideoModal}
         searchByImageEnabled={mediaWithObjectsBbox}
         onSearchByImageRequest={handleSearchByImageRequest}
-        searchByImageFooter={searchByImageFooterElement}
+        searchByImageTargetOffsetSeconds={searchByImageTargetOffsetSeconds}
+        searchByImageFooter={videoModalFooter}
         searchByImageOverlay={searchByImageOverlayElement}
         onCreateReport={handleCreateReportFromActiveVideo}
         creatingReport={creatingReport}

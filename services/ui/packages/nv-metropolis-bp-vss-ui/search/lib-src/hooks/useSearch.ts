@@ -418,7 +418,11 @@ export const useSearch = ({
             object_ids: Array.isArray(searchResult.object_ids)
               ? searchResult.object_ids
               : [],
+            matched_object_timestamp: searchResult.matched_object_timestamp || undefined,
+            matched_object_type: searchResult.matched_object_type || undefined,
+            matched_object_bbox: searchResult.matched_object_bbox || undefined,
             critic_result: searchResult.critic_result || undefined,
+            license_plate: searchResult.license_plate || undefined,
           };
         },
       );

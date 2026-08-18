@@ -1109,34 +1109,31 @@ export const ChatInput = ({
             })}
           />
           {inputFile && inputFileContent && (
-            <div className="px-2 pb-2">
-              <div className="flex items-center gap-2 rounded-md bg-gray-100 p-2 dark:bg-gray-700">
+            <div className="px-3 pb-2 pt-1">
+              <div className="relative flex items-center justify-start gap-2 rounded-md bg-[#f0f7e6] p-2 text-black dark:bg-green-700 dark:text-white">
                 <img
                   src={
-                    inputFileContentCompressed ||
-                    inputFileContent
+                    inputFileContentCompressed || inputFileContent
                   }
-                  alt={inputFile}
-                  className="h-14 w-20 rounded object-cover"
+                  alt={inputFile || '검색할 이미지 미리보기'}
+                  className="h-16 w-16 rounded object-cover border border-black/20 bg-white"
                 />
-
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm">
-                    {inputFile}
+                  <div className="flex items-center gap-1 text-sm font-medium">
+                    <IconPhoto size={16} />
+                    <span>검색 기준 이미지</span>
                   </div>
-
-                  <div className="text-xs text-gray-500 dark:text-gray-300">
-                    {inputFileContentType}
-                  </div>
+                  <span className="block truncate text-xs opacity-80">{inputFile}</span>
                 </div>
 
                 <button
                   type="button"
                   onClick={handleInputFileDelete}
                   aria-label="Remove attached image"
+                  className="ml-2 p-1"
                 >
                   <IconTrash
-                    className="hover:text-red-500"
+                    className="hover:text-[#ff1717] cursor-pointer"
                     size={16}
                   />
                 </button>

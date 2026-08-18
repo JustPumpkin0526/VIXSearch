@@ -22,6 +22,7 @@ export const SearchByImageOverlayInfo: React.FC<SearchByImageOverlayInfoProps> =
   const selectedObj = frameData?.objects?.find((o) => o.id === selectedObjectId);
   const selectedTypeLabel = selectedObj?.type?.trim() || 'Unknown';
   const hasBoxes = (frameData?.objects?.length ?? 0) > 0;
+  const hasSearchMatches = frameData?.objects?.some((o) => o.isSearchMatch) ?? false;
   const containerClassName = isDark
     ? 'flex items-center justify-between gap-3 border-y border-gray-700 bg-slate-900 px-4 py-2 text-sm text-gray-100'
     : 'flex items-center justify-between gap-3 border-y border-gray-200 bg-white px-4 py-2 text-sm text-gray-900';
@@ -43,7 +44,9 @@ export const SearchByImageOverlayInfo: React.FC<SearchByImageOverlayInfoProps> =
           className={`flex items-center ${hintClassName}`}
         >
           {hasBoxes
-            ? 'Select one to search for similar object embeddings across views/cameras'
+            ? hasSearchMatches
+              ? 'Green boxes match the current search. Select any object to search for similar embeddings'
+              : 'Select one to search for similar object embeddings across views/cameras'
             : 'No bounding boxes detected in this frame'}
         </span>
       )}

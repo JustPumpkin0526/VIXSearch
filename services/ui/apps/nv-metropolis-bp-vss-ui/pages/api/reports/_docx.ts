@@ -197,6 +197,13 @@ function buildSceneTimestamp(item: ReportSceneItem): string {
   return "-";
 }
 
+const SCENE_LABEL_COLUMN_WIDTH_PERCENT = 20;
+const SCENE_VALUE_COLUMN_WIDTH_PERCENT = 80;
+const SCENE_TABLE_COLUMN_WIDTHS = [
+  SCENE_LABEL_COLUMN_WIDTH_PERCENT * 100,
+  SCENE_VALUE_COLUMN_WIDTH_PERCENT * 100,
+];
+
 function getImageExtension(
   url: string,
   contentType: string | null,
@@ -384,7 +391,10 @@ async function buildWordSceneTable(report: ReportPayload): Promise<Table> {
 
     const labelCell = (label: string): TableCell =>
       new TableCell({
-        width: { size: 18, type: WidthType.PERCENTAGE },
+        width: {
+          size: SCENE_LABEL_COLUMN_WIDTH_PERCENT,
+          type: WidthType.PERCENTAGE,
+        },
         shading: { fill: "E8F5EF" },
         margins: { top: 110, bottom: 110, left: 100, right: 100 },
         children: [
@@ -404,7 +414,10 @@ async function buildWordSceneTable(report: ReportPayload): Promise<Table> {
 
     const valueCell = (value: string): TableCell =>
       new TableCell({
-        width: { size: 82, type: WidthType.PERCENTAGE },
+        width: {
+          size: SCENE_VALUE_COLUMN_WIDTH_PERCENT,
+          type: WidthType.PERCENTAGE,
+        },
         margins: { top: 110, bottom: 110, left: 140, right: 140 },
         children: [
           new Paragraph({
@@ -418,7 +431,10 @@ async function buildWordSceneTable(report: ReportPayload): Promise<Table> {
         cantSplit: true,
         children: [
           new TableCell({
-            width: { size: 18, type: WidthType.PERCENTAGE },
+            width: {
+              size: SCENE_LABEL_COLUMN_WIDTH_PERCENT,
+              type: WidthType.PERCENTAGE,
+            },
             verticalAlign: VerticalAlign.CENTER,
             shading: { fill: "E8F5EF" },
             margins: { top: 120, bottom: 120, left: 80, right: 80 },
@@ -437,7 +453,10 @@ async function buildWordSceneTable(report: ReportPayload): Promise<Table> {
             ],
           }),
           new TableCell({
-            width: { size: 82, type: WidthType.PERCENTAGE },
+            width: {
+              size: SCENE_VALUE_COLUMN_WIDTH_PERCENT,
+              type: WidthType.PERCENTAGE,
+            },
             margins: { top: 140, bottom: 140, left: 140, right: 140 },
             children: imageChildren,
           }),
@@ -445,20 +464,20 @@ async function buildWordSceneTable(report: ReportPayload): Promise<Table> {
       }),
       new TableRow({
         cantSplit: true,
-        children: [labelCell("타임스탬프(캡쳐한 장면의 시간대)"), valueCell(buildSceneTimestamp(item))],
+        children: [labelCell("발생 시각"), valueCell(buildSceneTimestamp(item))],
       }),
       new TableRow({
         cantSplit: true,
-        children: [labelCell("장소명"), valueCell(buildLocationName(item))],
+        children: [labelCell("발생 장소"), valueCell(buildLocationName(item))],
       }),
       new TableRow({
         cantSplit: true,
-        children: [labelCell("검색어"), valueCell(buildReportQuestion(report, item))],
+        children: [labelCell("질의 내용"), valueCell(buildReportQuestion(report, item))],
       }),
       new TableRow({
         cantSplit: true,
         children: [
-          labelCell("추가 커멘트"),
+          labelCell("상세 내용"),
           valueCell(buildAdditionalComment(item)),
         ],
       }),
@@ -470,6 +489,7 @@ async function buildWordSceneTable(report: ReportPayload): Promise<Table> {
       size: 100,
       type: WidthType.PERCENTAGE,
     },
+    columnWidths: SCENE_TABLE_COLUMN_WIDTHS,
     rows,
     borders: {
       top: {
@@ -913,16 +933,16 @@ export async function buildAccidentReportPdfBuffer(
 
   for (const [index, item] of report.items.entries()) {
     const tableWidth = 499;
-    const idWidth = 88;
+    const idWidth = tableWidth * (SCENE_LABEL_COLUMN_WIDTH_PERCENT / 100);
     const valueWidth = tableWidth - idWidth;
     const imageRowHeight = 220;
     const textSize = 9.5;
     const lineHeight = 13;
     const detailRows = [
-      { label: "타임스탬프", value: buildSceneTimestamp(item) },
-      { label: "장소명", value: buildLocationName(item) },
-      { label: "검색어", value: buildReportQuestion(report, item) },
-      { label: "추가 커멘트", value: buildAdditionalComment(item) },
+      { label: "발생 시각", value: buildSceneTimestamp(item) },
+      { label: "발생 장소", value: buildLocationName(item) },
+      { label: "질의 내용", value: buildReportQuestion(report, item) },
+      { label: "상세 내용", value: buildAdditionalComment(item) },
     ].map((detail) => {
       const lines = wrapPdfText(
         detail.value,
