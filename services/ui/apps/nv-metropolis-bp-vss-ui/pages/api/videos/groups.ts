@@ -17,11 +17,11 @@ type GroupRow = {
 };
 
 async function getGroupsForUser(username: string) {
-  const result = await getVideosPool().query<GroupRow>(
-    `SELECT
-       g.id,
-       g.name,
-       g.created_at,
+   const result = await getVideosPool().query<GroupRow>(
+   `SELECT
+     g.id,
+     g.name,
+     to_char(g.created_at::timestamptz, 'YYYY/MM/DD - HH24:MI:SS') AS created_at,
        COALESCE(
          array_agg(v.sensor_id ORDER BY v.uploaded_at DESC) FILTER (WHERE v.sensor_id IS NOT NULL),
          ARRAY[]::TEXT[]

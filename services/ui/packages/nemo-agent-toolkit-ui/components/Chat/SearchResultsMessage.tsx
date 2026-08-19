@@ -227,6 +227,25 @@ function normalizeSearchResult(candidate: unknown): SearchResultItem | null {
     ? value.similarity
     : (typeof value.similarity === 'string' ? Number(value.similarity) : 0);
 
+  // Support multiple possible key names/locations for object ids coming from agents
+  const rawObjectIds: unknown =
+    value.object_ids ??
+    value.objectIds ??
+    value.matched_object_ids ??
+    value.matchedObjectIds ??
+    value.matched_object_id ??
+    value.matchedObjectId ??
+    value.object_id ??
+    value.objectId ??
+    (value.metadata && (value.metadata.object_ids ?? value.metadata.objectIds)) ??
+    undefined;
+
+  const objectIds = Array.isArray(rawObjectIds)
+    ? rawObjectIds.filter((it): it is string => typeof it === 'string')
+    : typeof rawObjectIds === 'string'
+    ? [rawObjectIds]
+    : [];
+
   return {
     video_name: videoName,
     sensor_id: sensorId,
@@ -238,11 +257,7 @@ function normalizeSearchResult(candidate: unknown): SearchResultItem | null {
     video_url: normalizePossibleLink(value.video_url ?? value.videoUrl),
     clip_url: normalizePossibleLink(value.clip_url ?? value.clipUrl),
     url: normalizePossibleLink(value.url),
-    object_ids: Array.isArray(value.object_ids)
-      ? value.object_ids.filter((item): item is string => typeof item === 'string')
-      : Array.isArray(value.objectIds)
-        ? value.objectIds.filter((item): item is string => typeof item === 'string')
-        : [],
+    object_ids: objectIds,
     critic_result: normalizeCriticResult(value.critic_result ?? value.criticResult),
   };
 }
@@ -484,6 +499,16 @@ export const SearchResultsMessage: React.FC<
   ] = React.useState<string | null>(null);
 
   const { streams } = useFilter({ vstApiUrl });
+
+  const agentApiUrl =
+    env('NEXT_PUBLIC_AGENT_API_URL') ||
+    (typeof process !== 'undefined'
+      ? process.env.NEXT_PUBLIC_AGENT_API_URL
+      : '') ||
+    '';
+
+  const [criticDescriptions, setCriticDescriptions] = React.useState<Record<string, string>>({});
+  const [criticDescriptionLoading, setCriticDescriptionLoading] = React.useState(false);
 
   const sensorIdToNameMap = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -979,6 +1004,14 @@ export const SearchResultsMessage: React.FC<
         activeVideoData.start_time,
         pauseOffsetSeconds,
         videoModal.videoUrl,
+        // Pass object ids from the active search result so matching boxes
+        // returned by the frame metadata can be highlighted as search matches.
+        Array.isArray(activeVideoData.object_ids) ? activeVideoData.object_ids : undefined,
+        // Also pass the matched object timestamp (use clip start) to help
+        // the hook decide which indexed frame to favor.
+        activeVideoData.start_time,
+        // Pass object type if available (optional)
+        undefined,
       );
     },
     [
@@ -1040,6 +1073,101 @@ export const SearchResultsMessage: React.FC<
     cancelSearchByImage,
     isDark,
   ]);
+
+  const metadataFooterElement = React.useMemo(() => {
+    if (!activeVideoData) return undefined;
+
+    const displayVideoName =
+      sensorIdToNameMap.get(activeVideoData.sensor_id) || activeVideoData.video_name || '검색 결과';
+
+    const timestamp = activeVideoData.matched_object_timestamp || activeVideoData.start_time || '';
+
+    const activeCriticKey = activeVideoData && activeVideoData.critic_result
+      ? JSON.stringify({ sensorId: activeVideoData.sensor_id, timestamp: activeVideoData.matched_object_timestamp || activeVideoData.start_time, criteria: activeVideoData.critic_result?.criteria_met })
+      : undefined;
+
+    // If there is a critic_result but no cached description yet,
+    // show a consistent "generating" message rather than the raw verdict.
+    const sentence = activeCriticKey
+      ? (criticDescriptions[activeCriticKey] ?? '검증 설명을 생성하고 있습니다…')
+      : (activeVideoData.critic_result?.result || activeVideoData.description || '');
+
+    console.debug('[SearchResultsMessage] activeCriticKey, cachedDescription, sentence', {
+      activeCriticKey,
+      cached: activeCriticKey ? criticDescriptions[activeCriticKey] : undefined,
+      sentence,
+    });
+
+    return (
+      <div data-testid="video-modal-critic-summary" className={`px-4 py-3 text-base leading-6 ${isDark ? 'bg-slate-900 text-gray-100' : 'bg-slate-50 text-gray-900'}`}>
+        <div><span className="font-bold">파일명: </span><span>{displayVideoName}</span></div>
+        <div><span className="font-bold">시간: </span><span>{timestamp}</span></div>
+        <div><span className="font-bold">설명: </span><span>{sentence}</span></div>
+      </div>
+    );
+  }, [activeVideoData, sensorIdToNameMap, isDark, criticDescriptions, criticDescriptionLoading]);
+
+  React.useEffect(() => {
+    const critic = activeVideoData?.critic_result;
+    if (!critic) {
+      console.info('[SearchResultsMessage] No critic_result on activeVideoData');
+      setCriticDescriptionLoading(false);
+      return;
+    }
+
+    if (!agentApiUrl) {
+      console.info('[SearchResultsMessage] NEXT_PUBLIC_AGENT_API_URL is not configured');
+      setCriticDescriptionLoading(false);
+      return;
+    }
+
+    const key = JSON.stringify({ sensorId: activeVideoData?.sensor_id, timestamp: activeVideoData?.matched_object_timestamp || activeVideoData?.start_time, criteria: critic.criteria_met });
+    if (criticDescriptions[key]) {
+      console.info('[SearchResultsMessage] Critic description already cached for key', key);
+      return;
+    }
+
+    const controller = new AbortController();
+    setCriticDescriptionLoading(true);
+
+    const url = `${agentApiUrl.replace(/\/$/, '')}/critic-description`;
+    const body = { criteria_met: critic.criteria_met };
+
+    console.info('[SearchResultsMessage] Fetching critic description', { url, key, body });
+
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        const text = await res.text();
+        console.info('[SearchResultsMessage] /critic-description response', { status: res.status, statusText: res.statusText, text });
+        if (!res.ok) throw new Error(text || `Status ${res.status}`);
+        try {
+          return JSON.parse(text);
+        } catch (e) {
+          console.warn('[SearchResultsMessage] Failed to parse JSON from critic-description response', e);
+          return null;
+        }
+      })
+      .then((body) => {
+        const description = String(body?.description ?? '').trim();
+        console.info('[SearchResultsMessage] Parsed critic-description body', { description });
+        if (description) {
+          setCriticDescriptions((cur) => ({ ...cur, [key]: description }));
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') console.error('[SearchResultsMessage] Failed to fetch critic description:', err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCriticDescriptionLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [activeVideoData, agentApiUrl, criticDescriptions]);
 
   const searchByImageOverlayElement =
   React.useMemo<React.ReactNode | undefined>(
@@ -1154,7 +1282,7 @@ export const SearchResultsMessage: React.FC<
         onSearchByImageRequest={
           canSearchByImage ? handleSearchByImageRequest : undefined
         }
-        searchByImageFooter={searchByImageFooterElement}
+        searchByImageFooter={searchByImageFooterElement ?? metadataFooterElement}
         searchByImageOverlay={searchByImageOverlayElement}
         onCreateReport={handleCreateReport}
         onAddToExistingReport={handleAddToExistingReport}

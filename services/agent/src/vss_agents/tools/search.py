@@ -2220,7 +2220,7 @@ async def execute_core_search(
                 # candidate selection so the Critic evaluates the merged clips.
                 candidate_source = search_results
                 critic_candidates = (
-                    _select_action_critic_candidates(candidate_source) if action_query_plan else candidate_source
+                    _select_action_critic_candidates(candidate_source, critic_limit) if action_query_plan else candidate_source
                 )
                 search_videos = search_videos[:critic_limit]
                 critic_to_result_info: dict[VideoInfo, VideoInfo] = {}

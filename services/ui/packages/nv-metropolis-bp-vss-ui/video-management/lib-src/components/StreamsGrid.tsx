@@ -43,6 +43,7 @@ interface StreamsGridProps {
   currentGroupName?: string | null;
   onBackToGroups?: () => void;
   onSearchGroup?: (groupId: string) => void;
+  onShowDetails?: (videoId: string) => void;
 }
 
 const FolderCard: React.FC<{
@@ -175,6 +176,7 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
   currentGroupName,
   onBackToGroups,
   onSearchGroup,
+  onShowDetails,
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerRow, setItemsPerRow] = useState(0);
@@ -589,6 +591,26 @@ export const StreamsGrid: React.FC<StreamsGridProps> = ({
               }}
             >
               Open Group
+            </button>
+          )}
+
+          {/* 상세 정보 (stream) */}
+          {contextMenu.kind === 'stream' && onShowDetails && (
+            <button
+              type="button"
+              role="menuitem"
+              className={[
+                'block w-full px-3 py-2 text-left text-sm',
+                'text-gray-700 dark:text-gray-200',
+                'hover:bg-gray-100 dark:hover:bg-neutral-800',
+              ].join(' ')}
+              onClick={() => {
+                const videoId = contextMenu.id;
+                setContextMenu(null);
+                onShowDetails(videoId);
+              }}
+            >
+              상세 정보
             </button>
           )}
 

@@ -739,7 +739,7 @@ export const useSearchByImage = ({
               requestedTimestamp,
             );
 
-          const imageResult =
+              const imageResult =
             await fetchFrameImageWithFallback(
               vstApiUrl,
               sensorId,
@@ -757,6 +757,26 @@ export const useSearchByImage = ({
            */
           let objects =
             metadataResult.objects;
+
+          // If the caller provided matched object ids, mark those objects
+          // so the overlay can render them differently (green stroke).
+          if (Array.isArray(matchedObjectIds) && matchedObjectIds.length > 0) {
+            const idsSet = new Set(matchedObjectIds.map(String));
+            objects = objects.map((o) => ({
+              ...o,
+              isSearchMatch: idsSet.has(String(o.id)),
+            }));
+          }
+
+          // Debug logs to help verify whether the matched ids are applied
+          try {
+            // eslint-disable-next-line no-console
+            console.log('[SearchByImage] matchedObjectIds', matchedObjectIds);
+            // eslint-disable-next-line no-console
+            console.log('[SearchByImage] frame objects', objects.map((o) => ({ id: o.id, isSearchMatch: (o as any).isSearchMatch ?? false })));
+          } catch (e) {
+            // ignore logging errors
+          }
 
           if (
             metadataResult.indexedTimestamp

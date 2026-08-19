@@ -78,7 +78,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           timestamp,
           video_url,
           username,
-          uploaded_at,
+          to_char(uploaded_at::timestamptz, 'YYYY/MM/DD - HH24:MI:SS') AS uploaded_at,
           group_id
         FROM uploaded_videos
         WHERE ${conditions.join('\n    AND ')}

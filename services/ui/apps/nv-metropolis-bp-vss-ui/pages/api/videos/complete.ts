@@ -122,6 +122,26 @@ function toTimestampText(
   return fallback.toISOString();
 }
 
+function formatAsDisplayDate(value: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const year = value.getFullYear();
+  const month = pad(value.getMonth() + 1);
+  const day = pad(value.getDate());
+  const hours = pad(value.getHours());
+  const minutes = pad(value.getMinutes());
+  const seconds = pad(value.getSeconds());
+
+  return `${year}/${month}/${day} - ${hours}:${minutes}:${seconds}`;
+}
+
+function toKstIso(value: Date): string {
+  // Convert given Date to KST (UTC+9) and return ISO string
+  const kstOffset = 9 * 60; // minutes
+  const utc = value.getTime() + (value.getTimezoneOffset() * 60000);
+  const kst = new Date(utc + kstOffset * 60000);
+  return kst.toISOString();
+}
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
@@ -223,22 +243,8 @@ export default async function handler(
     body.size ??
     null;
 
-  let timestamp =
-    body.timestamp ??
-    body.created_at ??
-    body.createdAt ??
-    null;
-
-  let uploadedAt =
-    body.uploaded_at ??
-    body.uploadedAt ??
-    body.created_at ??
-    body.createdAt ??
-    null;
-
-  if (!timestamp && uploadedAt) {
-    timestamp = uploadedAt;
-  }
+  // We ignore any client-sent timestamp for storage. Use server time for uploaded_at.
+  // created_at is taken from client metadata (if provided) and stored in the preferred display format.
 
   const normalizedVideoId =
     videoId?.trim() || '';
@@ -254,6 +260,42 @@ export default async function handler(
 
   const normalizedFilePath =
     filePath?.trim() || '';
+
+  /**
+   * Expected request body fields (fixed schema):
+   * - created_at: ISO 8601 string (optional)
+   * - width: integer (optional)
+   * - height: integer (optional)
+   * - duration_seconds: number (seconds, optional)
+   * - codec: string (optional)
+   * - mime_type: string (optional)
+   * - checksum: string (optional)
+   * - metadata: object (optional)
+   *
+   * We coerce simple string/number inputs where sensible, and reject clearly invalid types.
+   */
+
+  const createdAt = typeof body.created_at === 'string' && body.created_at.trim()
+    ? toValidDate(body.created_at.trim(), new Date())
+    : null;
+
+  const width = (typeof body.width === 'number' && Number.isInteger(body.width))
+    ? body.width
+    : (typeof body.width === 'string' && body.width.trim() && Number.isInteger(Number(body.width)) ? Number(body.width) : null);
+
+  const height = (typeof body.height === 'number' && Number.isInteger(body.height))
+    ? body.height
+    : (typeof body.height === 'string' && body.height.trim() && Number.isInteger(Number(body.height)) ? Number(body.height) : null);
+
+  const duration_seconds = (typeof body.duration_seconds === 'number' && Number.isFinite(body.duration_seconds))
+    ? Number(body.duration_seconds)
+    : (typeof body.duration_seconds === 'string' && body.duration_seconds.trim() && !Number.isNaN(Number(body.duration_seconds)) ? Number(body.duration_seconds) : null);
+
+  const codec = typeof body.codec === 'string' && body.codec.trim() ? body.codec.trim() : null;
+  const mime_type = typeof body.mime_type === 'string' && body.mime_type.trim() ? body.mime_type.trim() : null;
+  const checksum = typeof body.checksum === 'string' && body.checksum.trim() ? body.checksum.trim() : null;
+
+  const metadata = typeof body.metadata === 'object' && body.metadata !== null ? body.metadata : null;
 
   if (
     !normalizedVideoId ||
@@ -364,23 +406,25 @@ export default async function handler(
           );
       }
 
-      const uploadedAtDate =
-        toValidDate(
-          uploadedAt,
-          new Date(),
-        );
+      // server-side upload time (base)
+      const uploadedAtDate = new Date();
 
-      const timestampText =
-        toTimestampText(
-          timestamp,
-          uploadedAtDate,
-        );
+      // created_at: prefer client-provided created_at, else null
+      const createdAtDate = createdAt ? toValidDate(createdAt, new Date()) : null;
+
+      const createdAtText = createdAtDate ? formatAsDisplayDate(createdAtDate) : null;
+
+      const timestampText = toTimestampText(body.timestamp ?? body.created_at ?? null, uploadedAtDate);
 
       const insertSql = `
-        INSERT INTO public.uploaded_videos (video_id, stream_id, sensor_id, filename, show_filename, storage_filename, video_url, file_path, bytes, username, group_id, uploaded_at, "timestamp")
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        INSERT INTO public.uploaded_videos (
+          video_id, stream_id, sensor_id, filename, show_filename, storage_filename,
+          video_url, file_path, bytes, username, group_id, uploaded_at, "timestamp",
+          created_at, width, height, duration_seconds, codec, mime_type, checksum, metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
         ON CONFLICT (video_id) DO NOTHING
-        RETURNING video_id, stream_id, sensor_id, filename, video_url, file_path, username, uploaded_at`; 
+        RETURNING video_id, stream_id, sensor_id, filename, video_url, file_path, username, uploaded_at`;
 
       const params = [
         normalizedVideoId,
@@ -394,8 +438,16 @@ export default async function handler(
         bytes,
         insertUsername,
         groupId,
-        uploadedAtDate,
-        timestampText,
+        toKstIso(uploadedAtDate),
+        timestampText ? toKstIso(new Date(timestampText)) : null,
+        createdAtDate ? toKstIso(createdAtDate) : null,
+        width,
+        height,
+        duration_seconds,
+        codec,
+        mime_type,
+        checksum,
+        metadata ?? null,
       ];
 
       const insertResult =

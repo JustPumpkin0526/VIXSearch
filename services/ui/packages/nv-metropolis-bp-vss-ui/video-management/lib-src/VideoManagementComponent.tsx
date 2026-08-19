@@ -1,3 +1,4 @@
+import VideoDetailsModal from './components/VideoDetailsModal';
 // SPDX-License-Identifier: MIT
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type {
@@ -31,6 +32,86 @@ import {
   VideoManagementSidebarControls,
   AgentUploadDialog,
 } from './components';
+
+async function computeChecksumSHA256(file: File): Promise<string | null> {
+  if (!window.crypto || !window.crypto.subtle) return null;
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', arrayBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch (err) {
+    console.warn('Failed to compute checksum:', err);
+    return null;
+  }
+}
+
+async function extractVideoMetadata(file: File): Promise<{
+  width?: number | null;
+  height?: number | null;
+  duration?: number | null;
+  mimeType?: string | null;
+  codec?: string | null;
+  checksum?: string | null;
+  extra?: Record<string, unknown> | null;
+}> {
+  const mimeType = typeof file.type === 'string' && file.type.trim() ? file.type.trim() : null;
+  const checksum = await computeChecksumSHA256(file);
+
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    let resolved = false;
+
+    const cleanup = () => {
+      try {
+        video.pause();
+      } catch {}
+      video.src = '';
+      URL.revokeObjectURL(url);
+    };
+
+    const finish = (meta: any) => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve({
+        width: Number.isFinite(meta.width) ? Math.floor(meta.width) : null,
+        height: Number.isFinite(meta.height) ? Math.floor(meta.height) : null,
+        duration: Number.isFinite(meta.duration) ? Number(meta.duration) : null,
+        mimeType,
+        codec: mimeType, // best-effort: use mime as codec when explicit codec unavailable
+        checksum,
+        extra: null,
+      });
+    };
+
+    video.preload = 'metadata';
+    video.src = url;
+    video.addEventListener('loadedmetadata', () => {
+      finish({
+        width: (video as HTMLVideoElement).videoWidth,
+        height: (video as HTMLVideoElement).videoHeight,
+        duration: (video as HTMLVideoElement).duration,
+      });
+    });
+
+    // Timeout fallback
+    const timeoutId = window.setTimeout(() => {
+      finish({ width: null, height: null, duration: null });
+    }, 5000);
+
+    // Ensure cleanup if document unloads
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        window.clearTimeout(timeoutId);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility, { once: true });
+  });
+}
 
 interface VideoGroupSearchScope {
   groupId: string;
@@ -229,6 +310,46 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     vstApiUrl,
   });
   const { videoModal, openVideoModal, closeVideoModal } = useVideoModal(vstApiUrl ?? undefined);
+  
+  // Video details modal state
+  const [detailsOpen, setDetailsOpen] = React.useState(false);
+  const [detailsVideo, setDetailsVideo] = React.useState<Record<string, any> | null>(null);
+  
+  const handleShowDetails = React.useCallback(async (videoId: string) => {
+    setDetailsOpen(true);
+    setDetailsVideo(null);
+  
+    try {
+      const token = window.localStorage.getItem('vss.auth.token');
+      if (!token) throw new Error('Missing auth token');
+      const url = `/api/videos/detail?video_id=${encodeURIComponent(videoId)}`;
+      console.info('[VideoManagement] fetching video details', { url, tokenAvailable: !!token });
+
+      const resp = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      console.info('[VideoManagement] details response status', resp.status);
+
+      const payload = await resp.json().catch(() => null);
+      console.info('[VideoManagement] details response body', payload);
+
+      if (!resp.ok) {
+        throw new Error(payload?.error || `Failed to fetch details: ${resp.status}`);
+      }
+
+      if (!payload || !payload.video) {
+        throw new Error('Video details not found');
+      }
+
+      setDetailsVideo(payload.video);
+    } catch (err) {
+      console.warn('[VideoManagement] failed to load video details', err, { videoId });
+      setDetailsVideo({ error: String(err) });
+    }
+  }, []);
 
 
   const streamsById = useMemo(
@@ -470,6 +591,12 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         );
 
         try {
+                const pad = (n: number) => String(n).padStart(2, '0');
+                const formatFileDate = (ms: number) => {
+                  const d = new Date(ms);
+                  return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} - ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+                };
+
           const token =
             typeof window !== 'undefined'
               ? window.localStorage.getItem('vss.auth.token')
@@ -519,6 +646,24 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
             },
           );
 
+          // Extract metadata (width, height, duration, mime, checksum) from the original file
+          let videoMeta: {
+            width?: number | null;
+            height?: number | null;
+            duration?: number | null;
+            mimeType?: string | null;
+            codec?: string | null;
+            checksum?: string | null;
+            extra?: Record<string, unknown> | null;
+          } | null = null;
+
+          try {
+            videoMeta = await extractVideoMetadata(file);
+          } catch (metaErr) {
+            console.warn('[VideoManagement] failed to extract video metadata:', metaErr);
+            videoMeta = null;
+          }
+
           const response = await fetch(
             '/api/videos/complete',
             {
@@ -536,8 +681,19 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
                 video_url: videoUploadApiResponse.filePath,
                 file_path: videoUploadApiResponse.filePath,
                 bytes: videoUploadApiResponse.bytes,
-                uploaded_at: videoUploadApiResponse.created_at,
-                timestamp: videoUploadApiResponse.created_at,
+                // uploaded_at is set by server; send created_at as ISO so server can parse reliably
+                  timestamp: undefined,
+                  created_at: file && typeof file.lastModified === 'number' ? new Date(file.lastModified).toISOString() : videoUploadApiResponse.created_at,
+                width: videoMeta?.width ?? null,
+                height: videoMeta?.height ?? null,
+                duration_seconds: videoMeta?.duration ?? null,
+                codec: videoMeta?.codec ?? null,
+                mime_type: videoMeta?.mimeType ?? null,
+                checksum: videoMeta?.checksum ?? null,
+                metadata: {
+                  ...(formData || {}),
+                  ...(videoMeta?.extra || {}),
+                },
               }),
               signal: abortController.signal,
             },
@@ -554,10 +710,8 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
           }
 
           if (responsePayload?.skipped) {
-            throw new Error(
-              responsePayload?.reason ??
-              'Uploaded video ownership record was skipped',
-            );
+            console.warn('[VideoManagement] /complete skipped:', responsePayload?.reason || 'duplicate');
+            // Treat skipped (duplicate) as non-fatal: existing record already present.
           }
         } catch (ownershipError) {
           console.error(
@@ -1416,32 +1570,35 @@ const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
           );
         }
       
+        let deletedOk = false;
         try {
           await deleteVideo(
             agentApiUrl,
             videoId,
           );
+          deletedOk = true;
         } catch (error) {
           console.error(
             '[VideoManagement] deleteVideo failed for',
             videoId,
             error,
           );
-        
+
           throw error;
-        } finally {
-          if (firstStream) {
-            try {
-              await deleteUploadedVideoOwnershipRecord(
-                firstStream,
-              );
-            } catch (error) {
-              console.warn(
-                '[VideoManagement] ownership cleanup failed',
-                videoId,
-                error,
-              );
-            }
+        }
+
+        // Only remove ownership record after successful agent-side deletion.
+        if (deletedOk && firstStream) {
+          try {
+            await deleteUploadedVideoOwnershipRecord(
+              firstStream,
+            );
+          } catch (error) {
+            console.warn(
+              '[VideoManagement] ownership cleanup failed',
+              videoId,
+              error,
+            );
           }
         }
       
@@ -1549,6 +1706,7 @@ const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         onSearchGroup={
           handleSearchGroup
         }
+        onShowDetails={handleShowDetails}
       />
     );
   };
@@ -2047,6 +2205,7 @@ const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         title={videoModal.title}
         onClose={closeVideoModal}
       />
+      <VideoDetailsModal isOpen={detailsOpen} onClose={() => setDetailsOpen(false)} video={detailsVideo} />
     </div>
   );
 };
