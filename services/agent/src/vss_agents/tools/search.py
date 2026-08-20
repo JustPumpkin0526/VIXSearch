@@ -714,6 +714,7 @@ async def decompose_query(
             has_action=has_action,
             object_ids=object_ids,
             top_k=top_k,
+            license_plate=extracted.get("license_plate"),
         )
     except Exception as e:
         logger.warning(f"Failed to decompose query, using original: {e}")
@@ -1602,16 +1603,27 @@ async def execute_core_search(
                 + (f" with attributes: {plate_attributes}" if plate_attributes else "")
             ),
         )
+        plate_video_sources = list(
+            dict.fromkeys(
+                [
+                    *(search_input.video_sources or []),
+                    *(attribute_video_sources or []),
+                ]
+            )
+        )
+        
+        logger.info(
+            "License plate search request: "
+            "plate=%s, video_sources=%s",
+            license_plate,
+            plate_video_sources,
+        )
         attribute_results = await attribute_search_fn.ainvoke(
             {
                 "query": plate_attributes,
                 "license_plate": license_plate,
                 "source_type": search_input.source_type,
-                "video_sources": (
-                    attribute_video_sources
-                    if attribute_video_sources is not None
-                    else search_input.video_sources
-                ),
+                "video_sources": plate_video_sources,
                 "timestamp_start": search_input.timestamp_start,
                 "timestamp_end": search_input.timestamp_end,
                 "top_k": top_k,

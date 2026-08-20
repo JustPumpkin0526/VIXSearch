@@ -247,11 +247,18 @@ async def delete_vst_sensor(vst_url: str, sensor_id: str) -> tuple[bool, str]:
             aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session,
             session.delete(url) as response,
         ):
+            text = await response.text()
+
             if response.status in (200, 204):
                 logger.info("VST sensor deleted: %s", scrub_log(sensor_id))
                 return True, "OK"
-            text = await response.text()
-            return False, f"VST returned {response.status}: {text}"
+
+            if (response.status == 404 and "CameraNotFoundError" in text):
+                logger.info("VST sensor already absent: %s", scrub_log(sensor_id))
+                return True, "Already deleted or not registered"
+            
+            return False, (f"VST returned {response.status}: {text}")
+        
     except Exception as e:
         logger.error("VST sensor delete failed: %s", e, exc_info=True)
         return False, str(e)

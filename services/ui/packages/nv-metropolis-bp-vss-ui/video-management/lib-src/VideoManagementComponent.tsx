@@ -1660,17 +1660,37 @@ const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
       });
 
       if (failedVideoIds.length > 0) {
-        setDeleteError(
-          `${failedVideoIds.length}개 영상 삭제에 실패했습니다.`,
-        );
-      
         throw new Error(
-          `Failed to delete videos: ${failedVideoIds.join(', ')}`,
+          `${failedVideoIds.length}개 영상 삭제에 실패했습니다: ` +
+            failedVideoIds.join(', '),
+        );
+      }
+      
+      // 삭제 성공 후 팝업과 선택 상태를 먼저 초기화
+      setShowDeleteConfirm(false);
+      setDeleteError(null);
+      setSelectedStreams(new Set());
+      setSelectedGroups(new Set());
+      
+      // 화면 데이터 갱신 실패는 삭제 실패와 분리
+      const refreshResults = await Promise.allSettled([
+        refetch(),
+        refetchTimelines(),
+        fetchVideoGroups(),
+      ]);
+      
+      const refreshFailures = refreshResults.filter(
+        (result) => result.status === 'rejected',
+      );
+      
+      if (refreshFailures.length > 0) {
+        console.warn(
+          '[VideoManagement] deletion succeeded, but refresh failed:',
+          refreshFailures,
         );
       }
 
-      setSelectedGroups(new Set());
-
+      // 삭제 결과를 UI에 반영
       await Promise.all([
         refetch(),
         refetchTimelines(),

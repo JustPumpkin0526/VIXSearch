@@ -329,6 +329,8 @@ def create_video_delete_router(
                 )
 
             # --- Delete VST storage (using shared vst utils) ---
+            # --- Delete VST storage ---
+            # VST timeline/storage API uses the VST UUID.
             with TimeMeasure(
                 "video_delete: delete VST storage"
             ):
@@ -344,6 +346,8 @@ def create_video_delete_router(
                 "OK" if success else msg,
             )
             
+            # --- Delete VST sensor ---
+            # VST sensor delete API also requires the VST UUID.
             with TimeMeasure(
                 "video_delete: delete VST sensor"
             ):
@@ -353,6 +357,11 @@ def create_video_delete_router(
                 )
             
             results.append(success)
+            
+            logger.info(
+                "Delete VST sensor: %s",
+                "OK" if success else msg,
+            )
             
             logger.info(
                 "Delete VST sensor: %s",
