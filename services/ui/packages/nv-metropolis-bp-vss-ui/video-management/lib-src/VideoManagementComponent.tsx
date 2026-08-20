@@ -277,6 +277,7 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
   const searchInputValueRef = useRef('');
   const [selectedStreams, setSelectedStreams] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -540,6 +541,9 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
     const uploadSingleFile = async (entry: { id: string; file: File; formData?: Record<string, any> }): Promise<void> => {
       const { id, file, formData } = entry;
 
+      let uploadedStreamId: string | null = null;
+      let ownershipPersisted = false;
+
       if (!isSessionValid() || abortController.signal.aborted) return;
 
       setUploadProgress((prev) =>
@@ -570,7 +574,11 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
           abortSignal: abortController.signal,
         });
 
-        if (!isSessionValid()) return;
+        uploadedStreamId = videoUploadApiResponse.streamId;
+
+        if (!isSessionValid() || abortController.signal.aborted) {
+          throw new DOMException('Upload was cancelled', 'AbortError');
+        }
 
         // Step 2: Notify agent for post-processing (embeddings, RTVI registration, etc.).
         // We forward the upload response as-is so the agent picks out the fields
@@ -722,7 +730,9 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
           throw ownershipError;
         }
 
-        if (!isSessionValid()) return;
+        if (!isSessionValid() || abortController.signal.aborted) {
+          throw new DOMException('Upload was cancelled', 'AbortError');
+        }
 
         setUploadProgress((prev) =>
           prev.map((p) => (p.id === id && (p.status === 'uploading' || p.status === 'processing') ? {
@@ -732,7 +742,9 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
           } : p))
         );
       } catch (err) {
-        if (!isSessionValid()) return;
+        if (!isSessionValid() || abortController.signal.aborted) {
+          throw new DOMException('Upload was cancelled', 'AbortError');
+        }
 
         const errorMessage = err instanceof Error ? err.message : 'Upload failed';
         const isCancelled = err instanceof Error && (err.name === 'AbortError' || err.message === 'Upload was cancelled');
@@ -757,7 +769,9 @@ export const VideoManagementComponent: React.FC<VideoManagementComponentProps> =
         await Promise.allSettled(batch.map((entry) => uploadSingleFile(entry)));
       }
 
-      if (!isSessionValid()) return;
+      if (!isSessionValid() || abortController.signal.aborted) {
+        throw new DOMException('Upload was cancelled', 'AbortError');
+      }
 
       // Check for any files queued during this batch
       if (pendingFilesQueueRef.current.length > 0) {
@@ -1420,12 +1434,14 @@ const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
   // Step 1 of delete: just open the confirmation dialog. The Toolbar's "Delete
   // Selected" button is wired to this so a single click never destroys data.
   const handleDeleteSelected = useCallback(() => {
-    if ((selectedStreams.size === 0 && selectedGroups.size === 0) || isDeleting) {
-      return;
-    }
-
-    setShowDeleteConfirm(true);
-  }, [selectedGroups.size, selectedStreams.size, isDeleting]);
+      if ((selectedStreams.size === 0 && selectedGroups.size === 0 ) || isDeleting) {
+        return;
+      }
+    
+      setDeleteError(null);
+      setShowDeleteConfirm(true);
+    }, [selectedGroups.size, selectedStreams.size, isDeleting]
+  );
 
   const handleCancelDelete = useCallback(() => {
     if (isDeleting) return;
@@ -1468,35 +1484,47 @@ const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         },
 
         body: JSON.stringify({
+          video_id:
+            stream.databaseVideoId ?? null,
+
           stream_id:
+            stream.databaseStreamId ??
             stream.streamId,
 
           sensor_id:
+            stream.databaseSensorId ??
             stream.sensorId,
 
           filename:
+            stream.originalFilename ??
             stream.name,
 
           video_url:
+            stream.databaseVideoUrl ??
             streamUrl,
 
           file_path:
+            stream.databaseVideoUrl ??
             streamUrl,
         }),
       },
     );
 
-    if (!response.ok) {
-      const responsePayload =
-        await response
-          .json()
-          .catch(() => null);
+    const responsePayload = await response.json().catch(() => null);
 
-      console.warn(
-        '[VideoManagement] failed to delete uploaded_videos ownership record:',
-        response.status,
+    if (!response.ok) {
+      throw new Error(
         responsePayload?.error ??
-          responsePayload,
+          `Failed to delete ownership record: ${response.status}`,
+      );
+    }
+
+    if (
+      typeof responsePayload?.deleted?.uploaded === 'number' &&
+      responsePayload.deleted.uploaded < 1
+    ) {
+      throw new Error(
+        'No uploaded_videos record was deleted',
       );
     }
   }
@@ -1589,29 +1617,58 @@ const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
 
         // Only remove ownership record after successful agent-side deletion.
         if (deletedOk && firstStream) {
-          try {
-            await deleteUploadedVideoOwnershipRecord(
-              firstStream,
-            );
-          } catch (error) {
-            console.warn(
-              '[VideoManagement] ownership cleanup failed',
-              videoId,
-              error,
-            );
-          }
+          await deleteUploadedVideoOwnershipRecord(
+            firstStream,
+          );
         }
       
         return videoId;
       });
 
       const results = await Promise.allSettled(deletePromises);
-      results.forEach((r, idx) => {
-        if (r.status === 'rejected') {
-          console.error('[VideoManagement] delete failed for video', uniqueVideoIds[idx], r.reason);
+
+      const failedVideoIds: string[] = [];
+      const successfulVideoIds: string[] = [];
+
+      results.forEach((result, index) => {
+        const videoId =
+          uniqueVideoIds[index];
+      
+        if (result.status === 'fulfilled') {
+          successfulVideoIds.push(videoId);
+          return;
         }
+      
+        failedVideoIds.push(videoId);
+      
+        console.error(
+          '[VideoManagement] delete failed for video',
+          videoId,
+          result.reason,
+        );
       });
-      setSelectedStreams(new Set());
+
+      setSelectedStreams((previous) => {
+        const next =
+          new Set(previous);
+      
+        for (const successfulVideoId of successfulVideoIds) {
+          next.delete(successfulVideoId);
+        }
+      
+        return next;
+      });
+
+      if (failedVideoIds.length > 0) {
+        setDeleteError(
+          `${failedVideoIds.length}개 영상 삭제에 실패했습니다.`,
+        );
+      
+        throw new Error(
+          `Failed to delete videos: ${failedVideoIds.join(', ')}`,
+        );
+      }
+
       setSelectedGroups(new Set());
 
       await Promise.all([
@@ -1619,9 +1676,13 @@ const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         refetchTimelines(),
         fetchVideoGroups(),
       ]);
+    } catch (error) {
+      console.error('[VideoManagement] deletion failed:', error);
+    
+      setDeleteError(error instanceof Error ? error.message : '영상 삭제 중 오류가 발생했습니다.');
+    
     } finally {
       setIsDeleting(false);
-      setShowDeleteConfirm(false);
     }
   }, [
     selectedStreams,

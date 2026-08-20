@@ -897,8 +897,11 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                         aria-label={`${report.title} 메뉴 열기`}
                         onClick={(event) => {
                           event.stopPropagation();
-                          setSelectedReportId(report.id);
                           setOpenReportMenuId((current) => (current === report.id ? null : report.id));
+                        }}
+                        onMouseDown={(event) => {
+                          // Prevent parent selection on mousedown (avoid selecting report when opening menu)
+                          event.stopPropagation();
                         }}
                         className="rounded-lg p-1.5 text-gray-500 opacity-0 transition-all hover:bg-gray-100 hover:text-gray-700 group-hover:opacity-100 focus:opacity-100 focus:outline-none dark:text-neutral-400 dark:hover:bg-neutral-700 dark:hover:text-gray-200"
                       >

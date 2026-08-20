@@ -68,14 +68,30 @@ function findMatchingUserVideo(
   videosByVideoId: Map<string, UserVideoRecord>,
   userVideos: UserVideoRecord[],
 ): UserVideoRecord | null {
+  const streamId = stream.streamId?.trim();
+  const sensorId = stream.sensorId?.trim();
 
-  if (stream.streamId) {
-    const matchedByStreamId =
-      videosByStreamId.get(stream.streamId);
+  if (streamId) {
+    const matchedByStreamId = videosByStreamId.get(streamId);
 
     if (matchedByStreamId) {
       return matchedByStreamId;
     }
+  }
+
+  if (sensorId) {
+    const matchedBySensorId = videosBySensorId.get(sensorId);
+    if (matchedBySensorId) return matchedBySensorId;
+  }
+
+  if (streamId) {
+    const matchedByVideoId = videosByVideoId.get(streamId);
+    if (matchedByVideoId) return matchedByVideoId;
+  }
+
+  if (sensorId) {
+    const matchedByVideoId = videosByVideoId.get(sensorId);
+    if (matchedByVideoId) return matchedByVideoId;
   }
 
   const streamUrls = [stream.vodUrl, stream.url].filter(
@@ -170,7 +186,7 @@ export function useStreams({
           ]),
       );
 
-      const filteredStreams = parsedStreams.map((stream) => {
+      const filteredStreams: StreamInfo[] = parsedStreams.map<StreamInfo | null>((stream) => {
         const matchedVideo = findMatchingUserVideo(
           stream,
           videosByStreamId,
@@ -185,16 +201,34 @@ export function useStreams({
       
         return {
           ...stream,
+        
           name:
             matchedVideo.show_filename ||
             matchedVideo.filename ||
             stream.name,
+        
+          databaseVideoId:
+            matchedVideo.video_id ?? null,
+        
+          databaseStreamId:
+            matchedVideo.stream_id ?? null,
+        
+          databaseSensorId:
+            matchedVideo.sensor_id ?? null,
+        
+          databaseVideoUrl:
+            matchedVideo.video_url ?? null,
+        
+          originalFilename:
+            matchedVideo.filename ?? null,
         };
       })
       .filter(
         (stream): stream is StreamInfo =>
           stream !== null,
       );
+      
+      setStreams(filteredStreams);
 
       setStreams(filteredStreams);
     } catch (err) {

@@ -48,53 +48,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       );
       const uploadedHasFilePath = uploadedHasFilePathRes.rowCount > 0;
 
-      // Build DELETE query for uploaded_videos dynamically to avoid referencing missing columns
-      // $1 is reserved for username, so conditions start at $2
       const uploadedConditions: string[] = [];
-      const uploadedParams: any[] = [username];
-      let idx = 2;
-          
+      const uploadedParams: unknown[] = [username];
+
       if (video_id) {
-        uploadedConditions.push(`video_id = $${idx}`);
+        uploadedConditions.push('video_id = $2');
         uploadedParams.push(video_id);
-        idx++;
-      }
-      
-      if (sensorId) {
-        uploadedConditions.push(`sensor_id = $${idx}`);
+      } else if (sensorId) {
+        uploadedConditions.push('sensor_id = $2');
         uploadedParams.push(sensorId);
-        idx++;
-      }
-      
-      if (filePath) {
-        if (uploadedHasFilePath) {
-          uploadedConditions.push(`file_path = $${idx}`);
-          uploadedParams.push(filePath);
-          idx++;
-        }
-      
-        uploadedConditions.push(`video_url = $${idx}`);
+      } else if (filePath) {
+        uploadedConditions.push(
+          uploadedHasFilePath ? 'file_path = $2' : 'video_url = $2',
+        );
         uploadedParams.push(filePath);
-        idx++;
-      }
-      
-      // filename은 video_id/sensor_id/filePath가 아무것도 없을 때만 fallback으로 사용
-      if (uploadedConditions.length === 0 && filename) {
-        uploadedConditions.push(`filename = $${idx}`);
+      } else if (filename) {
+        uploadedConditions.push('filename = $2');
         uploadedParams.push(filename);
-        idx++;
       }
 
-      if (filename) {
-        uploadedConditions.push(`filename = $${idx}`);
-        uploadedParams.push(filename);
-        idx++;
-      }
-
-      let uploadedRes = { rowCount: 0 } as any;
+      let uploadedRes: { rowCount: number | null } = { rowCount: 0 };
       if (uploadedConditions.length > 0) {
-        const deleteUploadedSql = `DELETE FROM uploaded_videos WHERE username = $1 AND (${uploadedConditions.join(' OR ')})`;
+        const deleteUploadedSql = `
+          DELETE FROM uploaded_videos
+          WHERE username = $1
+            AND ${uploadedConditions[0]}
+        `;
         uploadedRes = await client.query(deleteUploadedSql, uploadedParams);
+      }
+
+      if ((uploadedRes.rowCount ?? 0) === 0) {
+        return res.status(404).json({
+          ok: false,
+          error: 'Uploaded video ownership record was not found',
+        });
       }
 
       await cleanupEmptyUploadedVideoGroups(client, username);
@@ -108,4 +95,3 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(500).json({ error: String(err?.message || err) });
   }
 }
-

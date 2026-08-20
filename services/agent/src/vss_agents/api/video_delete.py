@@ -255,23 +255,35 @@ def create_video_delete_router(
         """
         results: list[bool] = []
         sensor_name = ""
+        resolved_sensor_name = ""
 
         logger.info("Deleting video '%s'", scrub_log(video_id))
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # --- Step 0: Look up sensorName from VST (only when ES cleanup will run) ---
-            # Must happen BEFORE any deletions, since we need sensorName for ES queries.
-            if es_config is not None:
-                try:
-                    with TimeMeasure("video_delete: lookup sensor name from VST"):
-                        sensor_name = await get_sensor_id_from_stream_id(video_id, vst_url)
-                except VSTError as e:
-                    logger.warning(
-                        "Could not look up sensorName for '%s': %s. ES cleanup for behavior/raw may not work.",
-                        scrub_log(video_id),
-                        scrub_log(e),
+            # UI passes a VST stream UUID. Resolve it before calling VST and
+            # RTVI-CV endpoints, which expect the actual sensor identifier.
+            try:
+                with TimeMeasure(
+                    "video_delete: resolve sensor name from stream id"
+                ):
+                    resolved_sensor_name = (
+                        await get_sensor_id_from_stream_id(
+                            video_id,
+                            vst_url,
+                        )
                     )
-                    sensor_name = ""
+            
+                    sensor_name = resolved_sensor_name
+            
+            except VSTError as error:
+                logger.warning(
+                    "Could not resolve sensor name for stream '%s': %s",
+                    scrub_log(video_id),
+                    scrub_log(error),
+                )
+            
+                resolved_sensor_name = ""
+                sensor_name = ""
 
             # --- ES cleanup (done first to avoid 'not found' issues) ---
             # Each index uses .keyword for exact match (avoids accidental match on similar names):
@@ -295,25 +307,57 @@ def create_video_delete_router(
 
             # --- Remove from RTVI-CV ---
             if rtvi_cv_url:
-                with TimeMeasure("video_delete: remove from RTVI-CV"):
-                    success, msg = await _remove_from_rtvi_cv(client, rtvi_cv_url, video_id, sensor_name)
+                rtvi_sensor_name = (
+                    resolved_sensor_name or video_id
+                )
+
+                with TimeMeasure(
+                    "video_delete: remove from RTVI-CV"
+                ):
+                    success, msg = await _remove_from_rtvi_cv(
+                        client,
+                        rtvi_cv_url,
+                        rtvi_sensor_name,
+                        rtvi_sensor_name,
+                    )
+
                 results.append(success)
-                logger.info(f"Remove from RTVI-CV: {'OK' if success else msg}")
+
+                logger.info(
+                    "Remove from RTVI-CV: %s",
+                    "OK" if success else msg,
+                )
 
             # --- Delete VST storage (using shared vst utils) ---
-            with TimeMeasure("video_delete: delete VST storage"):
-                success, msg = await delete_vst_storage(vst_url, video_id)
+            with TimeMeasure(
+                "video_delete: delete VST storage"
+            ):
+                success, msg = await delete_vst_storage(
+                    vst_url,
+                    video_id,
+                )
+            
             results.append(success)
-            logger.info("Delete VST storage: %s", "OK" if success else msg)
-
-            # --- Delete VST sensor (using shared vst utils) ---
-            # Required: delete_vst_storage only removes stored files, not the
-            # sensor registration — the two must be paired to fully remove a
-            # video. Without this, sensors are orphaned in VST.
-            with TimeMeasure("video_delete: delete VST sensor"):
-                success, msg = await delete_vst_sensor(vst_url, video_id)
+            
+            logger.info(
+                "Delete VST storage: %s",
+                "OK" if success else msg,
+            )
+            
+            with TimeMeasure(
+                "video_delete: delete VST sensor"
+            ):
+                success, msg = await delete_vst_sensor(
+                    vst_url,
+                    video_id,
+                )
+            
             results.append(success)
-            logger.info("Delete VST sensor: %s", "OK" if success else msg)
+            
+            logger.info(
+                "Delete VST sensor: %s",
+                "OK" if success else msg,
+            )
 
         # --- Determine overall status ---
         all_success = bool(results) and all(results)

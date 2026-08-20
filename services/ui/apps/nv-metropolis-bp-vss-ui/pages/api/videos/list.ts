@@ -71,6 +71,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const q = `
         SELECT
           video_id,
+          stream_id,
           sensor_id,
           filename,
           show_filename,

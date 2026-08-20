@@ -17,6 +17,11 @@ export interface StreamInfo {
   url: string;
   vodUrl: string;
   sensorId: string;
+  databaseVideoId?: string | null;
+  databaseStreamId?: string | null;
+  databaseSensorId?: string | null;
+  databaseVideoUrl?: string | null;
+  originalFilename?: string | null;
 }
 
 export type StreamsApiResponse = Array<Record<string, Omit<StreamInfo, 'sensorId'>[]>>;

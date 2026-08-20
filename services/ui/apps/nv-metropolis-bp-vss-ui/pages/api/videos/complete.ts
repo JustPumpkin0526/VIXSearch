@@ -122,26 +122,6 @@ function toTimestampText(
   return fallback.toISOString();
 }
 
-function formatAsDisplayDate(value: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const year = value.getFullYear();
-  const month = pad(value.getMonth() + 1);
-  const day = pad(value.getDate());
-  const hours = pad(value.getHours());
-  const minutes = pad(value.getMinutes());
-  const seconds = pad(value.getSeconds());
-
-  return `${year}/${month}/${day} - ${hours}:${minutes}:${seconds}`;
-}
-
-function toKstIso(value: Date): string {
-  // Convert given Date to KST (UTC+9) and return ISO string
-  const kstOffset = 9 * 60; // minutes
-  const utc = value.getTime() + (value.getTimezoneOffset() * 60000);
-  const kst = new Date(utc + kstOffset * 60000);
-  return kst.toISOString();
-}
-
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
@@ -412,8 +392,6 @@ export default async function handler(
       // created_at: prefer client-provided created_at, else null
       const createdAtDate = createdAt ? toValidDate(createdAt, new Date()) : null;
 
-      const createdAtText = createdAtDate ? formatAsDisplayDate(createdAtDate) : null;
-
       const timestampText = toTimestampText(body.timestamp ?? body.created_at ?? null, uploadedAtDate);
 
       const insertSql = `
@@ -438,9 +416,9 @@ export default async function handler(
         bytes,
         insertUsername,
         groupId,
-        toKstIso(uploadedAtDate),
-        timestampText ? toKstIso(new Date(timestampText)) : null,
-        createdAtDate ? toKstIso(createdAtDate) : null,
+        uploadedAtDate.toISOString(),
+        timestampText ? new Date(timestampText).toISOString() : null,
+        createdAtDate ? createdAtDate.toISOString() : null,
         width,
         height,
         duration_seconds,
