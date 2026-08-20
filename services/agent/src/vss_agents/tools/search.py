@@ -412,43 +412,6 @@ def _fuse_expanded_embed_results(result_lists: list[list["SearchResult"]]) -> li
 
 
 _ACTION_CRITIC_WINDOW_PADDING_SECONDS = 10
-_ACTION_CRITIC_CANDIDATE_COUNT = 8
-_ACTION_CRITIC_MAX_PER_VIDEO = 2
-_ACTION_CRITIC_MIN_TIME_SEPARATION_SECONDS = 20
-
-
-def _select_action_critic_candidates(
-    results: list["SearchResult"],
-    limit: int,
-) -> list["SearchResult"]:
-    """Select diverse video/time candidates so one high-scoring moment cannot dominate Critic input."""
-    selected: list[SearchResult] = []
-    selected_by_sensor: dict[str, list[datetime]] = {}
-
-    for result in results:
-        if len(selected) >= limit:
-            break
-        try:
-            start_dt = iso8601_to_datetime(result.start_time)
-        except (ValueError, TypeError):
-            # Keep malformed/un-timestamped results eligible; the Critic will
-            # return unverified if their clip cannot be resolved.
-            start_dt = None
-
-        sensor_candidates = selected_by_sensor.setdefault(result.sensor_id, [])
-        if len(sensor_candidates) >= _ACTION_CRITIC_MAX_PER_VIDEO:
-            continue
-        if start_dt and any(
-            abs((start_dt - prior_start).total_seconds()) < _ACTION_CRITIC_MIN_TIME_SEPARATION_SECONDS
-            for prior_start in sensor_candidates
-        ):
-            continue
-        selected.append(result)
-        if start_dt:
-            sensor_candidates.append(start_dt)
-
-    return selected
-
 
 def _expand_action_critic_window(result: "SearchResult") -> tuple[str, str]:
     """Return a wider temporal context for compound actions such as push→fall→assault."""
@@ -1935,6 +1898,12 @@ async def execute_core_search(
     # Persist critic verdicts across search iterations so re-appearing results keep their annotations
     persistent_critic_results: dict = {}
 
+    critic_analysis_limit = min(100, max(1, int(search_input.critic_max_results)))
+
+    critic_attempted_keys: set[
+        tuple[str, str, str]
+    ] = set()
+
     while do_search and iteration_num < config.search_max_iterations:
         iteration_num += 1
         do_search = False
@@ -2234,63 +2203,79 @@ async def execute_core_search(
                 critic_results: dict[VideoInfo, CriticVideoResult] = {}
 
                 # Call critic agent - use screenshot_url as video_url for critic
-                critic_limit = min(100, max(1, int(search_input.critic_max_results)))
+                # UI에 출력될 결과는 모두 Critic 검증 대상으로 포함합니다.
+                # 검색 요청 전체에서 남아 있는
+                # Critic 분석 가능 개수를 계산합니다.
+                remaining_critic_budget = (critic_analysis_limit - len(critic_attempted_keys))
+                
+                critic_candidates = []
+                
+                if remaining_critic_budget > 0:
+                    for result in search_results:
+                        result_key = (str(result.sensor_id), str(result.start_time), str(result.end_time))
+                
+                        # 이전 검색 반복에서 이미 분석을
+                        # 시도한 클립은 다시 선택하지 않습니다.
+                        if (result_key in critic_attempted_keys):
+                            continue
+                        
+                        critic_candidates.append(result)
+                
+                        if (len(critic_candidates) >= remaining_critic_budget):
+                            break
+                else:
+                    logger.info(
+                        "[Search] Critic analysis budget "
+                        "exhausted: attempted=%d, limit=%d",
+                        len(critic_attempted_keys),
+                        critic_analysis_limit,
+                    )
+                
+                search_videos: list[VideoInfo] = []
+                
+                critic_to_result_info: dict[VideoInfo, VideoInfo] = {}
 
-                candidate_source = search_results
+                for result in critic_candidates:
+                    result_key = (str(result.sensor_id), str(result.start_time), str(result.end_time))
 
-                if action_query_plan:
-                    critic_candidates = (
-                        _select_action_critic_candidates(
-                            candidate_source,
-                            critic_limit,
+                    result_info = VideoInfo(sensor_id=result.sensor_id, start_timestamp=result.start_time, end_timestamp=result.end_time)
+
+                    # 행동 검색은 Critic이 앞뒤 문맥을 함께 볼 수 있도록
+                    # 분석 구간만 확장합니다.
+                    critic_start, critic_end = (
+                        _expand_action_critic_window(result)
+
+                        if action_query_plan
+                        else (
+                            result.start_time,
+                            result.end_time,
                         )
                     )
-                else:
-                    critic_candidates = candidate_source[
-                        :critic_limit
-                    ]
 
-                # Prepare critic limit (from user input) and defer actual Critic
-                # invocation until after candidate re-selection so a single,
-                # consistent call uses the configured limit.
-                search_videos: list[VideoInfo] = []
+                    critic_info = VideoInfo(sensor_id=result.sensor_id, start_timestamp=critic_start, end_timestamp=critic_end)
 
-                    # For action queries, send a diverse subset of video/time
-                # candidates and give the VLM temporal context on both sides of
-                # the embedding hit. This preserves distinct robbery_1 moments
-                # instead of repeatedly validating one adjacent clip.
-                # Use merged `search_results` (UI/display clips) for critic
-                # candidate selection so the Critic evaluates the merged clips.
-                candidate_source = search_results
-                critic_candidates = (
-                    _select_action_critic_candidates(candidate_source, critic_limit) if action_query_plan else candidate_source
+                    # 이전 반복에서 이미 판정된 결과는 다시 분석하지 않고
+                    # persistent_critic_results에 저장된 판정을 재사용합니다.
+                    if (result_info in confirmed_results or result_info in rejected_results):
+                        continue
+                    
+                    search_videos.append(critic_info)
+
+                    critic_to_result_info[critic_info] = result_info
+
+                    critic_attempted_keys.add(result_key)
+
+                logger.info(
+                    "[Search] Critic candidate selection: "
+                    "selected=%d, search_results=%d, "
+                    "attempted=%d, total_limit=%d, "
+                    "remaining=%d",
+                    len(search_videos),
+                    len(search_results),
+                    len(critic_attempted_keys),
+                    critic_analysis_limit,
+                    max(0, critic_analysis_limit - len(critic_attempted_keys)),
                 )
-                search_videos = search_videos[:critic_limit]
-                critic_to_result_info: dict[VideoInfo, VideoInfo] = {}
-                for result in critic_candidates:
-                    result_info = VideoInfo(
-                        sensor_id=result.sensor_id,
-                        start_timestamp=result.start_time,
-                        end_timestamp=result.end_time,
-                    )
-                    critic_start, critic_end = (
-                        _expand_action_critic_window(result) if action_query_plan else (result.start_time, result.end_time)
-                    )
-                    critic_info = VideoInfo(
-                        sensor_id=result.sensor_id,
-                        start_timestamp=critic_start,
-                        end_timestamp=critic_end,
-                    )
-                    if result_info not in confirmed_results and result_info not in rejected_results:
-                        search_videos.append(critic_info)
-                        critic_to_result_info[critic_info] = result_info
-                if action_query_plan:
-                    logger.info(
-                        "[Search] Action Critic candidate selection: %d/%d diverse results, padding=%ss",
-                        len(search_videos),
-                        len(search_results),
-                        _ACTION_CRITIC_WINDOW_PADDING_SECONDS,
-                    )
                 if len(search_videos) > 0:
                     critic_input = {
                         "query": (
@@ -2299,10 +2284,7 @@ async def execute_core_search(
                             else original_query
                         ),
                         "videos": search_videos,
-                        "evaluation_count": min(
-                            critic_limit,
-                            len(search_videos),
-                        ),
+                        "evaluation_count": len(search_videos),
                     }
                     logger.info(f"[Search] Critic agent input: {critic_input}")
                     with TimeMeasure("search: critic agent verification"):
