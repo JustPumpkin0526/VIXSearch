@@ -9,24 +9,7 @@ type ImageSearchRequest = {
   maxResults?: number;
   minSimilarity?: number;
   sensorIds?: string[];
-  startTime?: string;
-  endTime?: string;
-  bbox?: number[]; // normalized [x,y,w,h]
   croppedImageBase64?: string; // optional pre-cropped image data URI or base64
-  objectQuery?: string; // optional textual refinement
-};
-
-type AgentImageSearchRequest = {
-  image_base64: string;
-  content_type: string;
-  max_results: number;
-  min_similarity?: number;
-  sensor_ids?: string[];
-  start_time?: string;
-  end_time?: string;
-  bbox?: number[];
-  cropped_image_base64?: string;
-  object_query?: string;
 };
 
 type ErrorResponse = {
@@ -107,62 +90,119 @@ export default async function handler(
     100,
   );
 
-  const agentRequest: AgentImageSearchRequest = {
-    image_base64: body.imageBase64,
-    content_type: contentType,
-    max_results: maxResults,
-  };
-
-  if (
-    typeof body.minSimilarity === 'number'
-  ) {
-    agentRequest.min_similarity =
-      body.minSimilarity;
-  }
-
-  if (
-    Array.isArray(body.sensorIds) &&
-    body.sensorIds.length > 0
-  ) {
-    agentRequest.sensor_ids =
-      body.sensorIds.filter(
-        (value): value is string =>
-          typeof value === 'string' &&
-          value.trim().length > 0,
-      );
-  }
-
-  if (body.startTime) {
-    agentRequest.start_time = body.startTime;
-  }
-
-  if (body.endTime) {
-    agentRequest.end_time = body.endTime;
-  }
-
-  if (Array.isArray((body as any).bbox) && (body as any).bbox.length === 4) {
-    (agentRequest as any).bbox = (body as any).bbox.map((v: unknown) => Number(v));
-  }
-
-  if (typeof (body as any).croppedImageBase64 === 'string') {
-    (agentRequest as any).cropped_image_base64 = (body as any).croppedImageBase64;
-  }
-
-  if (typeof (body as any).objectQuery === 'string') {
-    (agentRequest as any).object_query = (body as any).objectQuery;
-  }
-
   try {
-    const agentBaseUrl = resolveAgentBaseUrl();
+    const agentBaseUrl =
+      resolveAgentBaseUrl();
+
+    /*
+     * croppedImageBase64가 있으면 크롭 이미지를 우선 사용하고,
+     * 없으면 원본 이미지를 사용합니다.
+     */
+    const selectedImageBase64 =
+      body.croppedImageBase64?.trim() ||
+      body.imageBase64;
+
+    const normalizedBase64 =
+      selectedImageBase64.replace(
+        /^data:image\/[a-zA-Z0-9.+-]+;base64,/,
+        '',
+      );
+
+    const imageBuffer = Buffer.from(
+      normalizedBase64,
+      'base64',
+    );
+
+    if (imageBuffer.length === 0) {
+      res.status(400).json({
+        message:
+          'Decoded image data is empty',
+      });
+
+      return;
+    }
+
+    /*
+     * Agent image_search.py의 제한과 동일하게
+     * 디코딩된 실제 파일 크기를 검사합니다.
+     */
+    const maxImageBytes =
+      2 * 1024 * 1024;
+
+    if (
+      imageBuffer.length >
+      maxImageBytes
+    ) {
+      res.status(413).json({
+        message:
+          'Uploaded image exceeds the 2 MiB limit',
+      });
+
+      return;
+    }
+
+    const formData = new FormData();
+
+    const extension =
+      contentType === 'image/png'
+        ? 'png'
+        : contentType === 'image/webp'
+          ? 'webp'
+          : 'jpg';
+
+    const imageBytes =
+      new Uint8Array(imageBuffer);
+
+    formData.append(
+      'file',
+      new Blob(
+        [imageBytes],
+        {
+          type: contentType,
+        },
+      ),
+      `search-image.${extension}`,
+    );
+
+    formData.append(
+      'min_similarity',
+      String(
+        body.minSimilarity ?? 0,
+      ),
+    );
+
+    const sensorIds =
+      Array.isArray(body.sensorIds)
+        ? body.sensorIds
+            .filter(
+              (value): value is string =>
+                typeof value === 'string' &&
+                value.trim().length > 0,
+            )
+            .map(value => value.trim())
+        : [];
+
+    if (sensorIds.length > 0) {
+      formData.append(
+        'sensor_ids',
+        sensorIds.join(','),
+      );
+    }
+
+    const requestUrl = new URL(
+      `${agentBaseUrl}/api/v1/image-search`,
+    );
+
+    requestUrl.searchParams.set(
+      'top_k',
+      String(maxResults),
+    );
 
     const response = await fetch(
-      `${agentBaseUrl}/api/v1/image-search`, 
+      requestUrl,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(agentRequest),
+        body: formData,
       },
     );
 
