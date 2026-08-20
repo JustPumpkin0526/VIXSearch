@@ -136,15 +136,125 @@ function getAuthToken(): string {
   return window.localStorage.getItem('vss.auth.token') || '';
 }
 
-function buildChatStateSnapshot(params: PersistedChatState): PersistedChatState {
+function sanitizeMessageForPersistence(
+  message: any,
+): any {
+  const sanitized = {
+    ...message,
+  };
+
+  if (
+    Array.isArray(
+      sanitized.attachments,
+    )
+  ) {
+    sanitized.attachments =
+      sanitized.attachments.map(
+        (attachment: any) => {
+          const content =
+            typeof attachment.content ===
+              'string'
+              ? attachment.content
+              : '';
+
+          const isTransientImage =
+            content.startsWith(
+              'data:image/',
+            ) ||
+            content.startsWith(
+              'blob:',
+            );
+
+          return {
+            ...attachment,
+            content:
+              isTransientImage
+                ? ''
+                : content,
+          };
+        },
+      );
+  }
+
+  if (sanitized.attachment) {
+    const content =
+      typeof sanitized.attachment
+        .content === 'string'
+        ? sanitized.attachment.content
+        : '';
+
+    sanitized.attachment = {
+      ...sanitized.attachment,
+      content:
+        content.startsWith(
+          'data:image/',
+        ) ||
+        content.startsWith(
+          'blob:',
+        )
+          ? ''
+          : content,
+    };
+  }
+
+  return sanitized;
+}
+
+function sanitizeConversationForPersistence(
+  conversation:
+    | Conversation
+    | null
+    | undefined,
+): Conversation | null {
+  if (!conversation) {
+    return null;
+  }
+
   return {
-    folders: Array.isArray(params.folders) ? params.folders : [],
-    conversations: Array.isArray(params.conversations)
-      ? params.conversations
-      : [],
-    selectedConversation: params.selectedConversation ?? null,
+    ...conversation,
+    messages:
+      Array.isArray(
+        conversation.messages,
+      )
+        ? conversation.messages.map(
+            sanitizeMessageForPersistence,
+          )
+        : [],
+  };
+}
+
+function buildChatStateSnapshot(
+  params: PersistedChatState,
+): PersistedChatState {
+  const conversations =
+    Array.isArray(
+      params.conversations,
+    )
+      ? params.conversations.map(
+          conversation =>
+            sanitizeConversationForPersistence(
+              conversation,
+            ) as Conversation,
+        )
+      : [];
+
+  const selectedConversation =
+    sanitizeConversationForPersistence(
+      params.selectedConversation,
+    );
+
+  return {
+    folders:
+      Array.isArray(params.folders)
+        ? params.folders
+        : [],
+    conversations,
+    selectedConversation,
     showChatbar:
-      typeof params.showChatbar === 'boolean' ? params.showChatbar : true,
+      typeof params.showChatbar ===
+        'boolean'
+        ? params.showChatbar
+        : true,
   };
 }
 
@@ -652,7 +762,32 @@ const Home = (props: NemoAgentToolkitAppProps = {}) => {
     persistStateToSessionStorage(snapshot, storageKeyPrefix);
   
     const serializedSnapshot = JSON.stringify(snapshot);
-  
+    
+    const snapshotSizeBytes =
+      new Blob([
+        serializedSnapshot,
+      ]).size;
+    
+    console.log(
+      '[ChatState] snapshot size:',
+      {
+        bytes:
+          snapshotSizeBytes,
+        megabytes:
+          (
+            snapshotSizeBytes /
+            1024 /
+            1024
+          ).toFixed(2),
+        conversationCount:
+          snapshot.conversations
+            ?.length ?? 0,
+        selectedMessageCount:
+          snapshot.selectedConversation
+            ?.messages?.length ?? 0,
+      },
+    );
+
     if (serializedSnapshot === lastPersistedChatSnapshotRef.current) {
       return undefined;
     }

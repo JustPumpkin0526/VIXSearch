@@ -171,7 +171,10 @@ type ImageSearchApiResult = {
   end_time?: string;
   sensor_id?: string;
   screenshot_url?: string;
+  similarity?: number;
   similarity_score?: number;
+  frame_score?: number;
+  behavior_score?: number;
 };
 
 type ImageSearchApiResponse = {
@@ -320,6 +323,60 @@ function getAttachmentContentType(
   );
 }
 
+function createImagePreviewUrl(
+  imageContent: string,
+  contentType: string,
+): string {
+  if (
+    typeof window === 'undefined' ||
+    !imageContent.startsWith('data:image/')
+  ) {
+    return imageContent;
+  }
+
+  try {
+    const base64 =
+      stripImageDataUriPrefix(
+        imageContent,
+      );
+
+    const binary =
+      window.atob(base64);
+
+    const bytes =
+      new Uint8Array(
+        binary.length,
+      );
+
+    for (
+      let index = 0;
+      index < binary.length;
+      index += 1
+    ) {
+      bytes[index] =
+        binary.charCodeAt(index);
+    }
+
+    const blob = new Blob(
+      [bytes],
+      {
+        type: contentType,
+      },
+    );
+
+    return URL.createObjectURL(
+      blob,
+    );
+  } catch (error) {
+    console.error(
+      '[ImageSearch] Failed to create image preview:',
+      error,
+    );
+
+    return imageContent;
+  }
+}
+
 function stripImageDataUriPrefix(
   imageContent: string,
 ): string {
@@ -376,7 +433,7 @@ function normalizeImageSearchResponse(
     end_time: string;
     sensor_id: string;
     screenshot_url: string;
-    similarity_score: number;
+    similarity: number;
     search_type: 'image_similarity';
   }>;
   total: number;
@@ -413,10 +470,16 @@ function normalizeImageSearchResponse(
       typeof result.screenshot_url === 'string'
         ? result.screenshot_url
         : '',
-    similarity_score:
-      typeof result.similarity_score === 'number'
-        ? result.similarity_score
-        : 0,
+    similarity:
+      typeof result.similarity === 'number'
+        ? result.similarity
+        : typeof result.similarity_score === 'number'
+          ? result.similarity_score
+          : typeof result.frame_score === 'number'
+            ? result.frame_score
+            : typeof result.behavior_score === 'number'
+              ? result.behavior_score
+              : 0,
     search_type: 'image_similarity' as const,
   }));
 
@@ -1711,21 +1774,30 @@ export const Chat = () => {
 
       onMessageSubmitted?.();
 
-      const messageWithoutAttachmentContent =
-        removeAttachmentContents(
-          stripUploadConversationScope(message),
+      const previewUrl =
+        createImagePreviewUrl(
+          imageContent,
+          contentType,
         );
       
       const userMessage: Message = {
-        ...messageWithoutAttachmentContent,
+        ...stripUploadConversationScope(
+          message,
+        ),
         id: uuidv4(),
         content:
           typeof message.content === 'string' &&
           message.content.trim()
             ? message.content
             : '업로드한 이미지와 유사한 장면을 검색해줘',
+        attachments: [
+          {
+            type: 'image' as const,
+            content: previewUrl,
+          },
+        ],
       };
-
+      
       let pendingConversation: Conversation = {
         ...conversation,
         messages: [
@@ -1734,7 +1806,7 @@ export const Chat = () => {
         ],
         isHomepageConversation: undefined,
       };
-
+      
       persistConversationState(
         pendingConversation,
       );
@@ -1963,60 +2035,6 @@ export const Chat = () => {
         ...stripUploadConversationScope(message),
         id: uuidv4(),
       };
-      
-      // A cropped image in Chat is an object-similarity search, not a VLM
-      // attachment.  Keep the image visible in the user message and insert a
-      // normal Search API JSON response so the Search tab can render its cards.
-      const imageAttachment = messageWithNewId.attachments?.find((attachment) => attachment.type === 'image');
-      if (imageAttachment && selectedConversation) {
-        // The Search tab listens for this event and keeps the same reference
-        // image visible while the resulting clips are played.
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('vss-image-search', {
-            detail: { imageUrl: imageAttachment.content },
-          }));
-        }
-        homeDispatch({ field: 'loading', value: true });
-        homeDispatch({ field: 'messageIsStreaming', value: true });
-        try {
-          const imageResponse = await fetch(imageAttachment.content);
-          const imageBlob = await imageResponse.blob();
-          const form = new FormData();
-          form.append('file', imageBlob, 'cropped-image.jpg');
-          const response = await fetch(`${(agentApiUrlBase || '').replace(/\/$/, '')}/image-search`, {
-            method: 'POST',
-            body: form,
-          });
-          if (!response.ok) throw new Error(await response.text());
-          const result = await response.json();
-          const count = Array.isArray(result.data) ? result.data.length : 0;
-          const assistantMessage: Message = {
-            id: uuidv4(),
-            role: 'assistant',
-            content: `Found ${count} visually similar object${count === 1 ? '' : 's'}.\n\n\`\`\`json\n${JSON.stringify(result)}\n\`\`\``,
-          };
-          const updatedConversation = {
-            ...selectedConversation,
-            messages: [...selectedConversation.messages, messageWithNewId, assistantMessage],
-            isHomepageConversation: undefined,
-          };
-          const { single, all } = updateConversation(updatedConversation, conversationsRef.current || [], storageKeyPrefix);
-          selectedConversationRef.current = single;
-          conversationsRef.current = all;
-          homeDispatch({ field: 'selectedConversation', value: single });
-          homeDispatch({ field: 'conversations', value: all });
-          saveConversation(single, storageKeyPrefix);
-          saveConversations(all, storageKeyPrefix);
-          onAnswerComplete?.();
-          onAnswerCompleteWithContent?.(assistantMessage.content);
-        } catch (error) {
-          toast.error(`Image search failed: ${error instanceof Error ? error.message : 'unknown error'}`);
-        } finally {
-          homeDispatch({ field: 'loading', value: false });
-          homeDispatch({ field: 'messageIsStreaming', value: false });
-        }
-        return;
-      }
 
       // Set the active user message ID for WebSocket message tracking
       activeUserMessageId.current = messageWithNewId.id;

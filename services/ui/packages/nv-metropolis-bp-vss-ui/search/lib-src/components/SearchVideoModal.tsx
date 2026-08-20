@@ -75,6 +75,8 @@ export interface SearchVideoModalProps {
   title: React.ReactNode | string;
   onClose: () => void;
 
+  defaultSituationDescription?: string;
+
   searchByImageEnabled?: boolean;
   onSearchByImageRequest?: (
     pauseOffsetSeconds: number,
@@ -109,6 +111,8 @@ export const SearchVideoModal:
     videoUrl,
     title,
     onClose,
+
+    defaultSituationDescription = '',
 
     searchByImageEnabled = false,
     onSearchByImageRequest,
@@ -165,6 +169,11 @@ export const SearchVideoModal:
       reportSituationDescription,
       setReportSituationDescription,
     ] = useState('');
+
+    const [
+      reportSituationDescriptionTouched,
+      setReportSituationDescriptionTouched,
+    ] = useState(false);
 
     const [
       reportPlace,
@@ -274,11 +283,50 @@ export const SearchVideoModal:
 
       setReportTitle('');
       setReportAuthor('');
-      setReportSituationDescription('');
+
+      setReportSituationDescription(
+        defaultSituationDescription.trim(),
+      );
+
+      setReportSituationDescriptionTouched(
+        false,
+      );
+
       setReportPlace('');
     }, [
       isOpen,
       videoUrl,
+    ]);
+
+    useEffect(() => {
+      if (
+        !isOpen ||
+        reportSituationDescriptionTouched
+      ) {
+        return;
+      }
+    
+      setReportSituationDescription(
+        defaultSituationDescription.trim(),
+      );
+    }, [
+      isOpen,
+      defaultSituationDescription,
+      reportSituationDescriptionTouched,
+    ]);
+
+    useEffect(() => {
+      if (
+        !isOpen ||
+        !onLoadExistingReports
+      ) {
+        return;
+      }
+    
+      void onLoadExistingReports();
+    }, [
+      isOpen,
+      onLoadExistingReports,
     ]);
 
     useEffect(() => {
@@ -372,17 +420,47 @@ export const SearchVideoModal:
         onLoadExistingReports,
       ]);
 
+    const hasReportTitle =
+      reportTitle.trim().length > 0;
+
+    const hasReportAuthor =
+      reportAuthor.trim().length > 0;
+
+    const hasReportPlace =
+      reportPlace.trim().length > 0;
+
+    const hasSituationDescription =
+      reportSituationDescription
+        .trim()
+        .length > 0;
+
+    const canCreateNewReport =
+      !creatingReport &&
+      hasReportTitle &&
+      hasReportAuthor &&
+      hasReportPlace &&
+      hasSituationDescription &&
+      !!onCreateReport;
+
+    const canAddToExistingReport =
+      !creatingReport &&
+      !loadingReports &&
+      existingReports.length > 0 &&
+      hasReportPlace &&
+      hasSituationDescription &&
+      !!onAddToExistingReport;
+
     const handleSubmitNewReport =
       useCallback(async () => {
         const normalizedTitle = reportTitle.trim();
-      
         const normalizedAuthor = reportAuthor.trim();
-      
+        const normalizedPlace = reportPlace.trim();
         const normalizedSituationDescription = reportSituationDescription.trim();
-      
+
         if (
           !normalizedTitle ||
           !normalizedAuthor ||
+          !normalizedPlace ||
           !normalizedSituationDescription ||
           !onCreateReport
         ) {
@@ -396,10 +474,13 @@ export const SearchVideoModal:
             situationDescription:
               normalizedSituationDescription,
             pauseTime,
-            place: reportPlace.trim(),
+            place: normalizedPlace,
           });
         
           setReportSituationDescription('');
+          setReportSituationDescriptionTouched(
+            false,
+          );
           setReportPlace('');
           closeReportMenu();
         } catch (error) {
@@ -422,11 +503,14 @@ export const SearchVideoModal:
       async (
         reportId: string,
       ) => {
-        const normalizedSituationDescription =
-          reportSituationDescription.trim();
+        const normalizedPlace = reportPlace.trim();
+
+        const normalizedSituationDescription = reportSituationDescription.trim();
 
         if (
           !onAddToExistingReport ||
+          existingReports.length === 0 ||
+          !normalizedPlace ||
           !normalizedSituationDescription
         ) {
           return;
@@ -438,10 +522,13 @@ export const SearchVideoModal:
               situationDescription:
                 normalizedSituationDescription,
               pauseTime,
-              place: reportPlace.trim(),
+              place: normalizedPlace,
             },
           );
           setReportSituationDescription('');
+          setReportSituationDescriptionTouched(
+            false,
+          );
           setReportPlace('');
           closeReportMenu();
         } catch (error) {
@@ -457,7 +544,8 @@ export const SearchVideoModal:
         pauseTime,
         reportPlace,
         reportSituationDescription,
-      ],
+        existingReports.length,
+      ]
     );
 
 
@@ -746,11 +834,15 @@ export const SearchVideoModal:
               <textarea
                 id="report-situation-description"
                 value={reportSituationDescription}
-                onChange={event =>
-                  setReportSituationDescription(
-                    event.target.value,
-                  )
-                }
+                onChange={event => {
+                    setReportSituationDescriptionTouched(
+                      true,
+                    );
+                  
+                    setReportSituationDescription(
+                      event.target.value,
+                    );
+                  }}
                 placeholder="해당 장면의 상황을 입력하세요."
                 rows={4}
                 maxLength={2000}
@@ -795,8 +887,8 @@ export const SearchVideoModal:
             <button
               type="button"
               disabled={
-                creatingReport ||
-                !reportSituationDescription.trim()
+                !canCreateNewReport &&
+                !canAddToExistingReport
               }
               onClick={handleReportMenuOpen}
               className="
@@ -895,9 +987,7 @@ export const SearchVideoModal:
                           <button
                             key={report.id}
                             type="button"
-                            disabled={
-                              creatingReport
-                            }
+                            disabled={!canAddToExistingReport}
                             onClick={() =>
                               void handleSelectExistingReport(
                                 report.id,
@@ -933,11 +1023,7 @@ export const SearchVideoModal:
                     <button
                       type="button"
                       disabled={
-                        creatingReport ||
-                        !reportTitle.trim() ||
-                        !reportAuthor.trim() ||
-                        !reportSituationDescription.trim() ||
-                        !onCreateReport
+                        !canCreateNewReport
                       }
                       onClick={() =>
                         void handleSubmitNewReport()
@@ -962,6 +1048,9 @@ export const SearchVideoModal:
                     
                     <button
                       type="button"
+                      disabled={
+                        !canAddToExistingReport
+                      }
                       onClick={() =>
                         void handleShowExistingReports()
                       }
@@ -973,7 +1062,9 @@ export const SearchVideoModal:
                         text-sm
                         text-gray-900
                         hover:bg-gray-100
-                    
+                        disabled:cursor-not-allowed
+                        disabled:opacity-50
+
                         dark:text-gray-100
                         dark:hover:bg-neutral-800
                       "

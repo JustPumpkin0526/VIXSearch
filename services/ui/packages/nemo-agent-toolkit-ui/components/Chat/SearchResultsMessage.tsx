@@ -93,6 +93,102 @@ type ParsedSearchResultsMessage = {
   results: SearchResultItem[];
 };
 
+function formatSceneTime(
+  value: string | number | undefined,
+): string {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ''
+  ) {
+    return '';
+  }
+
+  if (
+    typeof value === 'number' &&
+    Number.isFinite(value)
+  ) {
+    const totalSeconds = Math.max(
+      0,
+      Math.floor(value),
+    );
+
+    const hours = Math.floor(
+      totalSeconds / 3600,
+    );
+
+    const minutes = Math.floor(
+      (totalSeconds % 3600) / 60,
+    );
+
+    const seconds =
+      totalSeconds % 60;
+
+    return [
+      hours,
+      minutes,
+      seconds,
+    ]
+      .map(part =>
+        String(part).padStart(2, '0'),
+      )
+      .join(':');
+  }
+
+  const text =
+    String(value).trim();
+
+  if (!text) {
+    return '';
+  }
+
+  const timeMatch = text.match(
+    /T(\d{2}:\d{2}:\d{2})/,
+  );
+
+  return timeMatch?.[1] || text;
+}
+
+function buildVideoTimestampRange(
+  startTime:
+    | string
+    | undefined,
+  endTime:
+    | string
+    | undefined,
+  fallbackTime?:
+    | string
+    | undefined,
+): string {
+  const formattedStart =
+    formatSceneTime(startTime);
+
+  const formattedEnd =
+    formatSceneTime(endTime);
+
+  if (
+    formattedStart &&
+    formattedEnd
+  ) {
+    return (
+      `${formattedStart} - ` +
+      `${formattedEnd}`
+    );
+  }
+
+  if (formattedStart) {
+    return formattedStart;
+  }
+
+  if (formattedEnd) {
+    return formattedEnd;
+  }
+
+  return formatSceneTime(
+    fallbackTime,
+  );
+}
+
 function tryParseJson<T>(value: string): T | null {
   try {
     return JSON.parse(value) as T;
@@ -223,9 +319,18 @@ function normalizeSearchResult(candidate: unknown): SearchResultItem | null {
     ? value.end_time
     : (typeof value.endTime === 'string' ? value.endTime : '');
   const description = typeof value.description === 'string' ? value.description : '';
-  const similarityRaw = typeof value.similarity === 'number'
-    ? value.similarity
-    : (typeof value.similarity === 'string' ? Number(value.similarity) : 0);
+  const similarityValue =
+    value.similarity ??
+    value.similarity_score ??
+    value.frame_score ??
+    value.behavior_score;
+  
+  const similarityRaw =
+    typeof similarityValue === 'number'
+      ? similarityValue
+      : typeof similarityValue === 'string'
+        ? Number(similarityValue)
+        : 0;
 
   // Support multiple possible key names/locations for object ids coming from agents
   const rawObjectIds: unknown =
@@ -592,44 +697,60 @@ export const SearchResultsMessage: React.FC<
     sourceQuery,
   ]);
 
-  const loadExistingReports = React.useCallback(async () => {
-    setLoadingReports(true);
+  const loadExistingReports = React.useCallback(
+    async (): Promise<void> => {
+      setLoadingReports(true);
 
-    try {
-      const token = window.localStorage.getItem('vss.auth.token');
+      try {
+        const token =
+          window.localStorage.getItem(
+            'vss.auth.token',
+          );
 
-      if (!token) {
-        throw new Error('Authentication token is missing');
+        if (!token) {
+          throw new Error(
+            'Authentication token is missing',
+          );
+        }
+
+        const response =
+          await fetch('/api/reports', {
+            headers: {
+              Authorization:
+                `Bearer ${token}`,
+            },
+          });
+
+        if (!response.ok) {
+          throw new Error(
+            `Failed to load reports: ${response.status}`,
+          );
+        }
+
+        const payload =
+          await response.json();
+
+        const reports: StoredReport[] =
+          Array.isArray(payload?.reports)
+            ? payload.reports
+            : [];
+
+        setAvailableReports(
+          reports,
+        );
+      } catch (error) {
+        console.error(
+          '[SearchResultsMessage] Failed to load reports:',
+          error,
+        );
+
+        setAvailableReports([]);
+      } finally {
+        setLoadingReports(false);
       }
-
-      const response = await fetch('/api/reports', {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to load reports: ${response.status}`);
-      }
-
-      const payload = await response.json();
-      const reports = Array.isArray(payload?.reports) ? payload.reports : [];
-
-      setAvailableReports(reports);
-      return reports as StoredReport[];
-    } catch (error) {
-      console.error(
-        '[SearchResultsMessage] Failed to load reports:',
-        error,
-      );
-
-      setAvailableReports([]);
-      throw error;
-    } finally {
-      setLoadingReports(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   const handleAddToExistingReport = React.useCallback(
     async (
@@ -1074,13 +1195,53 @@ export const SearchResultsMessage: React.FC<
     isDark,
   ]);
 
+  const modalSituationDescription = React.useMemo(() => {
+    if (!activeVideoData) {
+      return '';
+    }
+
+    const criticKey =
+      activeVideoData.critic_result
+        ? JSON.stringify({
+            sensorId:
+              activeVideoData.sensor_id,
+            timestamp:
+              activeVideoData
+                .matched_object_timestamp ||
+              activeVideoData.start_time,
+            criteria:
+              activeVideoData
+                .critic_result
+                ?.criteria_met,
+          })
+        : undefined;
+
+    if (criticKey) {
+      return (
+        criticDescriptions[criticKey] ??
+        '검증 설명을 생성하고 있습니다…'
+      );
+    }
+
+    return (
+      activeVideoData
+        .critic_result
+        ?.result ||
+      activeVideoData.description ||
+      ''
+    );
+  }, [
+    activeVideoData,
+    criticDescriptions,
+  ]);
+
   const metadataFooterElement = React.useMemo(() => {
     if (!activeVideoData) return undefined;
 
     const displayVideoName =
       sensorIdToNameMap.get(activeVideoData.sensor_id) || activeVideoData.video_name || '검색 결과';
 
-    const timestamp = activeVideoData.matched_object_timestamp || activeVideoData.start_time || '';
+    const timestamp = buildVideoTimestampRange(activeVideoData.start_time, activeVideoData.end_time, activeVideoData.matched_object_timestamp);
 
     const activeCriticKey = activeVideoData && activeVideoData.critic_result
       ? JSON.stringify({ sensorId: activeVideoData.sensor_id, timestamp: activeVideoData.matched_object_timestamp || activeVideoData.start_time, criteria: activeVideoData.critic_result?.criteria_met })
@@ -1100,12 +1261,16 @@ export const SearchResultsMessage: React.FC<
 
     return (
       <div data-testid="video-modal-critic-summary" className={`px-4 py-3 text-base leading-6 ${isDark ? 'bg-slate-900 text-gray-100' : 'bg-slate-50 text-gray-900'}`}>
-        <div><span className="font-bold">파일명: </span><span>{displayVideoName}</span></div>
         <div><span className="font-bold">시간: </span><span>{timestamp}</span></div>
-        <div><span className="font-bold">설명: </span><span>{sentence}</span></div>
+        <div><span className="font-bold">설명: {' '}</span><span>{modalSituationDescription || '-'}</span></div>
       </div>
     );
-  }, [activeVideoData, sensorIdToNameMap, isDark, criticDescriptions, criticDescriptionLoading]);
+  }, [
+    activeVideoData,
+    sensorIdToNameMap,
+    isDark,
+    modalSituationDescription,
+  ]);
 
   React.useEffect(() => {
     const critic = activeVideoData?.critic_result;
@@ -1278,6 +1443,7 @@ export const SearchResultsMessage: React.FC<
         videoUrl={videoModal.videoUrl}
         title={modalTitle}
         onClose={handleCloseVideoModal}
+        defaultSituationDescription={modalSituationDescription}
         searchByImageEnabled={canSearchByImage}
         onSearchByImageRequest={
           canSearchByImage ? handleSearchByImageRequest : undefined

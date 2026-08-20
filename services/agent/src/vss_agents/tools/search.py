@@ -1603,14 +1603,45 @@ async def execute_core_search(
                 + (f" with attributes: {plate_attributes}" if plate_attributes else "")
             ),
         )
-        plate_video_sources = list(
-            dict.fromkeys(
-                [
-                    *(search_input.video_sources or []),
-                    *(attribute_video_sources or []),
-                ]
+        if search_input.source_type == "video_file":
+            # 번호판 데이터는 mdx-behavior의 sensor.id에
+            # VST sensor name(파일명)으로 저장됩니다.
+            plate_video_sources = list(
+                dict.fromkeys(
+                    attribute_video_sources or []
+                )
             )
-        )
+        else:
+            plate_video_sources = list(
+                dict.fromkeys(
+                    search_input.video_sources or []
+                )
+            )
+
+        if (
+            search_input.source_type == "video_file"
+            and owned_video_ids is not None
+            and not plate_video_sources
+        ):
+            message = (
+                "License plate search skipped because "
+                "the owned video UUIDs could not be resolved "
+                "to VST sensor names."
+            )
+        
+            logger.warning(message)
+        
+            yield AgentMessageChunk(
+                type=AgentMessageChunkType.THOUGHT,
+                content=message,
+            )
+        
+            yield SearchOutput(
+                data=[],
+                search_messages=[message],
+            )
+        
+            return
         
         logger.info(
             "License plate search request: "

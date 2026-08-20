@@ -416,16 +416,29 @@ export const ChatMessage: FC<Props> = memo(
                     >
                       {prepareContent({ message, role: 'user' })}
                     </ReactMarkdown>
-                    {message.attachments?.filter((attachment) => attachment.type === 'image').map((attachment, index) => (
-                      <figure key={`${message.id || messageIndex}-image-${index}`} className="mt-3 mb-0 w-fit max-w-full">
-                        <img
-                          src={attachment.content}
-                          alt="검색 기준 이미지"
-                          className="max-h-56 max-w-full rounded-md border border-black/15 object-contain dark:border-white/20"
-                        />
-                        <figcaption className="mt-1 text-xs text-gray-500 dark:text-gray-400">검색 기준 이미지</figcaption>
-                      </figure>
-                    ))}
+                    {message.attachments
+                      ?.filter(
+                        attachment =>
+                          attachment.type === 'image' &&
+                          typeof attachment.content === 'string' &&
+                          attachment.content.length > 0,
+                      )
+                      .map((attachment, index) => (
+                        <figure
+                          key={`${message.id || messageIndex}-image-${index}`}
+                          className="mt-3 mb-0 w-fit max-w-full"
+                        >
+                          <img
+                            src={attachment.content}
+                            alt="검색 기준 이미지"
+                            className="max-h-56 max-w-full rounded-md border border-black/15 object-contain dark:border-white/20"
+                          />
+                    
+                          <figcaption className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            검색 기준 이미지
+                          </figcaption>
+                        </figure>
+                      ))}
                   </div>
                 )}
 
