@@ -6,6 +6,10 @@ from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
+
 from fastapi import FastAPI
 from fastapi import File
 from fastapi import Form
@@ -75,6 +79,266 @@ def _resolve_behavior_sensor_ids(
 
     return list(dict.fromkeys(resolved)) or None
 
+def _iso_offset(timestamp: str, seconds: float) -> str:
+    """ISO-8601 시각에 초 단위 offset을 적용합니다."""
+
+    parsed = datetime.fromisoformat(
+        timestamp.replace("Z", "+00:00")
+    )
+
+    return (parsed + timedelta(seconds=seconds)
+    ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+async def _search_faces(
+    embedding: list[float],
+    top_k: int,
+    min_similarity: float,
+    allowed_sensor_ids: list[str] | None,
+    es: Any,
+    name_to_stream_id: dict[str, str],
+    stream_id_to_name: dict[str, str],
+    vst_external_url: str,
+) -> list[dict[str, Any]]:
+    """mdx-face 인덱스에서 얼굴 임베딩을 검색합니다."""
+
+    filters: list[dict[str, Any]] = [
+        {
+            "exists": {
+                "field":
+                    "embedding.vector",
+            }
+        }
+    ]
+
+    if allowed_sensor_ids:
+        filters.append(
+            {
+                "terms": {
+                    "sensorId":
+                        allowed_sensor_ids,
+                }
+            }
+        )
+
+    configured_minimum = float(
+        os.getenv(
+            "FACE_SEARCH_MIN_SIMILARITY",
+            "0.30",
+        )
+    )
+
+    effective_minimum = max(
+        configured_minimum,
+        min(
+            1.0,
+            max(
+                0.0,
+                min_similarity,
+            ),
+        ),
+    )
+
+    response = await es.search(
+        index=os.getenv(
+            "FACE_SEARCH_INDEX",
+            "mdx-face-*",
+        ),
+        size=max(
+            1,
+            min(top_k, 100),
+        ),
+        query={
+            "script_score": {
+                "query": {
+                    "bool": {
+                        "filter": filters,
+                    }
+                },
+                "script": {
+                    "source": (
+                        "cosineSimilarity("
+                        "params.query_vector, "
+                        "'embedding.vector'"
+                        ") + 1.0"
+                    ),
+                    "params": {
+                        "query_vector":
+                            embedding,
+                    },
+                },
+            }
+        },
+        min_score=effective_minimum + 1.0,
+        collapse={
+            "field": "sensorId",
+        },
+        allow_no_indices=True,
+        ignore_unavailable=True,
+    )
+
+    response_body = (
+        response.body
+        if hasattr(response, "body")
+        else response
+    )
+
+    hits = (
+        response_body
+        .get("hits", {})
+        .get("hits", [])
+    )
+
+    external_base = (
+        vst_external_url.rstrip("/")
+    )
+
+    results: list[dict[str, Any]] = []
+
+    for hit in hits:
+        source = hit.get(
+            "_source",
+            {},
+        )
+
+        timestamp = str(
+            source.get(
+                "timestamp",
+                "",
+            )
+        )
+
+        stored_sensor_id = str(
+            source.get(
+                "sensorId",
+                "",
+            )
+        )
+
+        if (
+            not timestamp
+            or not stored_sensor_id
+        ):
+            continue
+
+        # sensorId가 UUID면 그대로 사용하고,
+        # 영상명이라면 UUID로 변환합니다.
+        stream_id = (
+            stored_sensor_id
+            if stored_sensor_id
+            in stream_id_to_name
+            else name_to_stream_id.get(
+                stored_sensor_id
+            )
+        )
+
+        # 현재 VST에 없는 stale 문서는 제외합니다.
+        if not stream_id:
+            continue
+
+        similarity = (
+            float(
+                hit.get(
+                    "_score",
+                    1.0,
+                )
+            )
+            - 1.0
+        )
+
+        if similarity < effective_minimum:
+            continue
+
+        bbox = source.get("bbox")
+
+        if not isinstance(
+            bbox,
+            dict,
+        ):
+            bbox = None
+
+        person_id = source.get(
+            "personId"
+        )
+
+        object_ids = (
+            [str(person_id)]
+            if person_id not in (
+                None,
+                "",
+            )
+            else []
+        )
+
+        try:
+            start_time = _iso_offset(
+                timestamp,
+                -2.0,
+            )
+
+            end_time = _iso_offset(
+                timestamp,
+                2.0,
+            )
+        except ValueError:
+            logger.warning(
+                "Skipping face result with "
+                "invalid timestamp: %s",
+                timestamp,
+            )
+
+            continue
+
+        screenshot_url = ""
+
+        if external_base:
+            screenshot_url = (
+                f"{external_base}"
+                f"/vst/api/v1/replay/stream/"
+                f"{stream_id}/picture"
+                f"?startTime={timestamp}"
+            )
+
+        results.append(
+            {
+                "video_name":
+                    stream_id_to_name.get(
+                        stream_id,
+                        stored_sensor_id,
+                    ),
+                "description":
+                    "Face similarity match",
+                "start_time":
+                    start_time,
+                "end_time":
+                    end_time,
+                "sensor_id":
+                    stream_id,
+                "screenshot_url":
+                    screenshot_url,
+                "similarity":
+                    round(
+                        similarity,
+                        6,
+                    ),
+                "object_ids":
+                    object_ids,
+                "matched_object_type":
+                    "face",
+                "matched_object_bbox":
+                    bbox,
+                "matched_object_timestamp":
+                    timestamp,
+            }
+        )
+
+    logger.info(
+        "Face similarity search matched "
+        "%d result(s), minimum=%s",
+        len(results),
+        effective_minimum,
+    )
+
+    return results
 
 def register_image_search_route(
     app: FastAPI,
@@ -87,14 +351,21 @@ def register_image_search_route(
         top_k: int = 10,
         min_similarity: float = Form(0.0),
         sensor_ids: str | None = Form(None),
+        search_mode: str = Form("object"),
     ) -> dict:
-        content_type = (
-            file.content_type or ""
-        ).lower()
+        search_mode = (search_mode.strip().lower())
 
-        if not content_type.startswith(
-            "image/"
-        ):
+        if search_mode not in {"object", "face"}:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "search_mode must be "
+                    "'object' or 'face'"
+                ),
+            )
+        content_type = (file.content_type or "").lower()
+
+        if not content_type.startswith("image/"):
             raise HTTPException(
                 status_code=415,
                 detail=(
@@ -259,11 +530,13 @@ def register_image_search_route(
 
             logger.info(
                 "Image search request: "
+                "mode=%s, "
                 "file_size=%d, "
                 "content_type=%s, "
                 "top_k=%d, "
                 "min_similarity=%s, "
                 "requested_sensor_ids=%s",
+                search_mode,
                 len(payload),
                 content_type,
                 top_k,
@@ -315,12 +588,10 @@ def register_image_search_route(
                 )
             )
 
-            embedding = (
-                await embedding_client
-                .get_image_embedding(
-                    str(image_path)
-                )
-            )
+            if search_mode == "face":
+                embedding = (await embedding_client.get_face_embedding(str(image_path)))
+            else:
+                embedding = (await embedding_client.get_image_embedding(str(image_path)))
 
             if not embedding:
                 raise RuntimeError(
@@ -328,9 +599,21 @@ def register_image_search_route(
                     "empty image embedding"
                 )
 
+            if (search_mode == "face" and len(embedding) != 512):
+                raise RuntimeError(
+                    "RTVI-CV returned an invalid "
+                    "face embedding dimension: "
+                    f"{len(embedding)}"
+                )
+
             logger.info(
-                "Image embedding generated: "
+                "%s embedding generated: "
                 "dimensions=%d",
+                (
+                    "Face"
+                    if search_mode == "face"
+                    else "Image"
+                ),
                 len(embedding),
             )
 
@@ -353,6 +636,39 @@ def register_image_search_route(
                     min_similarity,
                 ),
             )
+
+            if search_mode == "face":
+                face_results = await _search_faces(
+                    embedding=embedding,
+                    top_k=normalized_top_k,
+                    min_similarity=(
+                        normalized_min_similarity
+                    ),
+                    allowed_sensor_ids=(
+                        allowed_sensor_ids
+                    ),
+                    es=es,
+                    name_to_stream_id=(
+                        name_to_stream_id
+                    ),
+                    stream_id_to_name=(
+                        stream_id_to_name
+                    ),
+                    vst_external_url=(
+                        vst_external_url
+                    ),
+                )
+
+                return {
+                    "data": face_results,
+                    "total": len(
+                        face_results
+                    ),
+                    "search_mode":
+                        "face",
+                    "search_type":
+                        "face_similarity",
+                }
 
             results = (
                 await search_by_attributes(
@@ -464,6 +780,8 @@ def register_image_search_route(
                 "total": len(
                     response_data
                 ),
+                "search_mode":
+                    "object",
                 "search_type":
                     "image_similarity",
             }
@@ -473,8 +791,12 @@ def register_image_search_route(
 
         except Exception as exc:
             logger.error(
-                "Image embedding search "
-                "failed: %s",
+                "%s search failed: %s",
+                (
+                    "Face"
+                    if search_mode == "face"
+                    else "Image embedding"
+                ),
                 exc,
                 exc_info=True,
             )

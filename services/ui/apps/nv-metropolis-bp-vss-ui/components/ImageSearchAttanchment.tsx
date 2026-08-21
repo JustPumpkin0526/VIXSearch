@@ -3,10 +3,13 @@ import {
   useRef,
 } from 'react';
 
-import {
+import type {
   SelectedSearchImage,
+} from '../types/imageSearch';
+
+import {
   createSelectedSearchImage,
-} from '../utils/imageSearch';
+} from '../utils/selectedSearchImage';
 
 type ImageSearchAttachmentProps = {
   image: SelectedSearchImage | null;

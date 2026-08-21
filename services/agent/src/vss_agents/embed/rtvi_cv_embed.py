@@ -27,7 +27,7 @@ _TEXT_EMBEDDING_CACHE_MAXSIZE = 1024
 
 
 class RTVICVEmbedClient(EmbedClient):
-    """RTVI CV embedding client for text embeddings."""
+    """RTVI CV embedding client for text and image embeddings."""
 
     def __init__(self, endpoint: str):
         """
@@ -110,38 +110,143 @@ class RTVICVEmbedClient(EmbedClient):
 
     @override
     async def get_image_embedding(self, image_url: str) -> list[float]:
-        """Generate an image embedding with the RTVI CV Vision Encoder.
+        """Generate an object-search embedding with the Vision Encoder."""
 
-        ``image_url`` must be a path visible inside the RTVI CV container.  The
-        DeepStream REST API reads the image from that path; it does not download
-        HTTP URLs itself.
+        return await self._get_image_embedding(
+            image_url,
+            "siglip_v2_v1.1",
+        )
+
+
+    async def get_face_embedding(self, image_url: str) -> list[float]:
+        """Generate a 512-dimensional face-recognition embedding."""
+
+        embedding = await self._get_image_embedding(
+            image_url,
+            "face-recognition",
+        )
+
+        if len(embedding) != 512:
+            raise ValueError(
+                "RTVI CV returned an invalid "
+                "face embedding dimension: "
+                f"expected=512, actual={len(embedding)}"
+            )
+
+        return embedding
+
+
+    async def _get_image_embedding(self, image_url: str, model: str) -> list[float]:
+        """Generate an image embedding using the selected RT-CV model.
+
+        ``image_url`` must be a path visible inside the RTVI CV container.
+        The DeepStream REST API reads the image from that path; it does not
+        download HTTP URLs itself.
         """
+
         payload = {
             "image_path": image_url,
-            "model": "siglip_v2_v1.1",
+            "model": model,
         }
 
         try:
-            timeout = httpx.Timeout(connect=30.0, read=120.0, write=120.0, pool=30.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(self.image_embeddings_url, json=payload)
+            timeout = httpx.Timeout(
+                connect=30.0,
+                read=120.0,
+                write=120.0,
+                pool=30.0,
+            )
+
+            async with httpx.AsyncClient(
+                timeout=timeout,
+            ) as client:
+                response = await client.post(
+                    self.image_embeddings_url,
+                    json=payload,
+                )
+
                 response.raise_for_status()
+
                 result = response.json()
 
-            if not result.get("data") or not isinstance(result["data"], list):
-                raise ValueError("RTVI CV response missing or empty 'data' field")
+            if (
+                not result.get("data")
+                or not isinstance(
+                    result["data"],
+                    list,
+                )
+            ):
+                raise ValueError(
+                    "RTVI CV response missing "
+                    "or empty 'data' field"
+                )
 
-            embedding_data = result["data"][0]
-            if not isinstance(embedding_data, dict) or not isinstance(embedding_data.get("embedding"), list):
-                raise ValueError("RTVI CV image response missing 'data[0].embedding'")
+            embedding_data = (
+                result["data"][0]
+            )
 
-            return cast("list[float]", embedding_data["embedding"])
-        except httpx.HTTPError as e:
-            logger.error(f"Failed to get image embedding from RTVI CV: {e}")
+            if (
+                not isinstance(
+                    embedding_data,
+                    dict,
+                )
+                or not isinstance(
+                    embedding_data.get(
+                        "embedding"
+                    ),
+                    list,
+                )
+            ):
+                raise ValueError(
+                    "RTVI CV image response "
+                    "missing "
+                    "'data[0].embedding'"
+                )
+
+            return cast(
+                "list[float]",
+                embedding_data["embedding"],
+            )
+
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "RTVI CV %s embedding request "
+                "failed: status=%s, response=%s",
+                model,
+                exc.response.status_code,
+                exc.response.text,
+            )
+
             raise
-        except (KeyError, IndexError, TypeError, ValueError) as e:
-            logger.error(f"Failed to parse RTVI CV image response: {e}")
-            raise ValueError(f"Invalid RTVI CV image response format: {e}") from e
+
+        except httpx.HTTPError as exc:
+            logger.error(
+                "Failed to get %s embedding "
+                "from RTVI CV: %s",
+                model,
+                exc,
+            )
+
+            raise
+
+        except (
+            KeyError,
+            IndexError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            logger.error(
+                "Failed to parse RTVI CV %s "
+                "image response: %s",
+                model,
+                exc,
+            )
+
+            raise ValueError(
+                "Invalid RTVI CV image "
+                f"response for model "
+                f"'{model}': {exc}"
+            ) from exc
 
 
     @override

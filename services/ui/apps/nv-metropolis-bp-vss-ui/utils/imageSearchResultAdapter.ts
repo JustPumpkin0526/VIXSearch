@@ -2,7 +2,7 @@ import type {
   ImageSearchBbox,
   ImageSearchResponse,
   ImageSearchResultItem,
-} from './imageSearch';
+} from '../types/imageSearch';
 
 export type SearchResultData = {
   video_name: string;

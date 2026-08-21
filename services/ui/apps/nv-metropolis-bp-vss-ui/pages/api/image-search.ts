@@ -3,24 +3,31 @@ import type {
   NextApiResponse,
 } from 'next';
 
-type ImageSearchRequest = {
-  imageBase64?: string;
-  contentType?: string;
-  maxResults?: number;
-  minSimilarity?: number;
-  sensorIds?: string[];
-  croppedImageBase64?: string; // optional pre-cropped image data URI or base64
-};
+import type {
+  ImageSearchRequest,
+} from '../../types/imageSearch';
 
 type ErrorResponse = {
   message: string;
   detail?: unknown;
 };
 
-const MAX_BASE64_LENGTH = 15 * 1024 * 1024;
+const MAX_BASE64_LENGTH =
+  15 * 1024 * 1024;
+
+const MAX_IMAGE_BYTES =
+  2 * 1024 * 1024;
+
+const ALLOWED_CONTENT_TYPES =
+  new Set([
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+  ]);
 
 function resolveAgentBaseUrl(): string {
-  const value = process.env.VSS_AGENT_URL;
+  const value =
+    process.env.VSS_AGENT_URL;
 
   if (!value) {
     throw new Error(
@@ -32,9 +39,34 @@ function resolveAgentBaseUrl(): string {
   return value.replace(/\/+$/, '');
 }
 
+function stripImageDataUri(
+  value: string,
+): string {
+  return value.replace(
+    /^data:image\/[a-zA-Z0-9.+-]+;base64,/,
+    '',
+  );
+}
+
+function getImageExtension(
+  contentType: string,
+): string {
+  if (contentType === 'image/png') {
+    return 'png';
+  }
+
+  if (contentType === 'image/webp') {
+    return 'webp';
+  }
+
+  return 'jpg';
+}
+
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<unknown | ErrorResponse>,
+  res: NextApiResponse<
+    unknown | ErrorResponse
+  >,
 ): Promise<void> {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -46,37 +78,45 @@ export default async function handler(
     return;
   }
 
-  const body = req.body as ImageSearchRequest;
+  const body =
+    req.body as ImageSearchRequest;
 
   if (
     !body.imageBase64 ||
     typeof body.imageBase64 !== 'string'
   ) {
     res.status(400).json({
-      message: 'imageBase64 is required',
+      message:
+        'imageBase64 is required',
     });
 
     return;
   }
 
-  if (body.imageBase64.length > MAX_BASE64_LENGTH) {
-    res.status(413).json({
-      message: 'Uploaded image is too large',
+  const searchMode =
+    body.searchMode ?? 'object';
+
+  if (
+    searchMode !== 'object' &&
+    searchMode !== 'face'
+  ) {
+    res.status(400).json({
+      message:
+        'searchMode must be either object or face',
     });
 
     return;
   }
 
   const contentType =
-    body.contentType || 'image/jpeg';
+    body.contentType ??
+    'image/jpeg';
 
-  const allowedTypes = new Set([
-    'image/jpeg',
-    'image/png',
-    'image/webp',
-  ]);
-
-  if (!allowedTypes.has(contentType)) {
+  if (
+    !ALLOWED_CONTENT_TYPES.has(
+      contentType,
+    )
+  ) {
     res.status(415).json({
       message:
         'Only JPEG, PNG and WEBP images are supported',
@@ -85,33 +125,68 @@ export default async function handler(
     return;
   }
 
+  /*
+   * 크롭 이미지가 있으면 크롭 이미지를
+   * 실제 검색 이미지로 사용합니다.
+   */
+  const selectedImageBase64 =
+    typeof body.croppedImageBase64 ===
+      'string' &&
+    body.croppedImageBase64.trim()
+      ? body.croppedImageBase64.trim()
+      : body.imageBase64;
+
+  /*
+   * 실제로 전송할 이미지 기준으로
+   * Base64 문자열 크기를 검사합니다.
+   */
+  if (
+    selectedImageBase64.length >
+    MAX_BASE64_LENGTH
+  ) {
+    res.status(413).json({
+      message:
+        'Uploaded image is too large',
+    });
+
+    return;
+  }
+
+  const requestedMaxResults =
+    typeof body.maxResults ===
+      'number' &&
+    Number.isFinite(body.maxResults)
+      ? Math.floor(body.maxResults)
+      : 10;
+
   const maxResults = Math.min(
-    Math.max(body.maxResults || 10, 1),
+    Math.max(
+      requestedMaxResults,
+      1,
+    ),
     100,
   );
 
   try {
-    const agentBaseUrl =
-      resolveAgentBaseUrl();
-
-    /*
-     * croppedImageBase64가 있으면 크롭 이미지를 우선 사용하고,
-     * 없으면 원본 이미지를 사용합니다.
-     */
-    const selectedImageBase64 =
-      body.croppedImageBase64?.trim() ||
-      body.imageBase64;
-
     const normalizedBase64 =
-      selectedImageBase64.replace(
-        /^data:image\/[a-zA-Z0-9.+-]+;base64,/,
-        '',
+      stripImageDataUri(
+        selectedImageBase64,
       );
 
-    const imageBuffer = Buffer.from(
-      normalizedBase64,
-      'base64',
-    );
+    if (!normalizedBase64) {
+      res.status(400).json({
+        message:
+          'Decoded image data is empty',
+      });
+
+      return;
+    }
+
+    const imageBuffer =
+      Buffer.from(
+        normalizedBase64,
+        'base64',
+      );
 
     if (imageBuffer.length === 0) {
       res.status(400).json({
@@ -123,15 +198,12 @@ export default async function handler(
     }
 
     /*
-     * Agent image_search.py의 제한과 동일하게
-     * 디코딩된 실제 파일 크기를 검사합니다.
+     * Agent image_search.py의 제한과
+     * 동일하게 실제 파일 크기를 검사합니다.
      */
-    const maxImageBytes =
-      2 * 1024 * 1024;
-
     if (
       imageBuffer.length >
-      maxImageBytes
+      MAX_IMAGE_BYTES
     ) {
       res.status(413).json({
         message:
@@ -141,17 +213,21 @@ export default async function handler(
       return;
     }
 
-    const formData = new FormData();
+    const agentBaseUrl =
+      resolveAgentBaseUrl();
+
+    const formData =
+      new FormData();
 
     const extension =
-      contentType === 'image/png'
-        ? 'png'
-        : contentType === 'image/webp'
-          ? 'webp'
-          : 'jpg';
+      getImageExtension(
+        contentType,
+      );
 
     const imageBytes =
-      new Uint8Array(imageBuffer);
+      new Uint8Array(
+        imageBuffer,
+      );
 
     formData.append(
       'file',
@@ -164,22 +240,60 @@ export default async function handler(
       `search-image.${extension}`,
     );
 
+    /*
+     * Chat.tsx의 camelCase 값을
+     * Python API의 snake_case 필드로
+     * 변환해 전달합니다.
+     */
     formData.append(
-      'min_similarity',
-      String(
-        body.minSimilarity ?? 0,
-      ),
+      'search_mode',
+      searchMode,
     );
+
+    /*
+     * 값이 명시적으로 전달된 경우에만
+     * Agent에 전달합니다.
+     *
+     * 전달되지 않았다면 image_search.py가
+     * 모드별 기본 임계값을 결정합니다.
+     */
+    if (
+      typeof body.minSimilarity ===
+        'number' &&
+      Number.isFinite(
+        body.minSimilarity,
+      )
+    ) {
+      const minSimilarity =
+        Math.min(
+          Math.max(
+            body.minSimilarity,
+            0,
+          ),
+          1,
+        );
+
+      formData.append(
+        'min_similarity',
+        String(minSimilarity),
+      );
+    }
 
     const sensorIds =
       Array.isArray(body.sensorIds)
         ? body.sensorIds
             .filter(
-              (value): value is string =>
-                typeof value === 'string' &&
-                value.trim().length > 0,
+              (
+                value,
+              ): value is string =>
+                typeof value ===
+                  'string' &&
+                value.trim().length >
+                  0,
             )
-            .map(value => value.trim())
+            .map(value =>
+              value.trim(),
+            )
         : [];
 
     if (sensorIds.length > 0) {
@@ -189,31 +303,52 @@ export default async function handler(
       );
     }
 
-    const requestUrl = new URL(
-      `${agentBaseUrl}/api/v1/image-search`,
-    );
+    const requestUrl =
+      new URL(
+        `${agentBaseUrl}/api/v1/image-search`,
+      );
 
     requestUrl.searchParams.set(
       'top_k',
       String(maxResults),
     );
 
-    const response = await fetch(
-      requestUrl,
+    console.info(
+      '[ImageSearch API] forwarding request',
       {
-        method: 'POST',
-        body: formData,
+        searchMode,
+        maxResults,
+        sensorCount:
+          sensorIds.length,
+        minSimilarity:
+          body.minSimilarity,
+        usingCroppedImage:
+          selectedImageBase64 !==
+          body.imageBase64,
       },
     );
 
-    const responseText = await response.text();
+    const response =
+      await fetch(
+        requestUrl,
+        {
+          method: 'POST',
+          body: formData,
+        },
+      );
+
+    const responseText =
+      await response.text();
 
     let responseBody: unknown;
 
     try {
-      responseBody = responseText
-        ? JSON.parse(responseText)
-        : {};
+      responseBody =
+        responseText
+          ? JSON.parse(
+              responseText,
+            )
+          : {};
     } catch {
       responseBody = {
         message: responseText,
@@ -221,15 +356,20 @@ export default async function handler(
     }
 
     if (!response.ok) {
-      res.status(response.status).json({
-        message: 'Image similarity search failed',
-        detail: responseBody,
-      });
+      res
+        .status(response.status)
+        .json({
+          message:
+            'Image similarity search failed',
+          detail: responseBody,
+        });
 
       return;
     }
 
-    res.status(200).json(responseBody);
+    res
+      .status(200)
+      .json(responseBody);
   } catch (error) {
     console.error(
       'Image search API route failed:',
