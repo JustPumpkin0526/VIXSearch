@@ -11,6 +11,7 @@ import {
 } from '@tabler/icons-react';
 import {
   extractSearchResultsMessage,
+  extractSearchResultsValue,
   SearchResultsMessage,
 } from './SearchResultsMessage';
 import { FC, memo, useEffect, useMemo, useRef, useState } from 'react';
@@ -252,12 +253,12 @@ export const ChatMessage: FC<Props> = memo(
       return fixMalformedHtml(result)?.trim() ?? '';
     };
 
-    
+
     const assistantResponseContent = useMemo(() => {
       if (message.role !== 'assistant') {
         return '';
       }
-    
+
       return prepareContent({
         message: {
           ...message,
@@ -276,7 +277,7 @@ export const ChatMessage: FC<Props> = memo(
       ) {
         return '';
       }
-    
+
       return prepareContent({
         message,
         role: 'assistant',
@@ -289,7 +290,7 @@ export const ChatMessage: FC<Props> = memo(
       if (message.role !== 'assistant') {
         return '';
       }
-    
+
       return extractReasoningTraceContent(
         assistantResponseContent,
       );
@@ -299,40 +300,94 @@ export const ChatMessage: FC<Props> = memo(
     ]);
 
     const finalAssistantResponseContent = useMemo(() => {
-        if (message.role !== 'assistant') {
-          return '';
-        }
-      
-        return removeReasoningTraceContent(
-          assistantResponseContent,
-        );
-      }, [
+      if (message.role !== 'assistant') {
+        return '';
+      }
+
+      return removeReasoningTraceContent(
         assistantResponseContent,
-        message.role,
-      ]);
+      );
+    }, [
+      assistantResponseContent,
+      message.role,
+    ]);
 
     const parsedSearchResultsMessage = useMemo(() => {
       if (message.role !== 'assistant') {
         return null;
       }
-    
-      if (Array.isArray(message.searchResults) && message.searchResults.length > 0) {
+
+      if (
+        Array.isArray(message.searchResults) &&
+        message.searchResults.length > 0
+      ) {
         return {
           results: message.searchResults,
           summary: message.searchResultsSummary || '',
         };
       }
-    
-      if (!finalAssistantResponseContent) {
-        return null;
+
+      if (
+        Array.isArray(message.intermediateSteps) &&
+        message.intermediateSteps.length > 0
+      ) {
+        const intermediateResult = extractSearchResultsValue(
+          message.intermediateSteps,
+        );
+
+        if (intermediateResult) {
+          return intermediateResult;
+        }
       }
 
-      return extractSearchResultsMessage(finalAssistantResponseContent);
+      if (finalAssistantResponseContent) {
+        const contentResult = extractSearchResultsMessage(
+          finalAssistantResponseContent,
+        );
+
+        if (contentResult) {
+          return contentResult;
+        }
+      }
+
+      return null;
     }, [
       finalAssistantResponseContent,
       message.role,
       message.searchResults,
       message.searchResultsSummary,
+      message.intermediateSteps,
+    ]);
+
+    useEffect(() => {
+      if (
+        message.role !== 'assistant'
+      ) {
+        return;
+      }
+
+      console.log(
+        '[VIXSearch][CHAT MESSAGE]',
+        {
+          content:
+            message.content,
+          rawContent:
+            message.rawContent,
+          searchResults:
+            message.searchResults,
+          intermediateSteps:
+            message.intermediateSteps,
+          parsedSearchResults:
+            parsedSearchResultsMessage,
+        },
+      );
+    }, [
+      message.role,
+      message.content,
+      message.rawContent,
+      message.searchResults,
+      message.intermediateSteps,
+      parsedSearchResultsMessage,
     ]);
 
     // return if the there is nothing to show
@@ -347,277 +402,276 @@ export const ChatMessage: FC<Props> = memo(
 
     return (
       <>
-      <div
-        data-testid={message.role === 'assistant' ? 'chat-message-assistant' : 'chat-message-user'}
-        className={`group md:px-4 ${
-          message.role === 'assistant'
-            ? 'border-b border-black/10 bg-gray-50 text-gray-800 dark:border-gray-900/50 dark:bg-black dark:text-gray-100'
-            : 'border-b border-black/10 bg-white text-gray-800 dark:border-gray-900/50 dark:bg-black dark:text-gray-100'
-        }`}
-        style={{ overflowWrap: 'anywhere' }}
-      >
-        <div className="relative m-auto flex text-base w-full max-w-[95%] md:gap-6 sm:p-2 md:py-6 lg:px-0">
-          <div className="min-w-[40px] text-right font-bold">
-            {message.role === 'assistant' ? (
-              <BotAvatar
-                src="/intellivix_icon.jpg"
-                width={36}
-                height={36}
-              />
-            ) : (
-              <IconUser size={30} />
-            )}
-          </div>
+        <div
+          data-testid={message.role === 'assistant' ? 'chat-message-assistant' : 'chat-message-user'}
+          className={`group md:px-4 ${message.role === 'assistant'
+              ? 'border-b border-black/10 bg-gray-50 text-gray-800 dark:border-gray-900/50 dark:bg-black dark:text-gray-100'
+              : 'border-b border-black/10 bg-white text-gray-800 dark:border-gray-900/50 dark:bg-black dark:text-gray-100'
+            }`}
+          style={{ overflowWrap: 'anywhere' }}
+        >
+          <div className="relative m-auto flex text-base w-full max-w-[95%] md:gap-6 sm:p-2 md:py-6 lg:px-0">
+            <div className="min-w-[40px] text-right font-bold">
+              {message.role === 'assistant' ? (
+                <BotAvatar
+                  src="/intellivix_icon.jpg"
+                  width={36}
+                  height={36}
+                />
+              ) : (
+                <IconUser size={30} />
+              )}
+            </div>
 
-          <div className="w-full min-w-0 dark:prose-invert overflow-hidden">
-            {message.role === 'user' ? (
-              <div className="flex w-full">
-                {isEditing ? (
-                  <div className="flex w-full flex-col">
-                    <textarea
-                      ref={textareaRef}
-                      className="w-full resize-none whitespace-pre-wrap border-none dark:bg-black"
-                      value={messageContent}
-                      onChange={handleInputChange}
-                      onKeyDown={handlePressEnter}
-                      onCompositionStart={() => setIsTyping(true)}
-                      onCompositionEnd={() => setIsTyping(false)}
-                      style={{
-                        fontFamily: 'inherit',
-                        fontSize: 'inherit',
-                        lineHeight: 'inherit',
-                        padding: '0',
-                        margin: '0',
-                        overflow: 'hidden',
-                      }}
-                    />
-
-                    <div className="mt-10 flex justify-center space-x-4">
-                      <button
-                        className="h-[40px] rounded-md border border-neutral-300 px-4 py-1 text-sm font-medium text-neutral-700 enabled:hover:bg-[#76b900] enabled:hover:text-white disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300"
-                        onClick={handleEditMessage}
-                        disabled={messageContent.trim().length <= 0}
-                      >
-                        {t('Save & Submit')}
-                      </button>
-                      <button
-                        className="h-[40px] rounded-md border border-neutral-300 px-4 py-1 text-sm font-medium text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-                        onClick={() => {
-                          setMessageContent(message.content);
-                          setIsEditing(false);
+            <div className="w-full min-w-0 dark:prose-invert overflow-hidden">
+              {message.role === 'user' ? (
+                <div className="flex w-full">
+                  {isEditing ? (
+                    <div className="flex w-full flex-col">
+                      <textarea
+                        ref={textareaRef}
+                        className="w-full resize-none whitespace-pre-wrap border-none dark:bg-black"
+                        value={messageContent}
+                        onChange={handleInputChange}
+                        onKeyDown={handlePressEnter}
+                        onCompositionStart={() => setIsTyping(true)}
+                        onCompositionEnd={() => setIsTyping(false)}
+                        style={{
+                          fontFamily: 'inherit',
+                          fontSize: 'inherit',
+                          lineHeight: 'inherit',
+                          padding: '0',
+                          margin: '0',
+                          overflow: 'hidden',
                         }}
-                      >
-                        {t('Cancel')}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="prose whitespace-pre-wrap dark:prose-invert flex-1 w-full overflow-x-auto flex-grow max-w-full whitespace-normal">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm, remarkMath]}
-                      rehypePlugins={[rehypeRaw] as any}
-                      components={markdownComponents}
-                    >
-                      {prepareContent({ message, role: 'user' })}
-                    </ReactMarkdown>
-                    {message.attachments
-                      ?.filter(
-                        attachment =>
-                          attachment.type === 'image' &&
-                          typeof attachment.content === 'string' &&
-                          attachment.content.length > 0,
-                      )
-                      .map((attachment, index) => (
-                        <figure
-                          key={`${message.id || messageIndex}-image-${index}`}
-                          className="mt-3 mb-0 w-fit max-w-full"
-                        >
-                          <img
-                            src={attachment.content}
-                            alt="검색 기준 이미지"
-                            className="max-h-56 max-w-full rounded-md border border-black/15 object-contain dark:border-white/20"
-                          />
-                    
-                          <figcaption className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                            검색 기준 이미지
-                          </figcaption>
-                        </figure>
-                      ))}
-                  </div>
-                )}
+                      />
 
-                {!isEditing && (
-                  <div className="absolute right-2 flex flex-col md:flex-row gap-1 items-center md:items-start justify-end md:justify-start">
-                    {showMessageEdit && (
+                      <div className="mt-10 flex justify-center space-x-4">
+                        <button
+                          className="h-[40px] rounded-md border border-neutral-300 px-4 py-1 text-sm font-medium text-neutral-700 enabled:hover:bg-[#76b900] enabled:hover:text-white disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300"
+                          onClick={handleEditMessage}
+                          disabled={messageContent.trim().length <= 0}
+                        >
+                          {t('Save & Submit')}
+                        </button>
+                        <button
+                          className="h-[40px] rounded-md border border-neutral-300 px-4 py-1 text-sm font-medium text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                          onClick={() => {
+                            setMessageContent(message.content);
+                            setIsEditing(false);
+                          }}
+                        >
+                          {t('Cancel')}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="prose whitespace-pre-wrap dark:prose-invert flex-1 w-full overflow-x-auto flex-grow max-w-full whitespace-normal">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkMath]}
+                        rehypePlugins={[rehypeRaw] as any}
+                        components={markdownComponents}
+                      >
+                        {prepareContent({ message, role: 'user' })}
+                      </ReactMarkdown>
+                      {message.attachments
+                        ?.filter(
+                          attachment =>
+                            attachment.type === 'image' &&
+                            typeof attachment.content === 'string' &&
+                            attachment.content.length > 0,
+                        )
+                        .map((attachment, index) => (
+                          <figure
+                            key={`${message.id || messageIndex}-image-${index}`}
+                            className="mt-3 mb-0 w-fit max-w-full"
+                          >
+                            <img
+                              src={attachment.content}
+                              alt="검색 기준 이미지"
+                              className="max-h-56 max-w-full rounded-md border border-black/15 object-contain dark:border-white/20"
+                            />
+
+                            <figcaption className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                              검색 기준 이미지
+                            </figcaption>
+                          </figure>
+                        ))}
+                    </div>
+                  )}
+
+                  {!isEditing && (
+                    <div className="absolute right-2 flex flex-col md:flex-row gap-1 items-center md:items-start justify-end md:justify-start">
+                      {showMessageEdit && (
+                        <button
+                          className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+                          onClick={toggleEditing}
+                        >
+                          <IconEdit size={20} />
+                        </button>
+                      )}
                       <button
                         className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-                        onClick={toggleEditing}
+                        onClick={handleDeleteMessage}
                       >
-                        <IconEdit size={20} />
+                        <IconTrash size={20} />
                       </button>
-                    )}
-                    <button
-                      className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-                      onClick={handleDeleteMessage}
-                    >
-                      <IconTrash size={20} />
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="min-w-0 w-full max-w-full">
-                <div className="flex flex-col w-[90%]">
-                  <div className="flex flex-col gap-2">
-                    {/* for intermediate steps content  */}
-                    <div
-                      className="w-full overflow-x-hidden overflow-y-auto prose dark:prose-invert max-w-none break-words"
-                      style={{ fontSize: '18px' }}
-                    >
-                      {intermediateStepsContent && (
-                        <div className="mb-4">
-                          <MemoizedReactMarkdown
-                            rehypePlugins={[rehypeRaw] as any}
-                            remarkPlugins={[
-                              remarkGfm,
-                              [
-                                remarkMath,
-                                {
-                                  singleDollarTextMath: false,
-                                },
-                              ],
-                            ]}
-                            components={markdownComponents}
-                          >
-                            {intermediateStepsContent}
-                          </MemoizedReactMarkdown>
-                        </div>
-                      )}
-                    
-                      {parsedSearchResultsMessage ? (
-                        <div className="w-full">
-                          {reasoningTraceContent && (
-                            <div className="mb-5 w-full">
-                              <MemoizedReactMarkdown
-                                rehypePlugins={[rehypeRaw] as any}
-                                remarkPlugins={[
-                                  remarkGfm,
-                                  [
-                                    remarkMath,
-                                    {
-                                      singleDollarTextMath: false,
-                                    },
-                                  ],
-                                ]}
-                                components={markdownComponents}
-                              >
-                                {reasoningTraceContent}
-                              </MemoizedReactMarkdown>
-                            </div>
-                          )}
-                      
-                          <SearchResultsMessage
-                            results={parsedSearchResultsMessage.results}
-                            sourceQuery={sourceQuery}
-                            onSubmitMessage={onSubmitMessage}
-                          />
-                        </div>
-                      ) : (
-                        assistantResponseContent && (
-                          <MemoizedReactMarkdown
-                            rehypePlugins={[rehypeRaw] as any}
-                            remarkPlugins={[
-                              remarkGfm,
-                              [
-                                remarkMath,
-                                {
-                                  singleDollarTextMath: false,
-                                },
-                              ],
-                            ]}
-                            components={markdownComponents}
-                          >
-                            {assistantResponseContent}
-                          </MemoizedReactMarkdown>
-                        )
-                      )}
                     </div>
-                    {message.callerInfo && (
-                      <div className="mt-2 rounded-md border border-black/10 bg-neutral-100 px-4 py-2.5 text-sm text-neutral-800 dark:border-white/10 dark:bg-transparent dark:text-neutral-200 sm:px-5">
-                        <div
-                          className="caller-info-html [&>div]:text-neutral-900 dark:[&>div]:text-neutral-100 [&_ul]:mt-2 [&_ul]:mb-0 [&_ul]:list-disc [&_ul]:space-y-0.5 [&_ul]:pl-5 [&_ul]:marker:text-neutral-600 dark:[&_ul]:marker:text-neutral-400"
-                          dangerouslySetInnerHTML={{ __html: safeHtml }}
-                        />
-                      </div>
-                    )}
-                    {(showMessageCopy || showMessageSpeaker) && (
-                      <div className="mt-1 flex gap-1">
-                        {!isStreaming && (
-                          <>
-                            {showMessageCopy && (messagedCopied ? (
-                              <IconCheck
-                                size={20}
-                                className="text-[#76b900] dark:text-[#76b900]"
-                                id={message?.id}
-                              />
-                            ) : (
-                              <button
-                                className="text-[#76b900] hover:text-gray-700 dark:text-[#76b900] dark:hover:round-gray-300"
-                                onClick={copyOnClick}
-                                title="Copy to clipboard"
-                                id={message?.id}
-                              >
-                                <IconCopy size={20} />
-                              </button>
-                            ))}
-                            {showMessageSpeaker && (
-                              <button
-                                className="text-[#76b900] hover:text-gray-700 dark:text-[#76b900] dark:hover:text-gray-300"
-                                onClick={handleTextToSpeech}
-                                aria-label={
-                                  isPlaying ? 'Stop speaking' : 'Start speaking'
-                                }
-                              >
-                                {isPlaying ? (
-                                  <IconPlayerPause
-                                    size={20}
-                                    className="animate-pulse text-red-400"
-                                  />
-                                ) : (
-                                  <IconVolume2 size={20} />
-                                )}
-                              </button>
+                  )}
+                </div>
+              ) : (
+                <div className="min-w-0 w-full max-w-full">
+                  <div className="flex flex-col w-[90%]">
+                    <div className="flex flex-col gap-2">
+                      {/* for intermediate steps content  */}
+                      <div
+                        className="w-full overflow-x-hidden overflow-y-auto prose dark:prose-invert max-w-none break-words"
+                        style={{ fontSize: '18px' }}
+                      >
+                        {intermediateStepsContent && (
+                          <div className="mb-4">
+                            <MemoizedReactMarkdown
+                              rehypePlugins={[rehypeRaw] as any}
+                              remarkPlugins={[
+                                remarkGfm,
+                                [
+                                  remarkMath,
+                                  {
+                                    singleDollarTextMath: false,
+                                  },
+                                ],
+                              ]}
+                              components={markdownComponents}
+                            >
+                              {intermediateStepsContent}
+                            </MemoizedReactMarkdown>
+                          </div>
+                        )}
+
+                        {parsedSearchResultsMessage ? (
+                          <div className="w-full">
+                            {reasoningTraceContent && (
+                              <div className="mb-5 w-full">
+                                <MemoizedReactMarkdown
+                                  rehypePlugins={[rehypeRaw] as any}
+                                  remarkPlugins={[
+                                    remarkGfm,
+                                    [
+                                      remarkMath,
+                                      {
+                                        singleDollarTextMath: false,
+                                      },
+                                    ],
+                                  ]}
+                                  components={markdownComponents}
+                                >
+                                  {reasoningTraceContent}
+                                </MemoizedReactMarkdown>
+                              </div>
                             )}
-                          </>
+
+                            <SearchResultsMessage
+                              results={parsedSearchResultsMessage.results}
+                              sourceQuery={sourceQuery}
+                              onSubmitMessage={onSubmitMessage}
+                            />
+                          </div>
+                        ) : (
+                          assistantResponseContent && (
+                            <MemoizedReactMarkdown
+                              rehypePlugins={[rehypeRaw] as any}
+                              remarkPlugins={[
+                                remarkGfm,
+                                [
+                                  remarkMath,
+                                  {
+                                    singleDollarTextMath: false,
+                                  },
+                                ],
+                              ]}
+                              components={markdownComponents}
+                            >
+                              {assistantResponseContent}
+                            </MemoizedReactMarkdown>
+                          )
                         )}
                       </div>
-                    )}
+                      {message.callerInfo && (
+                        <div className="mt-2 rounded-md border border-black/10 bg-neutral-100 px-4 py-2.5 text-sm text-neutral-800 dark:border-white/10 dark:bg-transparent dark:text-neutral-200 sm:px-5">
+                          <div
+                            className="caller-info-html [&>div]:text-neutral-900 dark:[&>div]:text-neutral-100 [&_ul]:mt-2 [&_ul]:mb-0 [&_ul]:list-disc [&_ul]:space-y-0.5 [&_ul]:pl-5 [&_ul]:marker:text-neutral-600 dark:[&_ul]:marker:text-neutral-400"
+                            dangerouslySetInnerHTML={{ __html: safeHtml }}
+                          />
+                        </div>
+                      )}
+                      {(showMessageCopy || showMessageSpeaker) && (
+                        <div className="mt-1 flex gap-1">
+                          {!isStreaming && (
+                            <>
+                              {showMessageCopy && (messagedCopied ? (
+                                <IconCheck
+                                  size={20}
+                                  className="text-[#76b900] dark:text-[#76b900]"
+                                  id={message?.id}
+                                />
+                              ) : (
+                                <button
+                                  className="text-[#76b900] hover:text-gray-700 dark:text-[#76b900] dark:hover:round-gray-300"
+                                  onClick={copyOnClick}
+                                  title="Copy to clipboard"
+                                  id={message?.id}
+                                >
+                                  <IconCopy size={20} />
+                                </button>
+                              ))}
+                              {showMessageSpeaker && (
+                                <button
+                                  className="text-[#76b900] hover:text-gray-700 dark:text-[#76b900] dark:hover:text-gray-300"
+                                  onClick={handleTextToSpeech}
+                                  aria-label={
+                                    isPlaying ? 'Stop speaking' : 'Start speaking'
+                                  }
+                                >
+                                  {isPlaying ? (
+                                    <IconPlayerPause
+                                      size={20}
+                                      className="animate-pulse text-red-400"
+                                    />
+                                  ) : (
+                                    <IconVolume2 size={20} />
+                                  )}
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
-      </div>
-      {openSearchModal && (
-        <SearchVideoModal
-          open={openSearchModal}
-          onClose={() => setOpenSearchModal(false)}
-          defaultScope="plate"
-          initialImage={searchInitImage}
-          onSearch={(imageData: string | Blob) => {
-            // close modal and notify global image-search listener used by SearchComponent
-            setOpenSearchModal(false);
+        {openSearchModal && (
+          <SearchVideoModal
+            open={openSearchModal}
+            onClose={() => setOpenSearchModal(false)}
+            defaultScope="plate"
+            initialImage={searchInitImage}
+            onSearch={(imageData: string | Blob) => {
+              // close modal and notify global image-search listener used by SearchComponent
+              setOpenSearchModal(false);
 
-            try {
-              const detail: Record<string, unknown> = { imageUrl: typeof imageData === 'string' ? imageData : undefined, scope: 'plate' };
-              window.dispatchEvent(new CustomEvent('vss-image-search', { detail }));
-            } catch (e) {
-              console.warn('failed to dispatch vss-image-search', e);
-            }
-          }}
-        />
-      )}
+              try {
+                const detail: Record<string, unknown> = { imageUrl: typeof imageData === 'string' ? imageData : undefined, scope: 'plate' };
+                window.dispatchEvent(new CustomEvent('vss-image-search', { detail }));
+              } catch (e) {
+                console.warn('failed to dispatch vss-image-search', e);
+              }
+            }}
+          />
+        )}
       </>
     );
   },

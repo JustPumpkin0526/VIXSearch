@@ -98,7 +98,7 @@ export type SearchResultItem = {
     CriticResult | null;
 };
 
-type ParsedSearchResultsMessage = {
+export type ParsedSearchResultsMessage = {
   results: SearchResultItem[];
 };
 
@@ -309,12 +309,38 @@ function normalizeCriticResult(value: unknown): CriticResult | null {
   };
 }
 
-function normalizeSearchResult(candidate: unknown): SearchResultItem | null {
-  if (!candidate || typeof candidate !== 'object') {
-    return null;
+function isSearchResultCandidate(
+  candidate: unknown,
+): candidate is Record<string, unknown> {
+  if (
+    !candidate ||
+    typeof candidate !== 'object' ||
+    Array.isArray(candidate)
+  ) {
+    return false;
   }
 
   const value = candidate as Record<string, unknown>;
+  const hasVideoIdentifier =
+    typeof value.video_name === 'string' ||
+    typeof value.videoName === 'string' ||
+    typeof value.sensor_id === 'string' ||
+    typeof value.sensorId === 'string';
+  const hasTimeRange =
+    typeof value.start_time === 'string' ||
+    typeof value.startTime === 'string' ||
+    typeof value.end_time === 'string' ||
+    typeof value.endTime === 'string';
+
+  return hasVideoIdentifier && hasTimeRange;
+}
+
+function normalizeSearchResult(candidate: unknown): SearchResultItem | null {
+  if (!isSearchResultCandidate(candidate)) {
+    return null;
+  }
+
+  const value = candidate;
   const videoName = typeof value.video_name === 'string'
     ? value.video_name
     : (typeof value.videoName === 'string' ? value.videoName : '검색 결과 클립');
@@ -404,17 +430,39 @@ function extractResultsFromUnknown(input: unknown): SearchResultItem[] {
   }
 
   if (Array.isArray(input)) {
-    return input.map(normalizeSearchResult).filter((item): item is SearchResultItem => item !== null);
+    const directResults = input
+      .map(normalizeSearchResult)
+      .filter((item): item is SearchResultItem => item !== null);
+
+    if (directResults.length > 0) {
+      return directResults;
+    }
+
+    for (const item of input) {
+      const nested = extractResultsFromUnknown(item);
+      if (nested.length > 0) {
+        return nested;
+      }
+    }
+
+    return [];
   }
 
   if (typeof input !== 'object') {
+    if (typeof input === 'string') {
+      const parsed = tryParseJson(input);
+      return parsed !== null
+        ? extractResultsFromUnknown(parsed)
+        : [];
+    }
+
     return [];
   }
 
   const value = input as Record<string, unknown>;
-  const directArrayKeys = ['data', 'results', 'search_results', 'videos'];
-  for (const key of directArrayKeys) {
-    if (Array.isArray(value[key])) {
+  const directKeys = ['data', 'results', 'search_results', 'videos'];
+  for (const key of directKeys) {
+    if (value[key] !== undefined) {
       const normalized = extractResultsFromUnknown(value[key]);
       if (normalized.length > 0) {
         return normalized;
@@ -429,20 +477,59 @@ function extractResultsFromUnknown(input: unknown): SearchResultItem[] {
     }
   }
 
-  const stringKeys = ['content', 'payload', 'response', 'message'];
-  for (const key of stringKeys) {
-    if (typeof value[key] === 'string') {
-      const parsed = tryParseJson(value[key] as string);
+  const nestedKeys = [
+    'content',
+    'payload',
+    'response',
+    'message',
+    'value',
+    'output',
+    'result',
+  ];
+
+  for (const key of nestedKeys) {
+    const candidate = value[key];
+    if (candidate === undefined) {
+      continue;
+    }
+
+    if (typeof candidate === 'string') {
+      const parsed = tryParseJson(candidate);
       if (parsed !== null) {
         const nested = extractResultsFromUnknown(parsed);
         if (nested.length > 0) {
           return nested;
         }
       }
+
+      const objects = extractTopLevelJsonObjects(candidate);
+      for (const object of objects) {
+        const nested = extractResultsFromUnknown(object);
+        if (nested.length > 0) {
+          return nested;
+        }
+      }
+
+      continue;
+    }
+
+    const nested = extractResultsFromUnknown(candidate);
+    if (nested.length > 0) {
+      return nested;
     }
   }
 
   return [];
+}
+
+export function extractSearchResultsValue(
+  value: unknown,
+): ParsedSearchResultsMessage | null {
+  const results = extractResultsFromUnknown(value);
+
+  return results.length > 0
+    ? { results }
+    : null;
 }
 
 export function extractSearchResultsMessage(rawContent: string): ParsedSearchResultsMessage | null {
@@ -452,17 +539,17 @@ export function extractSearchResultsMessage(rawContent: string): ParsedSearchRes
 
   const directParsed = tryParseJson(rawContent);
   if (directParsed !== null) {
-    const directResults = extractResultsFromUnknown(directParsed);
-    if (directResults.length > 0) {
-      return { results: directResults };
+    const directResult = extractSearchResultsValue(directParsed);
+    if (directResult) {
+      return directResult;
     }
   }
 
   const topLevelObjects = extractTopLevelJsonObjects(rawContent);
   for (const candidate of topLevelObjects) {
-    const nestedResults = extractResultsFromUnknown(candidate);
-    if (nestedResults.length > 0) {
-      return { results: nestedResults };
+    const nestedResult = extractSearchResultsValue(candidate);
+    if (nestedResult) {
+      return nestedResult;
     }
   }
 

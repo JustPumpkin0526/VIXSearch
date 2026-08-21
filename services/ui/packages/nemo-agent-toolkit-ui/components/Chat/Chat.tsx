@@ -434,7 +434,7 @@ function removeAttachmentContents(
     JSON.parse(JSON.stringify(message)) as Message & {
       attachment?: ImageAttachment;
       attachments?: ImageAttachment[];
-  };
+    };
 
   if (clonedMessage.attachment) {
     clonedMessage.attachment = {
@@ -522,10 +522,10 @@ function normalizeImageSearchResponse(
               : 0,
     search_type: 'image_similarity' as const,
     object_ids: Array.isArray(result.object_ids,)
-    ? result.object_ids.filter((objectId): objectId is 
-            | string | number => typeof objectId === 'string' || typeof objectId === 'number',
-        ).map(String) : [],
-    matched_object_timestamp: 
+      ? result.object_ids.filter((objectId): objectId is
+        | string | number => typeof objectId === 'string' || typeof objectId === 'number',
+      ).map(String) : [],
+    matched_object_timestamp:
       typeof result.matched_object_timestamp === 'string'
         ? result.matched_object_timestamp
         : undefined,
@@ -537,7 +537,7 @@ function normalizeImageSearchResponse(
 
     matched_object_bbox:
       result.matched_object_bbox &&
-      typeof result.matched_object_bbox === 'object'
+        typeof result.matched_object_bbox === 'object'
         ? result.matched_object_bbox
         : undefined,
   }));
@@ -626,9 +626,9 @@ export const Chat = () => {
 
         if (
           typeof parsed.groupId !==
-            'string' ||
+          'string' ||
           typeof parsed.groupName !==
-            'string' ||
+          'string' ||
           !Array.isArray(
             parsed.sensorIds,
           )
@@ -808,8 +808,8 @@ export const Chat = () => {
 
         const queryString = groupId
           ? new URLSearchParams({
-              group_id: groupId,
-            }).toString()
+            group_id: groupId,
+          }).toString()
           : '';
 
         const endpoint = queryString
@@ -838,8 +838,8 @@ export const Chat = () => {
         const videos: Array<{
           sensor_id?: string;
         }> = Array.isArray(payload?.videos)
-          ? payload.videos
-          : [];
+            ? payload.videos
+            : [];
 
         const ownedVideoIds: string[] = [];
 
@@ -921,22 +921,22 @@ export const Chat = () => {
           getScopedVideoIds(
             ownedVideoIds,
           );
-        
+
         nextCustomParams.owned_video_ids =
           scopedVideoIds;
-        
+
         nextCustomParams.search_source_type =
           'video_file';
-        
+
         nextCustomParams.max_results =
           searchSettings.maxResults;
-        
+
         nextCustomParams.result_min_similarity =
           searchSettings.minSimilarity;
-        
+
         nextCustomParams.use_critic =
           searchSettings.useCritic;
-        
+
         nextCustomParams.critic_max_results =
           searchSettings.criticMaxResults;
         nextCustomParams.user_mode =
@@ -965,65 +965,65 @@ export const Chat = () => {
   const controllerRef = useRef(new AbortController());
   const selectedConversationRef = useRef(selectedConversation);
   const conversationsRef = useRef(conversations);
-  
+
   const persistConversationState =
-  useCallback(
-    (
-      conversation: Conversation,
-    ) => {
-      const currentConversations =
-        conversationsRef.current || [];
+    useCallback(
+      (
+        conversation: Conversation,
+      ) => {
+        const currentConversations =
+          conversationsRef.current || [];
 
-      const exists =
-        currentConversations.some(
-          item =>
-            item.id === conversation.id,
-        );
+        const exists =
+          currentConversations.some(
+            item =>
+              item.id === conversation.id,
+          );
 
-      const updatedConversations =
-        exists
-          ? currentConversations.map(
+        const updatedConversations =
+          exists
+            ? currentConversations.map(
               item =>
                 item.id === conversation.id
                   ? conversation
                   : item,
             )
-          : [
+            : [
               ...currentConversations,
               conversation,
             ];
 
-      selectedConversationRef.current =
-        conversation;
+        selectedConversationRef.current =
+          conversation;
 
-      conversationsRef.current =
-        updatedConversations;
+        conversationsRef.current =
+          updatedConversations;
 
-      homeDispatch({
-        field: 'selectedConversation',
-        value: conversation,
-      });
+        homeDispatch({
+          field: 'selectedConversation',
+          value: conversation,
+        });
 
-      homeDispatch({
-        field: 'conversations',
-        value: updatedConversations,
-      });
+        homeDispatch({
+          field: 'conversations',
+          value: updatedConversations,
+        });
 
-      saveConversation(
-        conversation,
+        saveConversation(
+          conversation,
+          storageKeyPrefix,
+        );
+
+        saveConversations(
+          updatedConversations,
+          storageKeyPrefix,
+        );
+      },
+      [
+        homeDispatch,
         storageKeyPrefix,
-      );
-
-      saveConversations(
-        updatedConversations,
-        storageKeyPrefix,
-      );
-    },
-    [
-      homeDispatch,
-      storageKeyPrefix,
-    ],
-  );
+      ],
+    );
 
   const [modalOpen, setModalOpen] = useState(false);
   const [interactionMessage, setInteractionMessage] = useState(null);
@@ -1078,7 +1078,7 @@ export const Chat = () => {
       const settings =
         customEvent.detail ??
         loadSearchSettings();
-    
+
       customAgentParamsRef.current = {
         ...(customAgentParamsRef.current || {}),
 
@@ -1652,11 +1652,11 @@ export const Chat = () => {
     const shouldShowIntermediateSteps =
       isSearchSidebarContext()
         ? loadSearchSettings().userMode ===
-          'debug'
+        'debug'
         : sessionStorage.getItem(
-            'enableIntermediateSteps',
-          ) !== 'false';
-        
+          'enableIntermediateSteps',
+        ) !== 'false';
+
     if (
       isSystemIntermediateMessage(message) &&
       !shouldShowIntermediateSteps
@@ -1797,7 +1797,7 @@ export const Chat = () => {
           message,
           imageContent,
         );
-      
+
       const searchMode =
         getImageSearchMode(message);
 
@@ -1841,7 +1841,7 @@ export const Chat = () => {
           imageContent,
           contentType,
         );
-      
+
       const userMessage: Message = {
         ...stripUploadConversationScope(
           message,
@@ -1849,7 +1849,7 @@ export const Chat = () => {
         id: uuidv4(),
         content:
           typeof message.content === 'string' &&
-          message.content.trim()
+            message.content.trim()
             ? message.content
             : '',
         attachments: [
@@ -1862,7 +1862,7 @@ export const Chat = () => {
           },
         ],
       };
-      
+
       let pendingConversation: Conversation = {
         ...conversation,
         messages: [
@@ -1871,7 +1871,7 @@ export const Chat = () => {
         ],
         isHomepageConversation: undefined,
       };
-      
+
       persistConversationState(
         pendingConversation,
       );
@@ -1884,7 +1884,7 @@ export const Chat = () => {
           getScopedVideoIds(
             ownedVideoIds,
           );
-        
+
         if (scopedVideoIds.length === 0) {
           throw new Error(
             selectedVideoGroup
@@ -2084,15 +2084,15 @@ export const Chat = () => {
 
       let requestCustomParams:
         CustomAgentParamsValues = {
-          ...(customAgentParamsRef.current || {}),
-        };
-      
+        ...(customAgentParamsRef.current || {}),
+      };
+
       if (isSearchSidebarContext()) {
         requestCustomParams =
           await buildSearchAwareCustomParams(
             requestCustomParams,
           );
-        
+
         customAgentParamsRef.current =
           requestCustomParams;
       }
@@ -2101,7 +2101,7 @@ export const Chat = () => {
         ...stripUploadConversationScope(message),
         id: uuidv4(),
       };
-      
+
       // A cropped image in Chat is an object-similarity search, not a VLM
       // attachment.  Keep the image visible in the user message and insert a
       // normal Search API JSON response so the Search tab can render its cards.
@@ -2309,12 +2309,12 @@ export const Chat = () => {
 
           const wsMessage = {
             ...requestCustomParams,
-            type:webSocketMessageTypes.userMessage,
-            schema_type:sessionStorage.getItem('webSocketSchema',) || webSocketSchema,
-            id:messageWithNewId?.id,
-            conversation_id:selectedConversation.id,
-            content: {messages: chatMessages},
-            timestamp:new Date().toISOString(),
+            type: webSocketMessageTypes.userMessage,
+            schema_type: sessionStorage.getItem('webSocketSchema',) || webSocketSchema,
+            id: messageWithNewId?.id,
+            conversation_id: selectedConversation.id,
+            content: { messages: chatMessages },
+            timestamp: new Date().toISOString(),
           };
 
           // console.log('Sent message via websocket', wsMessage)
@@ -2342,15 +2342,15 @@ export const Chat = () => {
           searchUserMode !== null
             ? searchUserMode === 'debug'
             : (
-                sessionStorage.getItem(
+              sessionStorage.getItem(
+                'enableIntermediateSteps',
+              )
+                ? sessionStorage.getItem(
                   'enableIntermediateSteps',
-                )
-                  ? sessionStorage.getItem(
-                      'enableIntermediateSteps',
-                    ) === 'true'
-                  : enableIntermediateSteps
-              );
-            
+                ) === 'true'
+                : enableIntermediateSteps
+            );
+
         const chatBody: ChatBody = {
           ...requestCustomParams,
           messages: [
@@ -2359,9 +2359,9 @@ export const Chat = () => {
               content: message?.content,
             },
           ],
-        
-          chatCompletionURL:sessionStorage.getItem('chatCompletionURL') || chatCompletionURL,
-          additionalProps: {enableIntermediateSteps:shouldEnableIntermediateSteps},
+
+          chatCompletionURL: sessionStorage.getItem('chatCompletionURL') || chatCompletionURL,
+          additionalProps: { enableIntermediateSteps: shouldEnableIntermediateSteps },
         };
 
         const endpoint = getEndpoint({ service: 'chat' });
@@ -2525,10 +2525,36 @@ export const Chat = () => {
                     .replace('<intermediatestep>', '')
                     .replace('</intermediatestep>', '')
                     .trim();
-                  let rawIntermediateMessage = tryParseJson<any>(jsonString);
-                  // handle intermediate data
-                  if (rawIntermediateMessage?.type === 'system_intermediate') {
-                    rawIntermediateSteps.push(rawIntermediateMessage);
+                  const rawIntermediateMessage =
+                    tryParseJson<any>(
+                      jsonString,
+                    );
+
+                  console.log(
+                    '[VIXSearch][RAW INTERMEDIATE]',
+                    {
+                      jsonString,
+                      parsed:
+                        rawIntermediateMessage,
+                      type:
+                        rawIntermediateMessage?.type,
+                      content:
+                        rawIntermediateMessage?.content,
+                      payload:
+                        rawIntermediateMessage
+                          ?.content?.payload,
+                    },
+                  );
+
+                  if (
+                    rawIntermediateMessage?.type ===
+                    'system_intermediate' ||
+                    rawIntermediateMessage?.type ===
+                    'system_intermediate_message'
+                  ) {
+                    rawIntermediateSteps.push(
+                      rawIntermediateMessage,
+                    );
                   }
                 } catch (error) {
                   // console.log('Stream response parse error:', error.message);
@@ -2577,6 +2603,15 @@ export const Chat = () => {
                         : intermediateStepOverride
                     );
                   });
+
+                  console.log(
+                    '[VIXSearch][PROCESSED INTERMEDIATE]',
+                    JSON.parse(
+                      JSON.stringify(
+                        processedIntermediateSteps,
+                      ),
+                    ),
+                  );
                   pendingIntermediateSteps = []; // Clear after processing
 
                   // update the message
@@ -2782,31 +2817,31 @@ export const Chat = () => {
   }, [handleSend]);
 
   const submitMessageProgrammatically =
-  useCallback(
-    async (content: string) => {
-      if (uploadFlowActiveRef.current) {
-        return;
-      }
+    useCallback(
+      async (content: string) => {
+        if (uploadFlowActiveRef.current) {
+          return;
+        }
 
-      if (!selectedConversationRef.current) {
-        return;
-      }
+        if (!selectedConversationRef.current) {
+          return;
+        }
 
-      customAgentParamsRef.current =
-        await buildSearchAwareCustomParams(
-          customAgentParamsRef.current,
+        customAgentParamsRef.current =
+          await buildSearchAwareCustomParams(
+            customAgentParamsRef.current,
+          );
+
+        await handleSendRef.current?.(
+          {
+            role: 'user',
+            content,
+          },
+          0,
         );
-
-      await handleSendRef.current?.(
-        {
-          role: 'user',
-          content,
-        },
-        0,
-      );
-    },
-    [buildSearchAwareCustomParams],
-  );
+      },
+      [buildSearchAwareCustomParams],
+    );
 
   // Expose programmatic submit to embedder (send a message to the agent without user typing)
   useEffect(() => {
@@ -2816,7 +2851,7 @@ export const Chat = () => {
     ) {
       return;
     }
-  
+
     onSubmitMessageReady(
       submitMessageProgrammatically,
     );
@@ -3202,14 +3237,13 @@ export const Chat = () => {
             <ChatLoader statusUpdateText="Thinking..." />
           )}
           <div
-            className={`bg-white dark:bg-black ${
-              (selectedConversation?.messages?.length ?? 0) > 0 ||
-              loading
+            className={`bg-white dark:bg-black ${(selectedConversation?.messages?.length ?? 0) > 0 ||
+                loading
                 ? selectedVideoGroup
                   ? 'h-[230px]'
                   : 'h-[162px]'
                 : 'h-0'
-            }`}
+              }`}
             ref={messagesEndRef}
           ></div>
         </div>
@@ -3224,33 +3258,34 @@ export const Chat = () => {
           chatBlocked={uploadFlowActive}
           getActiveConversationId={getActiveConversationId}
           onUploadFlowActiveChange={reportUploadFlowActive}
-          onSend={async (message,customParams) => {
+          onSend={async (message, customParams) => {
             const imageAttachmentContent = getImageAttachmentContent(message);
             const items = queryContextRef.current;
-          
+
             if (items.length > 0) {
               const contextJson = JSON.stringify(
-                  items.map(({ data }) => {
-                    const {contextType:_omitUiContextType, ...payload} = {
-                      ...(data as Record<string, unknown>)
-                    };
-                  
-                    return payload;
-                  }),
-                );
-              
+                items.map(({ data }) => {
+                  const { contextType: _omitUiContextType, ...payload } = {
+                    ...(data as Record<string, unknown>)
+                  };
+
+                  return payload;
+                }),
+              );
+
               const prefix = `[Context: ${contextJson}]`;
-              
-              message = {...message, content: message.content
+
+              message = {
+                ...message, content: message.content
                   ? `${prefix}\n\n${message.content}`
                   : prefix,
               };
-            
+
               setQueryContextItems([]);
             }
-          
+
             setCurrentMessage(message);
-          
+
             if (
               imageAttachmentContent &&
               isSearchSidebarContext()
@@ -3259,15 +3294,15 @@ export const Chat = () => {
                 message,
                 imageAttachmentContent,
               );
-            
+
               return;
             }
-          
+
             customAgentParamsRef.current =
               await buildSearchAwareCustomParams(
                 customParams,
               );
-            
+
             await handleSend(message, 0);
           }}
           onScrollDownClick={
@@ -3278,7 +3313,7 @@ export const Chat = () => {
               await buildSearchAwareCustomParams(
                 customAgentParamsRef.current,
               );
-            
+
             if (
               currentMessage &&
               currentMessage.role === 'user'
@@ -3291,14 +3326,14 @@ export const Chat = () => {
                 getImageAttachmentContent(
                   currentMessage,
                 );
-              
+
               if (imageContent) {
                 toast.error(
                   '이미지 검색을 다시 실행하려면 이미지를 다시 첨부해주세요.',
                 );
                 return;
               }
-            
+
               await handleSend(
                 currentMessage,
                 0,
@@ -3311,7 +3346,7 @@ export const Chat = () => {
                     [],
                   role: 'user',
                 });
-              
+
               if (lastUserMessage) {
                 await handleSend(
                   lastUserMessage,

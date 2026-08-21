@@ -1010,59 +1010,146 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             result_count = len(final_results)
 
             # Build SearchOutput-compatible JSON
-            results_dicts = [r.model_dump() for r in final_results]
-            search_dict = {"data": results_dicts}
+            results_dicts = [
+                result.model_dump(
+                    mode="json",
+                )
+                for result in final_results
+            ]
+
+            search_dict = {
+                "data": results_dicts,
+            }
 
             # Format results for display
             if result_count > 0:
-                header = f"Found {result_count} matching video{'s' if result_count != 1 else ''}"
-                results_summary_table = _results_summary_table(final_results)
-                summary = header + "\n\n" + results_summary_table
-                search_result_json = json.dumps(search_dict, indent=2)
-                #search_result_json_block = "\n\n**Search API result (JSON):**\n```json\n" + search_result_json + "\n```"
-                messages = [summary]
+                header = (
+                    f"Found {result_count} matching "
+                    f"video"
+                    f"{'s' if result_count != 1 else ''}"
+                )
+
+                results_summary_table = (
+                    _results_summary_table(
+                        final_results,
+                    )
+                )
+
+                summary = (
+                    header
+                    + "\n\n"
+                    + results_summary_table
+                )
+
+                search_result_json = json.dumps(
+                    search_dict,
+                    indent=2,
+                    ensure_ascii=False,
+                )
+
+                search_result_json_block = (
+                    "\n\n"
+                    "**Search API result (JSON):**"
+                    "\n```json\n"
+                    + search_result_json
+                    + "\n```"
+                )
+            
+                messages = [
+                    summary,
+                ]
+
                 side_effects = {
-                    "results_summary": results_summary_table,
-                    #"search_result_json": search_result_json_block,
-                    "artifact_note": _ARTIFACT_DISPLAY_NOTE,
+                    "results_summary":
+                        results_summary_table,
+
+                    "search_result_json":
+                        search_result_json_block,
+
+                    "artifact_note":
+                        _ARTIFACT_DISPLAY_NOTE,
                 }
 
                 output = AgentOutput(
                     messages=messages,
                     side_effects=side_effects,
                     metadata={
-                        "query": query,
-                        "agent_mode": agent_mode,
-                        "fusion_enabled": use_attribute_search_flag,
-                        "max_results": resolved.max_results,
+                        "query":
+                            query,
+                        "agent_mode":
+                            agent_mode,
+                        "fusion_enabled":
+                            use_attribute_search_flag,
+                        "max_results":
+                            resolved.max_results,
                         "filters": (
                             {
-                                "start_time": start_time,
-                                "end_time": end_time,
+                                "start_time":
+                                    start_time,
+                                "end_time":
+                                    end_time,
                             }
-                            if (start_time or end_time)
+                            if (
+                                start_time or
+                                end_time
+                            )
                             else None
                         ),
                     },
                     status="success",
                 )
             else:
-                search_dict = {"data": []}
-                search_result_json = json.dumps(search_dict, indent=2)
-                no_results_msg = f"No videos found matching: '{query}'"
-                if search_output.search_messages:
-                    no_results_msg += "\n\nNote: " + "; ".join(search_output.search_messages)
-                #search_result_json_block = "\n\n**Search API result (JSON):**\n```json\n" + search_result_json + "\n```"
-                messages = [no_results_msg]
-                side_effects = {
-                    "results_summary": no_results_msg,
-                    #"search_result_json": search_result_json_block,
-                    "artifact_note": _ARTIFACT_DISPLAY_NOTE,
+                search_dict = {
+                    "data": [],
                 }
+
+                search_result_json = json.dumps(
+                    search_dict,
+                    indent=2,
+                    ensure_ascii=False,
+                )
+
+                no_results_msg = (
+                    "No videos found matching: "
+                    f"'{query}'"
+                )
+
+                if search_output.search_messages:
+                    no_results_msg += (
+                        "\n\nNote: "
+                        + "; ".join(
+                            search_output.search_messages,
+                        )
+                    )
+
+                search_result_json_block = (
+                    "\n\n"
+                    "**Search API result (JSON):**"
+                    "\n```json\n"
+                    + search_result_json
+                    + "\n```"
+                )
+
+                messages = [
+                    no_results_msg,
+                ]
+
+                side_effects = {
+                    "results_summary":
+                        no_results_msg,
+                    "search_result_json":
+                        search_result_json_block,
+                    "artifact_note":
+                        _ARTIFACT_DISPLAY_NOTE,
+                }
+
                 output = AgentOutput(
                     messages=messages,
                     side_effects=side_effects,
-                    metadata={"query": query},
+                    metadata={
+                        "query":
+                            query,
+                    },
                     status="success",
                 )
 
