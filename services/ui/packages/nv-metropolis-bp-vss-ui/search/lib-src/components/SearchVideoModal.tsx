@@ -5,6 +5,11 @@ import React, {
   useState,
 } from 'react';
 
+import type {
+  BboxCoords,
+  SearchData,
+} from '../types';
+
 import { createPortal } from 'react-dom';
 
 import {
@@ -102,11 +107,19 @@ export interface SearchVideoModalProps {
   creatingReport?: boolean;
 
   defaultReportAuthor?: string;
+
+  /** Face detector rectangle in source-video pixel coordinates. */
+  faceMatchBbox?: BboxCoords;
+
+  /** Exact face-match position relative to the beginning of this result clip. */
+  faceMatchOffsetSeconds?: number;
+
+  /** Duration requested from VST before keyframe alignment expands the MP4. */
+  requestedClipDurationSeconds?: number;
 }
 
 
-export const SearchVideoModal:
-  React.FC<SearchVideoModalProps> = ({
+export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
     isOpen,
     videoUrl,
     title,
@@ -127,6 +140,10 @@ export const SearchVideoModal:
     loadingReports = false,
     creatingReport = false,
     defaultReportAuthor = '',
+
+    faceMatchBbox,
+    faceMatchOffsetSeconds,
+    requestedClipDurationSeconds,
   }) => {
     const [
       videoElement,
@@ -135,8 +152,9 @@ export const SearchVideoModal:
       null,
     );
 
-    const [paused, setPaused] =
-      useState(false);
+    const [paused, setPaused] = useState(false);
+    const [faceFrameReady, setFaceFrameReady] = useState(false);
+    const [videoLayoutVersion, setVideoLayoutVersion] = useState(0);
 
     const [
       pauseTime,
@@ -180,6 +198,51 @@ export const SearchVideoModal:
       setReportPlace,
     ] = useState('');
 
+    const resolvedFaceMatchOffsetSeconds = useMemo(() => {
+      void videoLayoutVersion;
+    
+      if (faceMatchOffsetSeconds == null) {
+        return undefined;
+      }
+    
+      const mediaDuration =
+        videoElement?.duration;
+    
+      if (
+        requestedClipDurationSeconds == null ||
+        mediaDuration == null ||
+        !Number.isFinite(
+          requestedClipDurationSeconds,
+        ) ||
+        !Number.isFinite(mediaDuration) ||
+        requestedClipDurationSeconds <= 0 ||
+        mediaDuration <= 0
+      ) {
+        return faceMatchOffsetSeconds;
+      }
+    
+      /*
+       * VST가 요청 시각보다 앞선 키프레임에서
+       * MP4를 시작했을 경우 생기는 선행 구간입니다.
+       */
+      const keyframePrefixSeconds =
+        Math.max(
+          0,
+          mediaDuration -
+            requestedClipDurationSeconds,
+        );
+      
+      return Math.min(
+        mediaDuration,
+        faceMatchOffsetSeconds +
+          keyframePrefixSeconds,
+      );
+    }, [
+      faceMatchOffsetSeconds,
+      requestedClipDurationSeconds,
+      videoElement,
+      videoLayoutVersion,
+    ]);
 
     const handleReportMenuOpen =
       useCallback(
@@ -278,6 +341,9 @@ export const SearchVideoModal:
       setPaused(false);
       setPauseTime(0);
 
+      setFaceFrameReady(false);
+      setVideoLayoutVersion(0);
+
       setReportMenuPosition(null);
       setShowExistingReports(false);
 
@@ -354,14 +420,84 @@ export const SearchVideoModal:
       searchByImageOverlay,
     ]);
 
+    useEffect(() => {
+      if (!videoElement) {
+        return;
+      }
+    
+      const updateLayout = () => {
+        setVideoLayoutVersion(
+          (version) => version + 1,
+        );
+      };
+    
+      videoElement.addEventListener(
+        'loadedmetadata',
+        updateLayout,
+      );
+    
+      const observer =
+        typeof ResizeObserver === 'undefined'
+          ? null
+          : new ResizeObserver(updateLayout);
+    
+      observer?.observe(videoElement);
+    
+      return () => {
+        videoElement.removeEventListener(
+          'loadedmetadata',
+          updateLayout,
+        );
+      
+        observer?.disconnect();
+      };
+    }, [
+      videoElement,
+    ]);
+
 
     const handleVideoPause = useCallback(
       (
         currentTime: number,
       ) => {
-        setPaused(true);
-        setPauseTime(currentTime);
+        const targetOffset =
+          faceMatchBbox
+            ? resolvedFaceMatchOffsetSeconds
+            : undefined;
       
+        const effectiveTime =
+          targetOffset != null
+            ? targetOffset
+            : currentTime;
+      
+        setPaused(true);
+        setPauseTime(effectiveTime);
+      
+        /*
+         * 얼굴 검색 결과라면 검색된 얼굴이
+         * 실제로 검출된 시점으로 이동합니다.
+         */
+        if (
+          targetOffset != null &&
+          videoElement &&
+          Math.abs(
+            currentTime - targetOffset,
+          ) > 0.04
+        ) {
+          setFaceFrameReady(false);
+        
+          videoElement.currentTime =
+            targetOffset;
+        } else {
+          setFaceFrameReady(
+            targetOffset != null,
+          );
+        }
+      
+        /*
+         * 기존 보고서 생성용 초기화 로직은
+         * 그대로 유지합니다.
+         */
         if (!reportTitle.trim()) {
           setReportTitle(
             typeof title === 'string'
@@ -369,7 +505,7 @@ export const SearchVideoModal:
               : '검색 결과 보고서',
           );
         }
-
+      
         if (!reportAuthor.trim()) {
           setReportAuthor(
             defaultReportAuthor,
@@ -381,28 +517,50 @@ export const SearchVideoModal:
         reportTitle,
         reportAuthor,
         defaultReportAuthor,
+      
+        faceMatchBbox,
+        resolvedFaceMatchOffsetSeconds,
+        videoElement,
       ],
     );
 
-    const handleVideoPlay =
-      useCallback(() => {
-        setPaused(false);
-        closeReportMenu();
-      }, [
-        closeReportMenu,
-      ]);
+    const handleVideoPlay =useCallback(() => {
+      setPaused(false);
+      setFaceFrameReady(false);
+      closeReportMenu();
+    }, [
+      closeReportMenu,
+    ]);
 
 
-    const handleVideoSeeked =
-      useCallback(
-        (
-          currentTime: number,
-        ) => {
-          setPauseTime(currentTime);
-        },
-        [],
-      );
+    const handleVideoSeeked = useCallback(
+      (
+        currentTime: number,
+      ) => {
+        setPauseTime(currentTime);
 
+        if (
+          resolvedFaceMatchOffsetSeconds ==
+            null ||
+          !videoElement?.paused
+        ) {
+          setFaceFrameReady(false);
+          return;
+        }
+
+        const aligned =
+          Math.abs(
+            currentTime -
+              resolvedFaceMatchOffsetSeconds,
+          ) <= 0.04;
+
+        setFaceFrameReady(aligned);
+      },
+      [
+        resolvedFaceMatchOffsetSeconds,
+        videoElement,
+      ],
+    );
 
     const handleShowExistingReports =
       useCallback(async () => {
@@ -564,22 +722,115 @@ export const SearchVideoModal:
     const showSearchByImageButton =
       searchByImageEnabled &&
       paused &&
+      !faceMatchBbox &&
       !searchByImageOverlay &&
       !!onSearchByImageRequest;
 
+    const videoOverlayHost = useMemo(
+      () =>
+        (
+          videoElement?.parentElement as
+            HTMLDivElement | null
+        ) ?? null,
+      [
+        videoElement,
+      ],
+    );
 
-    const videoOverlayHost =
-      useMemo(
-        () =>
-          (
-            videoElement?.parentElement as
-              HTMLDivElement | null
-          ) ?? null,
-        [
-          videoElement,
-        ],
+    const faceOverlayStyle = useMemo<React.CSSProperties | undefined>(() => {
+      void videoLayoutVersion;
+
+      if (
+        !videoElement ||
+        !faceMatchBbox ||
+        !videoElement.videoWidth ||
+        !videoElement.videoHeight
+      ) {
+        return undefined;
+      }
+
+      const displayWidth =
+        videoElement.clientWidth;
+
+      const displayHeight =
+        videoElement.clientHeight;
+
+      /*
+       * video의 object-fit: contain과 동일한
+       * 배율을 계산 계산합니다.
+       */
+      const scale = Math.min(
+        displayWidth /
+          videoElement.videoWidth,
+        displayHeight /
+          videoElement.videoHeight,
       );
 
+      if (
+        !Number.isFinite(scale) ||
+        scale <= 0
+      ) {
+        return undefined;
+      }
+
+      const renderedWidth =
+        videoElement.videoWidth * scale;
+
+      const renderedHeight =
+        videoElement.videoHeight * scale;
+
+      /*
+       * 화면에 레터박스가 발생한 경우
+       * 실제 영상 시작 위치를 계산합니다.
+       */
+      const offsetX =
+        (
+          displayWidth -
+          renderedWidth
+        ) / 2;
+
+      const offsetY =
+        (
+          displayHeight -
+          renderedHeight
+        ) / 2;
+
+      const width =
+        (
+          faceMatchBbox.rightX -
+          faceMatchBbox.leftX
+        ) * scale;
+
+      const height =
+        (
+          faceMatchBbox.bottomY -
+          faceMatchBbox.topY
+        ) * scale;
+
+      if (
+        width <= 0 ||
+        height <= 0
+      ) {
+        return undefined;
+      }
+
+      return {
+        left:
+          offsetX +
+          faceMatchBbox.leftX * scale,
+
+        top:
+          offsetY +
+          faceMatchBbox.topY * scale,
+
+        width,
+        height,
+      };
+    }, [
+      faceMatchBbox,
+      videoElement,
+      videoLayoutVersion,
+    ]);
 
     const showReportPanel =
       paused &&
@@ -1142,6 +1393,39 @@ export const SearchVideoModal:
             </div>,
             videoOverlayHost,
           )}
+        {videoOverlayHost && paused && faceFrameReady && faceOverlayStyle && !searchByImageOverlay && createPortal(
+          <div
+            data-testid="face-match-bbox"
+            aria-label="Matched face bounding box"
+            className="
+              absolute
+              z-20
+              pointer-events-none
+              border-2
+              border-brand-green
+              shadow-[0_0_0_1px_rgba(0,0,0,0.8)]
+            "
+            style={faceOverlayStyle}
+          >
+            <span
+              className="
+                absolute
+                -top-6
+                left-0
+                rounded
+                bg-brand-green
+                px-1.5
+                py-0.5
+                text-xs
+                font-semibold
+                text-black
+              "
+            >
+              Face
+            </span>
+          </div>,
+          videoOverlayHost,
+        )}
 
         {creatingReport &&
           createPortal(

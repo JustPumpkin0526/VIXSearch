@@ -1124,7 +1124,7 @@ export const SearchResultsMessage: React.FC<
   }, []);
 
   const searchByImageTargetOffsetSeconds = React.useMemo(() => {
-    if (!activeVideoData ?.matched_object_timestamp || !activeVideoData.start_time) {
+    if (!activeVideoData?.matched_object_timestamp || !activeVideoData.start_time) {
       return undefined;
     }
 
@@ -1136,6 +1136,21 @@ export const SearchResultsMessage: React.FC<
     }
 
     return Math.max(0, (matchedTime - clipStartTime) / 1000);
+  }, [activeVideoData]);
+
+  const requestedClipDurationSeconds = React.useMemo(() => {
+    if (!activeVideoData?.start_time || !activeVideoData.end_time) {
+      return undefined;
+    }
+
+    const startTime = new Date(activeVideoData.start_time).getTime();
+    const endTime = new Date(activeVideoData.end_time).getTime();
+
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+      return undefined;
+    }
+
+    return Math.max(0, (endTime - startTime) / 1000);
   }, [activeVideoData]);
 
   const handleSearchByImageRequest = React.useCallback(
@@ -1493,6 +1508,21 @@ export const SearchResultsMessage: React.FC<
         onAddToExistingReport={handleAddToExistingReport}
         onLoadExistingReports={loadExistingReports}
         searchByImageTargetOffsetSeconds={searchByImageTargetOffsetSeconds}
+        faceMatchBbox={
+          activeVideoData?.matched_object_type === 'face'
+            ? activeVideoData.matched_object_bbox
+            : undefined
+        }
+        faceMatchOffsetSeconds={
+          activeVideoData?.matched_object_type === 'face'
+            ? searchByImageTargetOffsetSeconds
+            : undefined
+        }
+        requestedClipDurationSeconds={
+          activeVideoData?.matched_object_type === 'face'
+            ? requestedClipDurationSeconds
+            : undefined
+        }
         existingReports={availableReports.map((report) => ({
           id: report.id,
           title: report.title,

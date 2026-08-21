@@ -203,12 +203,17 @@ type ImageSearchApiResponse = {
   search_type?: string;
 };
 
+type ImageSearchMode =
+  | 'object'
+  | 'face';
+
 type ImageAttachment = {
   content?: unknown;
   type?: unknown;
   mimeType?: unknown;
   contentType?: unknown;
   name?: unknown;
+  searchMode?: ImageSearchMode;
 };
 
 function getImageAttachment(
@@ -312,6 +317,17 @@ function findPreviousUserQuery(
   }
 
   return '';
+}
+
+function getImageSearchMode(
+  message: Message,
+): ImageSearchMode {
+  const attachment =
+    getImageAttachment(message);
+
+  return attachment?.searchMode === 'face'
+    ? 'face'
+    : 'object';
 }
 
 function getAttachmentContentType(
@@ -1781,6 +1797,9 @@ export const Chat = () => {
           message,
           imageContent,
         );
+      
+      const searchMode =
+        getImageSearchMode(message);
 
       const allowedContentTypes = new Set([
         'image/jpeg',
@@ -1832,11 +1851,14 @@ export const Chat = () => {
           typeof message.content === 'string' &&
           message.content.trim()
             ? message.content
-            : '업로드한 이미지와 유사한 장면을 검색해줘',
+            : '',
         attachments: [
           {
             type: 'image' as const,
             content: previewUrl,
+            contentType,
+            mimeType: contentType,
+            searchMode,
           },
         ],
       };
@@ -1897,6 +1919,7 @@ export const Chat = () => {
               minSimilarity:
                 searchSettings.minSimilarity,
               sensorIds: scopedVideoIds,
+              searchMode,
             }),
           },
         );

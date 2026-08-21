@@ -520,7 +520,7 @@ export const ChatInput = ({
           role: 'user',
           content:
             trimmedContent ||
-            '업로드한 이미지와 유사한 장면을 검색해줘',
+            '',
           attachments: [
             {
               content: imageContentToSend,
