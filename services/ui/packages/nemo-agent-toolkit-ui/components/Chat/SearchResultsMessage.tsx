@@ -86,7 +86,16 @@ export type SearchResultItem = {
   clip_url?: string;
   url?: string;
   object_ids?: string[];
-  critic_result?: CriticResult | null;
+
+  matched_object_timestamp?: string;
+  matched_object_type?: string;
+  matched_object_bbox?:
+    SearchData[
+      'matched_object_bbox'
+    ];
+
+  critic_result?:
+    CriticResult | null;
 };
 
 type ParsedSearchResultsMessage = {
@@ -346,10 +355,27 @@ function normalizeSearchResult(candidate: unknown): SearchResultItem | null {
     undefined;
 
   const objectIds = Array.isArray(rawObjectIds)
-    ? rawObjectIds.filter((it): it is string => typeof it === 'string')
-    : typeof rawObjectIds === 'string'
-    ? [rawObjectIds]
-    : [];
+    ? rawObjectIds.filter((item): item is | string | number => typeof item === 'string' || typeof item === 'number').map(String)
+    : typeof rawObjectIds === 'string' || typeof rawObjectIds === 'number'
+      ? [String(rawObjectIds)]
+      : [];
+
+  const matchedObjectTimestamp = typeof value.matched_object_timestamp === 'string'
+      ? value.matched_object_timestamp
+      : typeof value.matchedObjectTimestamp === 'string'
+        ? value.matchedObjectTimestamp
+        : undefined;
+
+  const matchedObjectType = typeof value.matched_object_type === 'string'
+      ? value.matched_object_type
+      : typeof value.matchedObjectType === 'string'
+        ? value.matchedObjectType
+        : undefined;
+
+  const rawMatchedObjectBbox = value.matched_object_bbox ?? value.matchedObjectBbox;
+  const matchedObjectBbox = rawMatchedObjectBbox && typeof rawMatchedObjectBbox === 'object' 
+      ? (rawMatchedObjectBbox as SearchData['matched_object_bbox'])
+      : undefined;
 
   return {
     video_name: videoName,
@@ -357,12 +383,17 @@ function normalizeSearchResult(candidate: unknown): SearchResultItem | null {
     start_time: startTime,
     end_time: endTime,
     description,
-    similarity: Number.isFinite(similarityRaw) ? similarityRaw : 0,
+    similarity: Number.isFinite(similarityRaw)
+        ? similarityRaw
+        : 0,
     screenshot_url: normalizePossibleLink(value.screenshot_url ?? value.screenshotUrl),
     video_url: normalizePossibleLink(value.video_url ?? value.videoUrl),
     clip_url: normalizePossibleLink(value.clip_url ?? value.clipUrl),
     url: normalizePossibleLink(value.url),
     object_ids: objectIds,
+    matched_object_timestamp: matchedObjectTimestamp,
+    matched_object_type: matchedObjectType,
+    matched_object_bbox: matchedObjectBbox,
     critic_result: normalizeCriticResult(value.critic_result ?? value.criticResult),
   };
 }
@@ -468,20 +499,18 @@ function toSearchData(item: SearchResultItem): SearchData {
     start_time: item.start_time ?? '',
     end_time: item.end_time ?? '',
     description: item.description ?? '',
-    similarity:
-      typeof item.similarity === 'number'
+    similarity: typeof item.similarity === 'number'
         ? item.similarity
         : Number(item.similarity) || 0,
     screenshot_url: item.screenshot_url ?? '',
     object_ids: Array.isArray(item.object_ids)
-      ? item.object_ids
-      : [],
-    critic_result: criticStatus
-      ? {
-          result: criticStatus,
-          criteria_met:
-            item.critic_result?.criteria_met ?? {},
-        }
+        ? item.object_ids
+        : [],
+    matched_object_timestamp: item.matched_object_timestamp,
+    matched_object_type: item.matched_object_type,
+    matched_object_bbox: item.matched_object_bbox,
+    critic_result: criticStatus 
+      ? {result: criticStatus, criteria_met: item.critic_result ?.criteria_met ?? {}} 
       : undefined,
   };
 }
@@ -1094,8 +1123,22 @@ export const SearchResultsMessage: React.FC<
      */
   }, []);
 
-  const handleSearchByImageRequest =
-  React.useCallback(
+  const searchByImageTargetOffsetSeconds = React.useMemo(() => {
+    if (!activeVideoData ?.matched_object_timestamp || !activeVideoData.start_time) {
+      return undefined;
+    }
+
+    const matchedTime = new Date(activeVideoData.matched_object_timestamp).getTime();
+    const clipStartTime = new Date(activeVideoData.start_time).getTime();
+
+    if (Number.isNaN(matchedTime) || Number.isNaN(clipStartTime)) {
+      return undefined;
+    }
+
+    return Math.max(0, (matchedTime - clipStartTime) / 1000);
+  }, [activeVideoData]);
+
+  const handleSearchByImageRequest = React.useCallback(
     (pauseOffsetSeconds: number) => {
       if (
         !activeVideoData ||
@@ -1113,26 +1156,22 @@ export const SearchResultsMessage: React.FC<
         return;
       }
 
-      const sensorName =
-        sensorIdToNameMap.get(
-          activeVideoData.sensor_id,
-        ) ||
-        activeVideoData.sensor_id;
+      const sensorName = sensorIdToNameMap.get(activeVideoData.sensor_id) || activeVideoData.sensor_id;
+      const matchedTimestamp = activeVideoData.matched_object_timestamp;
 
       void startSearchByImage(
-        activeVideoData.sensor_id,
-        sensorName,
-        activeVideoData.start_time,
-        pauseOffsetSeconds,
+        activeVideoData.sensor_id, 
+        sensorName,matchedTimestamp || activeVideoData.start_time,
+        matchedTimestamp
+          ? 0
+          : pauseOffsetSeconds,
         videoModal.videoUrl,
-        // Pass object ids from the active search result so matching boxes
-        // returned by the frame metadata can be highlighted as search matches.
-        Array.isArray(activeVideoData.object_ids) ? activeVideoData.object_ids : undefined,
-        // Also pass the matched object timestamp (use clip start) to help
-        // the hook decide which indexed frame to favor.
-        activeVideoData.start_time,
-        // Pass object type if available (optional)
-        undefined,
+        Array.isArray(activeVideoData.object_ids)
+          ? activeVideoData.object_ids
+          : undefined,
+        activeVideoData.matched_object_timestamp,
+        activeVideoData.matched_object_type,
+        activeVideoData.matched_object_bbox,
       );
     },
     [
@@ -1453,6 +1492,7 @@ export const SearchResultsMessage: React.FC<
         onCreateReport={handleCreateReport}
         onAddToExistingReport={handleAddToExistingReport}
         onLoadExistingReports={loadExistingReports}
+        searchByImageTargetOffsetSeconds={searchByImageTargetOffsetSeconds}
         existingReports={availableReports.map((report) => ({
           id: report.id,
           title: report.title,

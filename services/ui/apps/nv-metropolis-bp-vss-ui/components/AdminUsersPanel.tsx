@@ -1,4 +1,5 @@
 import React from 'react';
+import { Button } from '@nvidia/foundations-react-core';
 import { useAuth } from '../hooks/useAuth';
 
 type AdminUser = {
@@ -186,10 +187,10 @@ export default function AdminUsersPanel() {
 
   if (!isAdmin) {
     return (
-      <div className="flex h-full items-center justify-center bg-neutral-950 text-white">
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-8">
+      <div className="flex h-full items-center justify-center bg-gray-50 text-gray-900 dark:bg-neutral-950 dark:text-white">
+        <div className="rounded-xl border border-gray-200 bg-white p-8 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
           <h2 className="text-xl font-semibold">접근 권한 없음</h2>
-          <p className="mt-2 text-sm text-gray-400">
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
             관리자 권한이 필요한 메뉴입니다.
           </p>
         </div>
@@ -198,30 +199,30 @@ export default function AdminUsersPanel() {
   }
 
   return (
-    <div className="h-full overflow-auto bg-neutral-950 p-6 text-white">
+    <div className="h-full overflow-auto bg-gray-50 p-6 text-gray-900 dark:bg-neutral-950 dark:text-white">
       <div className="mx-auto max-w-5xl space-y-6">
         <div>
           <h1 className="text-2xl font-semibold">관리자 메뉴</h1>
-          <p className="mt-1 text-sm text-gray-400">
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             사용자 계정을 생성하고 확인하거나 삭제합니다.
           </p>
         </div>
 
         <form
           onSubmit={handleCreateUser}
-          className="rounded-xl border border-neutral-800 bg-neutral-900 p-5 shadow"
+          className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
         >
           <h2 className="text-lg font-semibold">사용자 계정 생성</h2>
 
           <div className="mt-4 grid gap-4 md:grid-cols-3">
             <div>
-              <label className="mb-1 block text-sm text-gray-300">
+              <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">
                 아이디
               </label>
               <input
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
-                className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-blue-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-white dark:placeholder:text-gray-500"
                 placeholder="user01"
                 autoComplete="off"
                 required
@@ -229,14 +230,14 @@ export default function AdminUsersPanel() {
             </div>
 
             <div>
-              <label className="mb-1 block text-sm text-gray-300">
+              <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">
                 비밀번호
               </label>
               <input
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 type="password"
-                className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-blue-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-white dark:placeholder:text-gray-500"
                 placeholder="8자 이상"
                 autoComplete="new-password"
                 required
@@ -244,13 +245,13 @@ export default function AdminUsersPanel() {
             </div>
 
             <div>
-              <label className="mb-1 block text-sm text-gray-300">
+              <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">
                 권한
               </label>
               <select
                 value={role}
                 onChange={(event) => setRole(event.target.value as 'admin' | 'user')}
-                className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-blue-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-white dark:placeholder:text-gray-500"
               >
                 <option value="user">일반 사용자</option>
                 <option value="admin">관리자</option>
@@ -271,17 +272,17 @@ export default function AdminUsersPanel() {
           ) : null}
 
           <div className="mt-5 flex justify-end">
-            <button
+            <Button
               type="submit"
+              kind="primary"
               disabled={creating}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
             >
               {creating ? '생성 중...' : '계정 생성'}
-            </button>
+            </Button>
           </div>
         </form>
 
-        <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-5 shadow">
+        <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-semibold">계정 목록</h2>
 
@@ -289,50 +290,53 @@ export default function AdminUsersPanel() {
               type="button"
               onClick={loadUsers}
               disabled={loading}
-              className="rounded-lg border border-neutral-700 px-3 py-1.5 text-xs text-gray-200 hover:border-blue-500 hover:text-blue-300 disabled:opacity-50"
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 transition-colors hover:border-blue-500 hover:text-blue-600 disabled:opacity-50 dark:border-neutral-700 dark:text-gray-200 dark:hover:border-blue-500 dark:hover:text-blue-300"
             >
               새로고침
             </button>
           </div>
 
-          <div className="overflow-hidden rounded-lg border border-neutral-800">
-            <table className="min-w-full divide-y divide-neutral-800 text-sm">
-              <thead className="bg-neutral-950">
+          <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-neutral-800">
+            <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-neutral-800">
+              <thead className="bg-gray-100 dark:bg-neutral-950">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium text-gray-300">
+                  <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-gray-300">
                     아이디
                   </th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-300">
+                  <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-gray-300">
                     권한
                   </th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-300">
+                  <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-gray-300">
                     상태
                   </th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-300">
+                  <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-gray-300">
                     생성자
                   </th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-300">
+                  <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-gray-300">
                     생성일
                   </th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-300">
+                  <th className="px-4 py-3 text-right font-medium text-gray-600 dark:text-gray-300">
                     작업
                   </th>
                 </tr>
               </thead>
 
-              <tbody className="divide-y divide-neutral-800">
+              <tbody className="divide-y divide-gray-200 dark:divide-neutral-800">
                 {users.map(item => (
-                  <tr key={item.username}>
-                    <td className="px-4 py-3 text-white">
+                  <tr
+                    key={item.username}
+                    className="transition-colors hover:bg-gray-50 dark:hover:bg-neutral-800/50"
+                  >
+                    <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
                       {item.username}
                     </td>
 
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
                       <span
                         className={
                           item.role === 'admin'
-                            ? 'rounded-full bg-purple-900/60 px-2 py-1 text-xs text-purple-200'
-                            : 'rounded-full bg-blue-900/60 px-2 py-1 text-xs text-blue-200'
+                            ? 'rounded-full bg-purple-100 px-2 py-1 text-xs text-purple-700 dark:bg-purple-900/60 dark:text-purple-200'
+                            : 'rounded-full bg-blue-100 px-2 py-1 text-xs text-blue-700 dark:bg-blue-900/60 dark:text-blue-200'
                         }
                       >
                         {item.role}
@@ -341,21 +345,21 @@ export default function AdminUsersPanel() {
                       
                     <td className="px-4 py-3">
                       {item.isActive ? (
-                        <span className="text-green-300">
+                        <span className="text-green-600 dark:text-green-300">
                           active
                         </span>
                       ) : (
-                        <span className="text-red-300">
+                        <span className="text-red-600 dark:text-red-300">
                           disabled
                         </span>
                       )}
                     </td>
                     
-                    <td className="px-4 py-3 text-gray-300">
+                    <td className="px-4 py-3 text-gray-700 dark:text-gray-300">
                       {item.createdBy || '-'}
                     </td>
                     
-                    <td className="px-4 py-3 text-gray-400">
+                    <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
                       {item.createdAt
                         ? new Date(
                             item.createdAt,
@@ -365,7 +369,7 @@ export default function AdminUsersPanel() {
                         
                     <td className="px-4 py-3 text-right">
                       {item.username === user?.username ? (
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-gray-400 dark:text-gray-500">
                           현재 계정
                         </span>
                       ) : (
@@ -378,7 +382,7 @@ export default function AdminUsersPanel() {
                             deletingUsername !== null ||
                             loading
                           }
-                          className="rounded-lg border border-red-800 px-3 py-1.5 text-xs font-medium text-red-300 transition-colors hover:border-red-500 hover:bg-red-950/60 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:border-red-500 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-800 dark:text-red-300 dark:hover:border-red-500 dark:hover:bg-red-950/60 dark:hover:text-red-200"
                         >
                           {deletingUsername ===
                           item.username
@@ -394,7 +398,7 @@ export default function AdminUsersPanel() {
                   <tr>
                     <td
                       colSpan={6}
-                      className="px-4 py-8 text-center text-gray-500"
+                      className="px-4 py-8 text-center text-gray-500 dark:text-gray-500"
                     >
                       {loading ? '불러오는 중...' : '생성된 계정이 없습니다.'}
                     </td>

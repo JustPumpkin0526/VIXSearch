@@ -899,19 +899,21 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
                 <IconMenu2 size={20} />
               </button>
             )}
-            {/* <div className="flex items-center gap-2 p-2 flex-shrink-0 relative">
-              Render both logos, toggle visibility via CSS for instant switching 
-              <img 
-                src="/NV-logo-white.svg"
-                alt="NVIDIA Logo" 
-                className={`h-5 w-auto transition-opacity duration-150 ${isDark ? 'opacity-100' : 'opacity-0 absolute'}`}
+            <div className="relative h-[52px] w-[150px] flex-shrink-0 overflow-hidden">
+              {/* 라이트 테마용 로고 */}
+              <img
+                src="/Intellivix_logo_light.png"
+                alt="IntelliVIX"
+                className="absolute left-1/2 top-1/2 h-20 w-auto max-w-none -translate-x-1/2 -translate-y-1/2 object-contain dark:hidden"
               />
-              <img 
-                src="/NV-logo-black.svg"
-                alt="NVIDIA Logo" 
-                className={`h-5 w-auto transition-opacity duration-150 ${isDark ? 'opacity-0 absolute' : 'opacity-100'}`}
+
+              {/* 다크 테마용 로고 */}
+              <img
+                src="/intellivix_logo_dark.png"
+                alt="IntelliVIX"
+                className="absolute left-1/2 top-1/2 hidden h-20 w-auto max-w-none -translate-x-1/2 -translate-y-1/2 object-contain dark:block"
               />
-            </div> */}
+            </div>
             <div className="flex-shrink-0 w-[2px] h-[19px] bg-black dark:bg-white" />
             <h4
               className="font-bold text-gray-900 dark:text-gray-100 truncate text-xl font-sans"
@@ -919,14 +921,6 @@ export default function Home({ alertsData, searchData, dashboardData, mapData, v
             >
               {APPLICATION_TITLE}
             </h4>
-            <div className="flex-shrink-0 w-[2px] h-[19px] bg-black dark:bg-white" />
-            {APPLICATION_SUBTITLE && (
-              <div className="flex items-center">
-                <span className="text-sm text-black dark:text-white">
-                  {APPLICATION_SUBTITLE}
-                </span>
-              </div>
-            )}
           </div>
           
           <div className="flex items-center space-x-4 flex-shrink-0">

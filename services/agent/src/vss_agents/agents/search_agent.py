@@ -1019,11 +1019,11 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
                 results_summary_table = _results_summary_table(final_results)
                 summary = header + "\n\n" + results_summary_table
                 search_result_json = json.dumps(search_dict, indent=2)
-                search_result_json_block = "\n\n**Search API result (JSON):**\n```json\n" + search_result_json + "\n```"
+                #search_result_json_block = "\n\n**Search API result (JSON):**\n```json\n" + search_result_json + "\n```"
                 messages = [summary]
                 side_effects = {
                     "results_summary": results_summary_table,
-                    "search_result_json": search_result_json_block,
+                    #"search_result_json": search_result_json_block,
                     "artifact_note": _ARTIFACT_DISPLAY_NOTE,
                 }
 
@@ -1052,11 +1052,11 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
                 no_results_msg = f"No videos found matching: '{query}'"
                 if search_output.search_messages:
                     no_results_msg += "\n\nNote: " + "; ".join(search_output.search_messages)
-                search_result_json_block = "\n\n**Search API result (JSON):**\n```json\n" + search_result_json + "\n```"
+                #search_result_json_block = "\n\n**Search API result (JSON):**\n```json\n" + search_result_json + "\n```"
                 messages = [no_results_msg]
                 side_effects = {
                     "results_summary": no_results_msg,
-                    "search_result_json": search_result_json_block,
+                    #"search_result_json": search_result_json_block,
                     "artifact_note": _ARTIFACT_DISPLAY_NOTE,
                 }
                 output = AgentOutput(

@@ -34,6 +34,55 @@ type ErrorResponse = {
   detail?: unknown;
 };
 
+export type ImageSearchBbox = {
+  leftX: number;
+  topY: number;
+  rightX: number;
+  bottomY: number;
+};
+
+export type ImageSearchResultItem = {
+  video_name: string;
+  description: string;
+  start_time: string;
+  end_time: string;
+  sensor_id: string;
+  screenshot_url: string;
+
+  /*
+   * 현재 Agent image_search.py는
+   * similarity 필드로 반환합니다.
+   * 기존 응답과의 호환성을 위해
+   * similarity_score도 허용합니다.
+   */
+  similarity?: number;
+  similarity_score?: number;
+
+  object_ids?: Array<
+    string | number
+  >;
+
+  matched_object_timestamp?: string;
+  matched_object_type?: string;
+  matched_object_bbox?: ImageSearchBbox;
+};
+
+export type ImageSearchResponse = {
+  /*
+   * 현재 Agent API 응답 형식
+   */
+  data?: ImageSearchResultItem[];
+
+  /*
+   * 기존 프론트엔드 응답과의
+   * 호환성을 위해 유지
+   */
+  results?: ImageSearchResultItem[];
+
+  total?: number;
+  search_type?: string;
+};
+
 const MAX_BASE64_LENGTH = 15 * 1024 * 1024;
 
 function resolveAgentBaseUrl(): string {

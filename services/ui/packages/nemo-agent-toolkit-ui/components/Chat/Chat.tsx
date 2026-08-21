@@ -164,6 +164,13 @@ function parsePossiblyConcatenatedJson(payload: string): any[] {
 //   console.debug(`[stream][${label}] payload preview:`, preview);
 // };
 
+type ImageSearchBbox = {
+  leftX: number;
+  topY: number;
+  rightX: number;
+  bottomY: number;
+};
+
 type ImageSearchApiResult = {
   video_name?: string;
   description?: string;
@@ -175,6 +182,18 @@ type ImageSearchApiResult = {
   similarity_score?: number;
   frame_score?: number;
   behavior_score?: number;
+
+  /*
+   * 이미지 검색 결과 객체를
+   * SearchByImage 오버레이까지 전달하기 위한 정보
+   */
+  object_ids?: Array<
+    string | number
+  >;
+
+  matched_object_timestamp?: string;
+  matched_object_type?: string;
+  matched_object_bbox?: ImageSearchBbox;
 };
 
 type ImageSearchApiResponse = {
@@ -435,6 +454,11 @@ function normalizeImageSearchResponse(
     screenshot_url: string;
     similarity: number;
     search_type: 'image_similarity';
+
+    object_ids: string[];
+    matched_object_timestamp?: string;
+    matched_object_type?: string;
+    matched_object_bbox?: ImageSearchBbox;
   }>;
   total: number;
   search_type: 'image_similarity';
@@ -481,6 +505,25 @@ function normalizeImageSearchResponse(
               ? result.behavior_score
               : 0,
     search_type: 'image_similarity' as const,
+    object_ids: Array.isArray(result.object_ids,)
+    ? result.object_ids.filter((objectId): objectId is 
+            | string | number => typeof objectId === 'string' || typeof objectId === 'number',
+        ).map(String) : [],
+    matched_object_timestamp: 
+      typeof result.matched_object_timestamp === 'string'
+        ? result.matched_object_timestamp
+        : undefined,
+
+    matched_object_type:
+      typeof result.matched_object_type === 'string'
+        ? result.matched_object_type
+        : undefined,
+
+    matched_object_bbox:
+      result.matched_object_bbox &&
+      typeof result.matched_object_bbox === 'object'
+        ? result.matched_object_bbox
+        : undefined,
   }));
 
   return {

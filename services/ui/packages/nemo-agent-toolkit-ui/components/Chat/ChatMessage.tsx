@@ -359,7 +359,11 @@ export const ChatMessage: FC<Props> = memo(
         <div className="relative m-auto flex text-base w-full max-w-[95%] md:gap-6 sm:p-2 md:py-6 lg:px-0">
           <div className="min-w-[40px] text-right font-bold">
             {message.role === 'assistant' ? (
-              <BotAvatar src={'nvidia.jpg'} />
+              <BotAvatar
+                src="/intellivix_icon.jpg"
+                width={36}
+                height={36}
+              />
             ) : (
               <IconUser size={30} />
             )}
@@ -452,19 +456,6 @@ export const ChatMessage: FC<Props> = memo(
                         <IconEdit size={20} />
                       </button>
                     )}
-                    {/* Search trigger button - opens SearchVideoModal */}
-                    <button
-                      className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-                      onClick={() => {
-                        // If this message has an image attachment, pass it as initial image to search modal
-                        const img = message.attachments?.find((a) => a.type === 'image')?.content ?? null;
-                        setSearchInitImage(img ?? null);
-                        setOpenSearchModal(true);
-                      }}
-                      title="Open Search"
-                    >
-                      🔎
-                    </button>
                     <button
                       className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
                       onClick={handleDeleteMessage}

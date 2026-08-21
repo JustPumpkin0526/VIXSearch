@@ -755,17 +755,57 @@ export const useSearchByImage = ({
            * 이미지와 bbox의 시각이 크게 다르면 잘못된
            * bbox가 표시되지 않도록 객체 목록을 비웁니다.
            */
-          let objects =
-            metadataResult.objects;
+          let objects = metadataResult.objects;
 
-          // If the caller provided matched object ids, mark those objects
-          // so the overlay can render them differently (green stroke).
-          if (Array.isArray(matchedObjectIds) && matchedObjectIds.length > 0) {
-            const idsSet = new Set(matchedObjectIds.map(String));
-            objects = objects.map((o) => ({
-              ...o,
-              isSearchMatch: idsSet.has(String(o.id)),
-            }));
+          const normalizedMatchedIds =
+            Array.isArray(matchedObjectIds)
+              ? matchedObjectIds.map(String)
+              : [];
+
+          const matchedIdSet = new Set(normalizedMatchedIds);
+
+          /*
+           * 프레임 메타데이터에서 검색 결과 object ID와
+           * 일치하는 객체를 초록색으로 표시합니다.
+           */
+          objects = objects.map((object) => ({
+            ...object,
+            isSearchMatch:
+              matchedIdSet.has(
+                String(object.id),
+              ),
+          }));
+
+          const hasMatchedObject = 
+            objects.some(
+              (object) =>
+                object.isSearchMatch === true,
+            );
+          
+          /*
+           * 이미지 검색 API가 정확한 bbox를 반환했지만
+           * /frames 메타데이터에서 동일한 객체를 찾지 못한 경우,
+           * 검색 결과 bbox를 fallback으로 추가합니다.
+           */
+          if (
+            !hasMatchedObject &&
+            matchedObjectBbox
+          ) {
+            const fallbackObjectId =
+              normalizedMatchedIds[0] ??
+              'image-search-match';
+          
+            objects = [
+              ...objects,
+              {
+                id: fallbackObjectId,
+                type:
+                  matchedObjectType ??
+                  'matched-object',
+                bbox: matchedObjectBbox,
+                isSearchMatch: true,
+              },
+            ];
           }
 
           // Debug logs to help verify whether the matched ids are applied
@@ -791,14 +831,29 @@ export const useSearchByImage = ({
                 imageResult.timestamp,
               );
 
-            if (
-              metadataMs !== null &&
-              imageMs !== null &&
-              Math.abs(
-                metadataMs - imageMs,
-              ) > 500
-            ) {
-              objects = [];
+            if (metadataMs !== null && imageMs !== null && Math.abs(metadataMs - imageMs) > 500) {
+              /*
+               * 시각이 일치하지 않는 일반 프레임 bbox는 제거하되,
+               * 이미지 검색 결과에서 직접 전달된 bbox는 유지합니다.
+               */
+              if (matchedObjectBbox) {
+                const fallbackObjectId =
+                  normalizedMatchedIds[0] ??
+                  'image-search-match';
+              
+                objects = [
+                  {
+                    id: fallbackObjectId,
+                    type:
+                      matchedObjectType ??
+                      'matched-object',
+                    bbox: matchedObjectBbox,
+                    isSearchMatch: true,
+                  },
+                ];
+              } else {
+                objects = [];
+              }
             }
           }
 
