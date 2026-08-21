@@ -233,6 +233,7 @@ export const ChatInput = ({
   const [videoGroups, setVideoGroups] = useState<VideoGroupApiItem[]>([]);
   const [groupLoading, setGroupLoading] = useState(false);
   const [groupError, setGroupError] = useState('');
+  const [imageSearchMode, setImageSearchMode] = useState<'object' | 'face'>('object');
 
   const loadVideoGroups = useCallback(async () => {
     const token = window.localStorage.getItem('vss.auth.token');
@@ -391,6 +392,7 @@ export const ChatInput = ({
     setInputFileContent('');
     setInputFileContentCompressed('');
     setInputFileContentType('');
+    setImageSearchMode('object');
 
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -523,6 +525,7 @@ export const ChatInput = ({
             {
               content: imageContentToSend,
               type: 'image',
+              searchMode: imageSearchMode,
               contentType:
                 imageContentTypeToSend,
               mimeType:
@@ -619,6 +622,7 @@ export const ChatInput = ({
     fullBase64String: string;
     file: File;
   }) => {
+    setImageSearchMode('object');
     const normalizedContentType =
       file.type.toLowerCase();
 
@@ -1122,6 +1126,31 @@ export const ChatInput = ({
                   <div className="flex items-center gap-1 text-sm font-medium">
                     <IconPhoto size={16} />
                     <span>검색 기준 이미지</span>
+                  </div>
+                  <div className="mt-2 flex gap-1" role="group" aria-label="이미지 검색 방식">
+                    <button
+                      type="button"
+                      onClick={() => setImageSearchMode('object')}
+                      className={`rounded px-2 py-1 text-xs font-medium ${
+                        imageSearchMode === 'object'
+                          ? 'bg-black text-white dark:bg-white dark:text-black'
+                          : 'bg-white/60 text-black hover:bg-white dark:bg-black/30 dark:text-white'
+                      }`}
+                    >
+                      일반 이미지 검색
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setImageSearchMode('face')}
+                      className={`rounded px-2 py-1 text-xs font-medium ${
+                        imageSearchMode === 'face'
+                          ? 'bg-black text-white dark:bg-white dark:text-black'
+                          : 'bg-white/60 text-black hover:bg-white dark:bg-black/30 dark:text-white'
+                      }`}
+                      title="정면 얼굴을 여백 적게 크롭한 이미지에 적합합니다"
+                    >
+                      얼굴 검색
+                    </button>
                   </div>
                   <span className="block truncate text-xs opacity-80">{inputFile}</span>
                 </div>

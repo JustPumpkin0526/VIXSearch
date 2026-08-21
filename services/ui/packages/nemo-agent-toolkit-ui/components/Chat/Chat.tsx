@@ -2078,6 +2078,61 @@ export const Chat = () => {
         ...stripUploadConversationScope(message),
         id: uuidv4(),
       };
+      
+      // A cropped image in Chat is an object-similarity search, not a VLM
+      // attachment.  Keep the image visible in the user message and insert a
+      // normal Search API JSON response so the Search tab can render its cards.
+      const imageAttachment = messageWithNewId.attachments?.find((attachment) => attachment.type === 'image');
+      if (imageAttachment && selectedConversation) {
+        // The Search tab listens for this event and keeps the same reference
+        // image visible while the resulting clips are played.
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('vss-image-search', {
+            detail: { imageUrl: imageAttachment.content, searchMode: imageAttachment.searchMode || 'object' },
+          }));
+        }
+        homeDispatch({ field: 'loading', value: true });
+        homeDispatch({ field: 'messageIsStreaming', value: true });
+        try {
+          const imageResponse = await fetch(imageAttachment.content);
+          const imageBlob = await imageResponse.blob();
+          const form = new FormData();
+          form.append('file', imageBlob, 'cropped-image.jpg');
+          form.append('search_mode', imageAttachment.searchMode || 'object');
+          const response = await fetch(`${(agentApiUrlBase || '').replace(/\/$/, '')}/image-search`, {
+            method: 'POST',
+            body: form,
+          });
+          if (!response.ok) throw new Error(await response.text());
+          const result = await response.json();
+          const count = Array.isArray(result.data) ? result.data.length : 0;
+          const assistantMessage: Message = {
+            id: uuidv4(),
+            role: 'assistant',
+            content: `${imageAttachment.searchMode === 'face' ? '얼굴' : '일반 이미지'} 검색 결과 ${count}건을 찾았습니다.\n\n\`\`\`json\n${JSON.stringify(result)}\n\`\`\``,
+          };
+          const updatedConversation = {
+            ...selectedConversation,
+            messages: [...selectedConversation.messages, messageWithNewId, assistantMessage],
+            isHomepageConversation: undefined,
+          };
+          const { single, all } = updateConversation(updatedConversation, conversationsRef.current || [], storageKeyPrefix);
+          selectedConversationRef.current = single;
+          conversationsRef.current = all;
+          homeDispatch({ field: 'selectedConversation', value: single });
+          homeDispatch({ field: 'conversations', value: all });
+          saveConversation(single, storageKeyPrefix);
+          saveConversations(all, storageKeyPrefix);
+          onAnswerComplete?.();
+          onAnswerCompleteWithContent?.(assistantMessage.content);
+        } catch (error) {
+          toast.error(`Image search failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+        } finally {
+          homeDispatch({ field: 'loading', value: false });
+          homeDispatch({ field: 'messageIsStreaming', value: false });
+        }
+        return;
+      }
 
       // Set the active user message ID for WebSocket message tracking
       activeUserMessageId.current = messageWithNewId.id;

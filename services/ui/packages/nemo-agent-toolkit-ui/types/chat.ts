@@ -35,8 +35,8 @@ export interface Message {
   callerInfo?: CallerInfo;
   hidden?: boolean;
   uploadConversationId?: string;
-  /** Local image attachment used by Chat image similarity search. */
-  attachments?: { content: string; type: 'image' }[];
+    /** Local image attachment used by Chat image similarity search. */
+  attachments?: { content: string; type: 'image'; searchMode?: 'object' | 'face' }[];
 }
 
 export type Role = 'assistant' | 'user' | 'agent' | 'system';
