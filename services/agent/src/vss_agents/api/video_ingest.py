@@ -77,12 +77,8 @@ ENV_RTVI_EMBED_TIMEOUT_SECONDS = "VIDEO_INGEST_RTVI_EMBED_TIMEOUT_SECONDS"
 ENV_VST_STORAGE_TIMEOUT_SECONDS = "VIDEO_INGEST_VST_STORAGE_TIMEOUT_SECONDS"
 ENV_VST_UPLOAD_TIMEOUT_SECONDS = "VIDEO_INGEST_VST_UPLOAD_TIMEOUT_SECONDS"
 ENV_RTVI_EMBED_MAX_CONCURRENT = "VIDEO_INGEST_RTVI_EMBED_MAX_CONCURRENT"
-ENV_RTVI_EMBED_409_RETRY_ATTEMPTS = "VIDEO_INGEST_RTVI_EMBED_409_RETRY_ATTEMPTS"
-ENV_RTVI_EMBED_409_RETRY_DELAY_SECONDS = "VIDEO_INGEST_RTVI_EMBED_409_RETRY_DELAY_SECONDS"
 
 DEFAULT_RTVI_EMBED_MAX_CONCURRENT = 2
-DEFAULT_RTVI_EMBED_409_RETRY_ATTEMPTS = 3
-DEFAULT_RTVI_EMBED_409_RETRY_DELAY_SECONDS = 2.0
 
 # Upload-complete requests are handled concurrently by FastAPI. Bound the
 # synchronous RTVI file-embedding operation across those requests so a batch
@@ -439,22 +435,42 @@ async def _run_rtvi_embedding(
     rtvi_embed_model: str,
     rtvi_embed_chunk_duration: int,
     start_timestamp: str,
-    timeout_seconds: float = DEFAULT_RTVI_EMBED_TIMEOUT_SECONDS,
+    timeout_seconds: float = (DEFAULT_RTVI_EMBED_TIMEOUT_SECONDS),
 ) -> int:
-    """POST ``/v1/generate_video_embeddings``. Returns ``total_chunks_processed``.
-
-    The call is synchronous on the RTVI-Embed side — it blocks until the
-    generation completes (up to the 600s client timeout). Any non-200 raises
-    ``HTTPException(502)`` so the caller can surface the failure.
     """
-    rtvi_embed_url = rtvi_embed_base_url.rstrip("/")
-    embedding_url = f"{rtvi_embed_url}/v1/generate_video_embeddings"
-    parsed_vst = urllib.parse.urlparse(f"http://{vst_url}" if "://" not in vst_url else vst_url)
-    if not parsed_vst.hostname:
-        raise HTTPException(status_code=500, detail=f"Invalid vst_url format: {vst_url}")
-    translated_video_url = rewrite_url_host(vst_file_path, parsed_vst.hostname)
-    logger.info(f"Using internal VST URL for RTVI: {translated_video_url}")
+    Generate video embeddings through RTVI-Embed.
+    Each asset is submitted exactly once. A failed request is
+    returned immediately without retrying the same asset ID.
+    """
+    rtvi_embed_url = (rtvi_embed_base_url.rstrip("/"))
+    embedding_url = (
+        f"{rtvi_embed_url}"
+        "/v1/generate_video_embeddings"
+    )
 
+    parsed_vst = urllib.parse.urlparse(
+        (
+            f"http://{vst_url}"
+            if "://" not in vst_url
+            else vst_url
+        )
+    )
+    if not parsed_vst.hostname:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Invalid vst_url format: "
+                f"{vst_url}"
+            ),
+        )
+    translated_video_url = rewrite_url_host(
+        vst_file_path,
+        parsed_vst.hostname,
+    )
+    logger.info(
+        "Using internal VST URL for RTVI: %s",
+        translated_video_url,
+    )
     embed_request = {
         "url": translated_video_url,
         "id": sensor_id,
@@ -462,62 +478,49 @@ async def _run_rtvi_embedding(
         "creation_time": start_timestamp,
         "chunk_duration": rtvi_embed_chunk_duration,
     }
-
-    retry_attempts = _parse_positive_int(
-        os.getenv(ENV_RTVI_EMBED_409_RETRY_ATTEMPTS),
-        setting_name=ENV_RTVI_EMBED_409_RETRY_ATTEMPTS,
-    ) or DEFAULT_RTVI_EMBED_409_RETRY_ATTEMPTS
-    retry_delay_seconds = _parse_timeout_seconds(
-        os.getenv(ENV_RTVI_EMBED_409_RETRY_DELAY_SECONDS),
-        setting_name=ENV_RTVI_EMBED_409_RETRY_DELAY_SECONDS,
-    ) or DEFAULT_RTVI_EMBED_409_RETRY_DELAY_SECONDS
-
-    # Hold the same slot across retries: releasing it after a 409 would let a
-    # batch of waiting uploads immediately recreate the contention we are
-    # trying to avoid.
+    # Limit concurrent requests but submit each asset only once.
+    # Retrying the same POST may produce AssetAlreadyExists.
     async with _get_rtvi_embed_semaphore():
-        logger.info("Calling RTVI Embedding API: POST %s (sensor=%s)", embedding_url, sensor_id)
-        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            for attempt in range(1, retry_attempts + 1):
-                with TimeMeasure("video_ingest: generate embeddings (RTVI)"):
-                    response = await client.post(
-                        embedding_url,
-                        json=embed_request,
-                        headers={
-                            "accept": "application/json",
-                            "Content-Type": "application/json",
-                            # SDR routing key — same rationale as RTVI-CV.
-                            "x-stream-id": sensor_id,
-                        },
-                    )
-
-                if response.status_code == 200:
-                    result = response.json()
-                    logger.info("RTVI Embedding generation successful")
-                    # `usage.total_chunks_processed` is the server-side count; coerce
-                    # explicitly so mypy keeps the helper's int return type intact.
-                    return int(result.get("usage", {}).get("total_chunks_processed", 0) or 0)
-
-                if response.status_code == 409 and attempt < retry_attempts:
-                    delay_seconds = retry_delay_seconds * (2 ** (attempt - 1))
-                    logger.warning(
-                        "RTVI Embed resource is busy for sensor %s; retrying in %.1fs "
-                        "(%d/%d)",
-                        sensor_id,
-                        delay_seconds,
-                        attempt,
-                        retry_attempts,
-                    )
-                    await asyncio.sleep(delay_seconds)
-                    continue
-
-                error_msg = f"Embedding generation failed with status {response.status_code}: {response.text}"
-                logger.error(error_msg)
-                raise HTTPException(status_code=502, detail=f"Embedding generation failed: {error_msg}")
-
-    # The loop always returns or raises. This guard keeps static analyzers from
-    # treating the coroutine as implicitly returning None.
-    raise AssertionError("unreachable RTVI embedding retry state")
+        logger.info(
+            "Calling RTVI Embedding API: "
+            "POST %s (sensor=%s)",
+            embedding_url,
+            sensor_id,
+        )
+        async with httpx.AsyncClient(
+            timeout=timeout_seconds,
+        ) as client:
+            with TimeMeasure(
+                "video_ingest: "
+                "generate embeddings (RTVI)"
+            ):
+                response = await client.post(
+                    embedding_url,
+                    json=embed_request,
+                    headers={
+                        "accept":"application/json",
+                        "Content-Type":"application/json",
+                        "x-stream-id":sensor_id,
+                    },
+                )
+        if response.status_code != 200:
+            error_msg = (
+                "Embedding generation failed "
+                f"with status "
+                f"{response.status_code}: "
+                f"{response.text}"
+            )
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Embedding generation failed: "
+                    f"{error_msg}"
+                ),
+            )
+        result = response.json()
+        logger.info("RTVI Embedding generation successful")
+        return int(result.get("usage", {}).get("total_chunks_processed",0) or 0)
 
 async def _wait_for_rtvi_cv_complete(
     rtvi_cv_base_url: str,
