@@ -1141,6 +1141,104 @@ const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
       ],
     );
 
+  const getStreamDurationSeconds = useCallback(
+    (stream: StreamInfo): number => {
+      const storageInfo = timelines.get(stream.streamId);
+
+      if (!storageInfo?.timelines?.length) {
+        return 0;
+      }
+
+      return storageInfo.timelines.reduce((total, timeline) => {
+        const startTime = Date.parse(timeline.startTime);
+        const endTime = Date.parse(timeline.endTime);
+
+        if (
+          !Number.isFinite(startTime) ||
+          !Number.isFinite(endTime) ||
+          endTime <= startTime
+        ) {
+          return total;
+        }
+
+        return total + (endTime - startTime) / 1000;
+      }, 0);
+    },
+    [timelines],
+  );
+
+  const summaryStreams = useMemo(() => {
+    const hasSearchQuery =
+      appliedSearchQuery.trim().length > 0;
+
+    if (currentGroup) {
+      const groupSensorIds = new Set(
+        currentGroup.sensorIds,
+      );
+
+      const groupStreams = streams.filter(
+        (stream) =>
+          groupSensorIds.has(stream.sensorId),
+      );
+
+      if (!hasSearchQuery) {
+        return groupStreams;
+      }
+
+      return filterVideoStreams(
+        groupStreams,
+        appliedSearchQuery,
+      );
+    }
+
+    // 최상위 검색 결과에도 그룹 내부 동영상을 포함
+    if (hasSearchQuery) {
+      return filteredStreams;
+    }
+
+    // 검색하지 않은 최상위 화면은 전체 동영상 집계
+    return streams;
+  }, [
+    appliedSearchQuery,
+    currentGroup,
+    filteredStreams,
+    streams,
+  ]);
+
+  const videoSummary = useMemo(() => {
+    const totalDurationSeconds = summaryStreams.reduce(
+      (total, stream) =>
+        total + getStreamDurationSeconds(stream),
+      0,
+    );
+
+    return {
+      count: summaryStreams.length,
+      totalDurationSeconds,
+    };
+  }, [summaryStreams, getStreamDurationSeconds]);
+
+  const formatTotalDuration = (totalSeconds: number) => {
+    const normalizedSeconds = Math.max(0, Math.floor(totalSeconds));
+
+    const hours = Math.floor(normalizedSeconds / 3600);
+    const minutes = Math.floor((normalizedSeconds % 3600) / 60);
+    const seconds = normalizedSeconds % 60;
+
+    if (hours > 0) {
+      return `${hours}시간 ${minutes}분 ${seconds}초`;
+    }
+
+    return `${minutes}분 ${seconds}초`
+  };
+
+  const isSearching = appliedSearchQuery.trim().length > 0;
+
+  const summaryLabel = currentGroup
+    ? currentGroup.name
+    : isSearching
+      ? '검색 결과'
+      : '전체 동영상';
 
   const handleOpenRenameGroupModal = useCallback(
     (groupId: string) => {
@@ -1825,6 +1923,42 @@ const handleMainDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         enableVideoUpload={enableVideoUpload}
       />
 
+      {!isLoading && streams.length > 0 && (
+        <div
+          className={[
+            'flex min-h-11 items-center gap-2',
+            'border-b border-gray-200 bg-white px-6',
+            'text-sm text-gray-500',
+            'dark:border-neutral-800 dark:bg-neutral-950',
+            'dark:text-gray-400',
+          ].join(' ')}
+        >
+          <span className="font-medium text-gray-700 dark:text-gray-200">
+            {summaryLabel}
+          </span>
+        
+          <span aria-hidden="true">·</span>
+        
+          {currentGroup && isSearching && (
+            <span>검색 결과</span>
+          )}
+
+          <strong className="font-semibold text-gray-900 dark:text-gray-100">
+            {videoSummary.count.toLocaleString()}개
+          </strong>
+        
+          <span aria-hidden="true">·</span>
+        
+          <span>총 재생시간</span>
+        
+          <strong className="font-semibold text-gray-900 dark:text-gray-100">
+            {formatTotalDuration(
+              videoSummary.totalDurationSeconds,
+            )}
+          </strong>
+        </div>
+      )}
+      
       {/* Main pane: scrollable grid + upload/progress overlays confined to this tab (not full viewport) */}
       <div className="flex flex-1 min-h-0 flex-col relative">
         <div
