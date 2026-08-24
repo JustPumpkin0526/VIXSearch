@@ -153,6 +153,7 @@ services:
     volumes:
     - ${VSS_APPS_DIR}:/vss-agent/deploy/docker:ro
     - agent-eval:/vss-agent/agent_eval:rw
+    - ${VSS_DATA_DIR}/image-search:/image-search:rw
     command:
     - serve
     - --config_file
