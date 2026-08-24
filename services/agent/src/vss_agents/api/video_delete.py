@@ -347,13 +347,27 @@ def create_video_delete_router(
             )
             
             # --- Delete VST sensor ---
-            # VST sensor delete API also requires the VST UUID.
+            # VST storage uses the stream UUID, but the VST sensor API
+            # requires the resolved sensor name.
+            vst_sensor_id = (
+                resolved_sensor_name
+                or sensor_name
+                or video_id
+            )
+            
+            logger.info(
+                "Deleting VST sensor: "
+                "stream_id=%s, sensor_id=%s",
+                scrub_log(video_id),
+                scrub_log(vst_sensor_id),
+            )
+            
             with TimeMeasure(
                 "video_delete: delete VST sensor"
             ):
                 success, msg = await delete_vst_sensor(
                     vst_url,
-                    video_id,
+                    vst_sensor_id,
                 )
             
             results.append(success)

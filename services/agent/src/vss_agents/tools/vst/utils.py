@@ -230,38 +230,79 @@ async def delete_vst_sensor(vst_url: str, sensor_id: str) -> tuple[bool, str]:
     """
     Delete a sensor registration from VST.
 
-    This removes the sensor metadata (name, URL, etc.) but not the stored video files.
-    Must be paired with delete_vst_storage to fully remove a video.
-
-    Args:
-        vst_url: Base VST URL (e.g., http://localhost:30888)
-        sensor_id: The sensor UUID to delete
-
-    Returns:
-        (success, message) tuple
+    A sensor that is already absent is treated as successfully
+    deleted so that repeated deletion requests remain idempotent.
     """
-    url = f"{vst_url.rstrip('/')}/vst/api/v1/sensor/{quote_path_segment(sensor_id)}"
-    logger.info("Deleting VST sensor: DELETE %s", scrub_log(url))
+    url = (
+        f"{vst_url.rstrip('/')}"
+        f"/vst/api/v1/sensor/"
+        f"{quote_path_segment(sensor_id)}"
+    )
+
+    logger.info(
+        "Deleting VST sensor: DELETE %s",
+        scrub_log(url),
+    )
+
     try:
         async with (
-            aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session,
+            aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=60,
+                ),
+            ) as session,
             session.delete(url) as response,
         ):
             text = await response.text()
 
             if response.status in (200, 204):
-                logger.info("VST sensor deleted: %s", scrub_log(sensor_id))
+                logger.info(
+                    "VST sensor deleted: %s",
+                    scrub_log(sensor_id),
+                )
+
                 return True, "OK"
 
-            if (response.status == 404 and "CameraNotFoundError" in text):
-                logger.info("VST sensor already absent: %s", scrub_log(sensor_id))
-                return True, "Already deleted or not registered"
+            # Deletion is idempotent: an already absent sensor
+            # must not make the whole video deletion partial.
+            if response.status == 404:
+                try:
+                    error_payload = json.loads(text)
+                except (json.JSONDecodeError, TypeError):
+                    error_payload = {}
             
-            return False, (f"VST returned {response.status}: {text}")
-        
-    except Exception as e:
-        logger.error("VST sensor delete failed: %s", e, exc_info=True)
-        return False, str(e)
+                error_code = error_payload.get(
+                    "error_code",
+                    "",
+                )
+            
+                if error_code == "CameraNotFoundError":
+                    logger.info(
+                        "VST sensor already absent: %s",
+                        scrub_log(sensor_id),
+                    )
+            
+                    return (
+                        True,
+                        "Already deleted or not registered",
+                    )
+
+            return (
+                False,
+                (
+                    f"VST returned "
+                    f"{response.status}: {text}"
+                ),
+            )
+
+    except Exception as error:
+        logger.error(
+            "VST sensor delete failed: %s",
+            error,
+            exc_info=True,
+        )
+
+        return False, str(error)
 
 
 async def delete_vst_storage(vst_url: str, sensor_id: str) -> tuple[bool, str]:
