@@ -847,12 +847,7 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
       videoLayoutVersion,
     ]);
 
-    const showReportPanel =
-      paused &&
-      !searchByImageOverlay &&
-      (!!onCreateReport ||
-        !!onAddToExistingReport);
-
+    const showReportPanel = (paused || !!searchByImageOverlay) && (!!onCreateReport || !!onAddToExistingReport);
 
     if (!isOpen) {
       return null;
@@ -911,33 +906,7 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
               overflow-y-auto
               p-4
             "
-          >
-            <div>
-              <div
-                className="
-                  text-xs
-                  text-gray-500
-                  dark:text-gray-400
-                "
-              >
-                Paused At
-              </div>
-
-              <div
-                className="
-                  mt-1
-                  text-sm
-                  font-medium
-                  text-gray-900
-                  dark:text-gray-100
-                "
-              >
-                {formatPauseTime(
-                  pauseTime,
-                )}
-              </div>
-            </div>
-              
+          >              
             <div>
               <label
                 className="

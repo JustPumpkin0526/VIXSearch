@@ -1,3 +1,3 @@
 services:
   vss-ui:
-    image: vixsearch-vss-agent-ui:merged-ui
+    image: vixsearch-vss-agent-ui:git-merged-ui

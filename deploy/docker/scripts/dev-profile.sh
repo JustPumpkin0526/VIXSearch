@@ -1526,8 +1526,34 @@ function state_up() {
 
     if [[ "${dry_run}" == "true" ]]; then
       echo "[DRY-RUN] mkdir -p ${data_directory}/data_log/vss_video_analytics_api"
+      echo "[DRY-RUN] sudo install -d -m 2770 -o 1000 -g 1000 ${data_directory}/image-search"
     else
       mkdir -p "${data_directory}/data_log/vss_video_analytics_api"
+
+      # Agent and rt-cv both access this bind-mounted directory as UID/GID 1000.
+      # state_down removes data-dir, so recreate it with the required ownership
+      # and permissions before Docker Compose starts.
+      local _image_search_sudo=""
+      if [[ "$(id -u)" -ne 0 ]]; then
+        if command -v sudo >/dev/null 2>&1; then
+          _image_search_sudo="sudo"
+        else
+          echo "[ERROR] Root privileges are required to set ownership on ${data_directory}/image-search, but sudo is not installed." >&2
+          return 1
+        fi
+      fi
+
+      if ! ${_image_search_sudo} install \
+        -d \
+        -m 2770 \
+        -o 1000 \
+        -g 1000 \
+        "${data_directory}/image-search"; then
+        echo "[ERROR] Failed to create or set permissions on ${data_directory}/image-search" >&2
+        return 1
+      fi
+
+      echo "[INFO] Prepared ${data_directory}/image-search (owner=1000:1000, mode=2770)"
     fi
 
     # Download RT-DETR model from NGC (host-staged, bind-mounted into container).

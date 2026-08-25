@@ -61,7 +61,7 @@ services:
 
   vss-agent:
     # Version pinned via VSS_AGENT_VERSION (see the profile .env files).
-    image: vixsearch-vss-agent:merged-agent
+    image: vixsearch-vss-agent:git-merged-agent
     pull_policy: never
     container_name: vss-agent
     network_mode: host
