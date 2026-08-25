@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "pdfjs-dist": "^4.10.38",
+    "@napi-rs/canvas": "^0.1.100",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
