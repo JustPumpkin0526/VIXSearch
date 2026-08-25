@@ -37,6 +37,16 @@ export const VideoModal: React.FC<VideoModalProps> = ({
     }
   }, []);
 
+  useEffect(() => {
+    cancelPendingPause();
+    stablyPlayingRef.current = false;
+    seekStartedWhilePlayingRef.current = false;
+  }, [
+    isOpen,
+    videoUrl,
+    cancelPendingPause,
+  ]);
+
   useEffect(
     () => () => {
       cancelPendingPause();
@@ -149,19 +159,31 @@ export const VideoModal: React.FC<VideoModalProps> = ({
               crossOrigin="anonymous"
               className="h-full w-full bg-black object-contain"
               onPause={(event) => {
-                const currentTime = event.currentTarget.currentTime;
-
+                const video = event.currentTarget;
                 cancelPendingPause();
                 pauseTimerRef.current = setTimeout(() => {
                   pauseTimerRef.current = null;
+                  // 타이머 실행 시점에 이미 재생 중이면
+                  // 초기화 과정에서 발생한 오래된 pause 이벤트이므로 무시
+                  if (!video.paused && !video.ended) {
+                    return;
+                  }
+                
                   stablyPlayingRef.current = false;
-                  onVideoPause?.(currentTime);
+                  onVideoPause?.(video.currentTime);
                 }, 0);
               }}
               onPlay={(event) => {
                 cancelPendingPause();
                 stablyPlayingRef.current = true;
                 onVideoPlay?.(event.currentTarget.currentTime);
+              }}
+              onPlaying={(event) => {
+                cancelPendingPause();
+                stablyPlayingRef.current = true;
+                onVideoPlay?.(
+                  event.currentTarget.currentTime,
+                );
               }}
               onSeeking={() => {
                 seekStartedWhilePlayingRef.current =

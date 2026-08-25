@@ -724,17 +724,7 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
       if (onSearchByImageRequest) onSearchByImageRequest(offset);
     }, [onSearchByImageRequest, pauseTime, searchByImageTargetOffsetSeconds, videoElement]);
 
-
-    // Prefer actual media element state when available (more accurate),
-    // fall back to the tracked `paused` state otherwise.
-    const isVideoPaused =
-      (videoElement ? (videoElement.paused === true || videoElement.ended === true) : paused);
-
-    const showSearchByImageButton =
-      searchByImageEnabled &&
-      isVideoPaused &&
-      !searchByImageOverlay &&
-      !!onSearchByImageRequest;
+    const showSearchByImageButton = searchByImageEnabled && paused && !searchByImageOverlay && !!onSearchByImageRequest;
 
     console.log(
       '[SearchVideoModal] SearchByImage button state',
