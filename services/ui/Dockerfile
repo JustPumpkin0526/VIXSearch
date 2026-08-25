@@ -42,6 +42,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-common \
     fontconfig \
     fonts-dejavu \
+  libcairo2 \
+  libpango-1.0-0 \
+  libjpeg62-turbo \
+  libgif7 \
     && rm -rf /var/lib/apt/lists/*
 
 ENV HOME=/tmp
@@ -60,6 +64,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-common \
     fontconfig \
     fonts-dejavu \
+  libcairo2 \
+  libpango-1.0-0 \
+  libjpeg62-turbo \
+  libgif7 \
     && rm -rf /var/lib/apt/lists/*
 
 ENV HOME=/tmp
@@ -115,6 +123,9 @@ COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=555 /repo/services/ui
 COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=555 /repo/services/ui/node_modules/color-convert ./node_modules/color-convert
 COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=555 /repo/services/ui/node_modules/color-name ./node_modules/color-name
 COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=555 /repo/services/ui/node_modules/has-flag ./node_modules/has-flag
+
+# Copy native napi packages (prebuilt binaries) required at runtime (pdfjs -> @napi-rs/canvas)
+COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=555 /repo/services/ui/node_modules/@napi-rs ./node_modules/@napi-rs
 
 # Copy custom server (read-only)
 COPY --from=builder --chown=${USER_ID}:${GROUP_ID} --chmod=555 /repo/services/ui/custom-server.js ./custom-server.js

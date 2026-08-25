@@ -22,17 +22,23 @@ COPY src/perception_utc.c /opt/nvidia/deepstream/deepstream/sources/apps/sample_
 COPY src/metropolis_perception_app.h /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/metropolis_perception_app.h
 COPY src/korean_plate.c /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/korean_plate.c
 COPY src/korean_plate.h /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/korean_plate.h
+COPY src/face_analytics.cpp /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/face_analytics.cpp
+COPY src/face_analytics.h /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/face_analytics.h
 COPY src/Makefile /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/Makefile
 COPY src/deepstream_app.c /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/deepstream-app/deepstream_app.c
 COPY src/lpr_parser/nvdsinfer_yolov7_lpr.cpp /tmp/lpr-parser/nvdsinfer_yolov7_lpr.cpp
+COPY patches/nvmultiurisrcbin-drain.patch /tmp/nvmultiurisrcbin-drain.patch
 COPY tests/ /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/tests/
 
 ENV CUDA_VER=13.1
+USER root:root
+RUN cd /opt/nvidia/deepstream/deepstream/sources/libs/gstnvdscustomhelper && \
+    patch --forward -p0 -i /tmp/nvmultiurisrcbin-drain.patch && \
+    make clean && make && make install
 WORKDIR "/opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app"
 
 # Build binary
 RUN make
-USER root:root
 RUN make install
 RUN g++ -std=c++17 -O2 -shared -fPIC \
     -I/opt/nvidia/deepstream/deepstream/sources/includes \

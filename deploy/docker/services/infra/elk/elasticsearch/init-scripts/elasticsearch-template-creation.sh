@@ -472,7 +472,12 @@ setup_elasticsearch_templates(){
                     "gaze": { "enabled": false },
                     "lipActivity": { "enabled": false },
                     "location": { "enabled": false },
-                    "pose": { "enabled": false }
+                    "pose": { "enabled": false },
+                    "info": {
+                      "properties": {
+                        "licensePlate": { "type": "keyword" }
+                      }
+                    }
                   }
                 }
               }
@@ -501,7 +506,12 @@ setup_elasticsearch_templates(){
                   "gaze": { "enabled": false },
                   "lipActivity": { "enabled": false },
                   "location": { "enabled": false },
-                  "pose": { "enabled": false }
+                  "pose": { "enabled": false },
+                  "info": {
+                    "properties": {
+                      "licensePlate": { "type": "keyword" }
+                    }
+                  }
                 }
               }
             }
@@ -537,6 +547,42 @@ setup_elasticsearch_templates(){
                     "properties": {
                       "vector": { "type": "dense_vector", "dims": '"${ELASTICSEARCH_VISION_LLM_EMBEDDINGS_DIM}"', "index": true }
                     }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }'
+
+    create_index_template "mdx_face_template" '{
+        "index_patterns": ["mdx-face-*"],
+        "priority": 516,
+        "template": {
+          "settings": {
+            "index.mapping.exclude_source_vectors": false
+          },
+          "mappings": {
+            "properties": {
+              "Id": { "type": "keyword" },
+              "type": { "type": "keyword" },
+              "timestamp": { "type": "date" },
+              "sourceId": { "type": "integer" },
+              "sensorId": { "type": "keyword" },
+              "frameId": { "type": "long" },
+              "personId": { "type": "keyword" },
+              "model": { "type": "keyword" },
+              "detectorConfidence": { "type": "float" },
+              "quality": { "type": "float" },
+              "landmarks": { "type": "float" },
+              "bbox": { "enabled": false },
+              "embedding": {
+                "properties": {
+                  "vector": {
+                    "type": "dense_vector",
+                    "dims": 512,
+                    "index": true,
+                    "similarity": "cosine"
                   }
                 }
               }

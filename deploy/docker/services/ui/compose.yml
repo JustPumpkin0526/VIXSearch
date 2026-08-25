@@ -29,6 +29,8 @@ services:
       RUN_APP_NAME: nv-metropolis-bp-vss-ui
       NEXT_PUBLIC_APP_TITLE: '${NEXT_PUBLIC_APP_TITLE:-VSS BLUEPRINT}'
       NEXT_PUBLIC_APP_SUBTITLE: '${NEXT_PUBLIC_APP_SUBTITLE:-VISION}'
+      VSS_AGENT_URL: http://${HOST_IP}:${VSS_AGENT_PORT:-8000}
+      UI_AUTH_DATABASE_URL: 'postgres://vixsearch:vixsearch@${HOST_IP}:5432/vixsearch'
       # === App wide chat sidebar ===
       NEXT_PUBLIC_ENABLE_CHAT_SIDEBAR: ${NEXT_PUBLIC_ENABLE_CHAT_SIDEBAR:-true}
       NEXT_PUBLIC_CHAT_SIDEBAR_OPEN_DEFAULT: ${NEXT_PUBLIC_CHAT_SIDEBAR_OPEN_DEFAULT:-false}

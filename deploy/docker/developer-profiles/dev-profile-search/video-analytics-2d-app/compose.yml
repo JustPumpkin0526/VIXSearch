@@ -120,13 +120,15 @@ services:
       - $VSS_DATA_DIR/image-search:/image-search:ro
       # Locally trained LPR assets and a separate writable TensorRT engine cache.
       - $VSS_APPS_DIR/../../model/:/opt/models/custom:ro
-      - $VSS_APPS_DIR/../../model/engines/:/opt/engines/lpr
+      - $VSS_APPS_DIR/../../model/engines/:/opt/engines
 
     command:
       - bash
       - -c
       - /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/ds-search-start.sh
     environment:
+      # Prefer the CUDA 13 ONNX Runtime shipped with Triton over the older Python wheel runtime.
+      LD_LIBRARY_PATH: /opt/tritonserver/backends/onnxruntime:/opt/tritonserver/lib:/usr/src/tensorrt/lib:/opt/riva/lib:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:/opt/hpcx/ucc/lib/:/opt/hpcx/ucx/lib/:/usr/local/cuda/compat/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/.local/lib
       GST_PLUGIN_PATH: /opt/nvidia/deepstream/deepstream/sources/gst-plugins/gst-nvdstextembedder
       TRANSFORMERS_OFFLINE: 0
       HF_HUB_OFFLINE: 0
@@ -136,9 +138,23 @@ services:
       DS_SHOW_SENSOR_ID: "false"
       VISION_ENCODER_MODEL: ${VISION_ENCODER_MODEL:-siglip_v2}
       VISION_ENCODER_VERSION: ${VISION_ENCODER_VERSION:-v1.1}
+      # The bundled Python ONNX Runtime wheel targets CUDA 12, while this image
+      # uses CUDA 13. Keep text-query encoding on its explicit CPU fallback;
+      # detector and visual embedding inference continue to use GPU backends.
+      TEXT_EMBEDDER_DEVICE: ${TEXT_EMBEDDER_DEVICE:-cpu}
       # Keep RAW/META/CANDIDATE/REJECT diagnostics off unless explicitly requested.
       LPR_DEBUG: ${LPR_DEBUG:-0}
       LPR_LABEL_FILE: /opt/models/custom/obd_lpcs_kr.c89.cls
+      FACE_ANALYTICS_ENABLE: ${FACE_ANALYTICS_ENABLE:-1}
+      FACE_DETECT_THRESHOLD: ${FACE_DETECT_THRESHOLD:-0.30}
+      FACE_REQUIRE_PERSON: ${FACE_REQUIRE_PERSON:-0}
+      FACE_FALLBACK_BUCKET_FRAMES: ${FACE_FALLBACK_BUCKET_FRAMES:-30}
+      FACE_DEBUG: ${FACE_DEBUG:-0}
+      FACE_DETECTOR_CONFIG: /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/configs/ds-face-detector-triton-config.txt
+      FACE_RECOGNITION_ONNX: /opt/models/custom/obr_face_recog.vit_l.i112x112.db.v1.2.1.onnx
+      FACE_RECOGNITION_ENGINE: /opt/engines/obr_face_recog.vit_l.i112x112.db.v1.2.1_b32_gpu0_fp16.engine
+      FACE_KAFKA_CONNECTION: localhost;9092;mdx-face
+      FACE_KAFKA_TOPIC: mdx-face
     depends_on:
       perception-2d-init:
         condition: service_completed_successfully

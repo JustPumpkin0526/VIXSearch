@@ -457,9 +457,15 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
 
 
     const handleVideoPause = useCallback(
-      (
-        currentTime: number,
-      ) => {
+      (currentTime: number) => {
+        console.log(
+          '[SearchVideoModal] video paused',
+          {
+            currentTime,
+            videoUrl,
+          },
+        );
+
         const targetOffset =
           faceMatchBbox
             ? resolvedFaceMatchOffsetSeconds
@@ -719,12 +725,31 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
     }, [onSearchByImageRequest, pauseTime, searchByImageTargetOffsetSeconds, videoElement]);
 
 
+    // Prefer actual media element state when available (more accurate),
+    // fall back to the tracked `paused` state otherwise.
+    const isVideoPaused =
+      (videoElement ? (videoElement.paused === true || videoElement.ended === true) : paused);
+
     const showSearchByImageButton =
       searchByImageEnabled &&
-      paused &&
-      !faceMatchBbox &&
+      isVideoPaused &&
       !searchByImageOverlay &&
       !!onSearchByImageRequest;
+
+    console.log(
+      '[SearchVideoModal] SearchByImage button state',
+      {
+        isOpen,
+        videoUrl,
+        searchByImageEnabled,
+        paused,
+        hasSearchByImageOverlay:
+          !!searchByImageOverlay,
+        hasOnSearchByImageRequest:
+          !!onSearchByImageRequest,
+        showSearchByImageButton,
+      },
+    );
 
     const videoOverlayHost = useMemo(
       () =>

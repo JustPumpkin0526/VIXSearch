@@ -60,7 +60,11 @@ services:
     profiles: ["bp_wh_2d","bp_wh_kafka_2d${MINIMAL_PROFILE:+_extended}","bp_wh_kafka_3d${MINIMAL_PROFILE:+_extended}","bp_wh_kafka_mv3dt${MINIMAL_PROFILE:+_extended}","bp_wh_redis_2d${MINIMAL_PROFILE:+_extended}","bp_wh_redis_3d${MINIMAL_PROFILE:+_extended}","bp_wh_redis_mv3dt${MINIMAL_PROFILE:+_extended}","playback_kafka_2d","playback_kafka_3d","playback_redis_2d","playback_redis_3d","bp_developer_search_2d","bp_developer_lvs_2d","bp_developer_alerts_2d_cv", "bp_developer_alerts_2d_vlm"]
     volumes:
       - $VSS_APPS_DIR/services/infra/elk/elasticsearch/configs/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
-      - mdx-elastic-data:/tmp/elastic/data:rw
+      - type: volume
+        source: mdx-elastic-data
+        target: /tmp/elastic/data
+        volume:
+          subpath: vss/elasticsearch
       - mdx-elastic-logs:/tmp/elastic/logs:rw
     container_name: elasticsearch
     restart: always
@@ -165,7 +169,8 @@ services:
         {"name": "mdx-vlm-captions"},
         {"name": "mdx-structured-events-summary"},
         {"name": "mdx-embed"},
-        {"name": "mdx-embed-filtered"}]'
+        {"name": "mdx-embed-filtered"},
+        {"name": "mdx-face"}]'
     depends_on:
       kafka:
         condition: service_healthy
@@ -273,7 +278,8 @@ services:
         {"name": "mdx-vlm-captions"},
         {"name": "mdx-structured-events-summary"},
         {"name": "mdx-embed"},
-        {"name": "mdx-embed-filtered"}]'
+        {"name": "mdx-embed-filtered"},
+        {"name": "mdx-face"}]'
     container_name: vss-broker-health-check
     restart: "no"
 
@@ -283,9 +289,9 @@ volumes:
   mdx-elastic-data:
     driver: local
     driver_opts:
-      type: none
-      o: bind
-      device: $VSS_DATA_DIR/data_log/elastic/data
+      type: ext4
+      o: rw
+      device: /dev/sda1
   mdx-elastic-logs:
     driver: local
     driver_opts:

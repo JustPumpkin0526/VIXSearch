@@ -85,7 +85,7 @@
 			"configs": [
 				{
 					"name": "proximityDetectionEnable",
-					"value": "true"
+					"value": "false"
 				},
 				{
 					"name": "proximityDetectionThreshold",
@@ -153,11 +153,11 @@
 		},
 		{
 			"name": "stateManagementFilter",
-			"value": "[\"Person\",\"Forklift\"]"
+			"value": "[]"
 		},
 		{
 			"name": "restrictedAreaViolationIncidentEnable",
-			"value": "true"
+			"value": "false"
 		},
 		{
 			"name": "confinedAreaViolationIncidentEnable",

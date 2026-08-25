@@ -34,7 +34,7 @@ ifeq ($(TARGET_DEVICE),aarch64)
   CFLAGS:= -DPLATFORM_TEGRA
 endif
 
-SRCS:= metropolis_perception_app.c perception_utc.c
+SRCS:= metropolis_perception_app.c perception_utc.c korean_plate.c face_analytics.cpp
 SRCS+= ../deepstream-app/deepstream_app.c ../deepstream-app/deepstream_app_config_parser.c
 SRCS+= ../deepstream-app/deepstream_app_config_parser_yaml.cpp
 SRCS+= /opt/nvidia/deepstream/deepstream/sources/libs/nvds_msgapi_common_src/nvds_utils.cpp
@@ -49,8 +49,9 @@ PKGS:= gstreamer-1.0 gstreamer-video-1.0 x11 json-glib-1.0
 OBJS:= $(SRCS:.c=.o)
 OBJS:= $(OBJS:.cpp=.o)
 
-CFLAGS+= -I../../apps-common/includes \
+CFLAGS+= -I. -I../../apps-common/includes \
                  -I../../../includes \
+                 -I../../../gst-plugins/gst-nvmultiurisrcbin \
                  -I../deepstream-app/ -DDS_VERSION_MINOR=0 -DDS_VERSION_MAJOR=5 \
                  -I /usr/local/cuda-$(CUDA_VER)/include
 
@@ -69,9 +70,9 @@ CFLAGS+= -DIMAGE_PATH=\"$(IMAGE_PATH)\" -DIMAGE_TAG=\"$(IMAGE_TAG)\"
 $(info "IMAGE_PATH is $(IMAGE_PATH)")
 $(info "IMAGE_TAG is $(IMAGE_TAG)")
 
-LIBS:= -L/usr/local/cuda-$(CUDA_VER)/lib64/ -lcudart -lnvds_utils -lnvds_msgbroker -lnvds_logger -lcrypto
+LIBS:= -L/usr/local/cuda-$(CUDA_VER)/lib64/ -lcudart -lnvds_utils -lnvds_msgbroker -lnvds_logger -lcrypto -ljpeg
 
-LIBS+= -L$(LIB_INSTALL_DIR) -lnvdsgst_meta -lnvds_meta -lnvdsgst_helper -lnvdsgst_customhelper -lnvdsgst_smartrecord -lnvds_utils -lnvds_msgbroker -lm \
+LIBS+= -L$(LIB_INSTALL_DIR) -lnvdsgst_meta -lnvds_meta -lnvbufsurface -lnvbufsurftransform -lnvdsgst_helper -lnvdsgst_customhelper -lnvdsgst_smartrecord -lnvds_utils -lnvds_msgbroker -lm \
        -lyaml-cpp -lcuda -lgstrtspserver-1.0 -ldl -Wl,-rpath,$(LIB_INSTALL_DIR)
 
 CFLAGS+= $(shell pkg-config --cflags $(PKGS))
@@ -95,4 +96,3 @@ install: $(APP)
 
 clean:
 	rm -rf $(OBJS) $(APP)
-

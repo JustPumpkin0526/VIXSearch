@@ -143,57 +143,32 @@ function sanitizeMessageForPersistence(
     ...message,
   };
 
-  if (
-    Array.isArray(
-      sanitized.attachments,
-    )
-  ) {
-    sanitized.attachments =
-      sanitized.attachments.map(
-        (attachment: any) => {
-          const content =
-            typeof attachment.content ===
-              'string'
-              ? attachment.content
-              : '';
+  if (Array.isArray(sanitized.attachments)) {
+    sanitized.attachments = sanitized.attachments.map((attachment: any) => {
+      const content = typeof attachment.content === 'string' ? attachment.content : '';
 
-          const isTransientImage =
-            content.startsWith(
-              'data:image/',
-            ) ||
-            content.startsWith(
-              'blob:',
-            );
+      // Preserve inline image content when it is a deliberate image-search
+      // attachment (marked via `searchMode`) so the chat history can restore
+      // the image after a page reload. Otherwise drop transient data/ blob
+      // URLs to avoid bloating persistence.
+      const isTransientImage =
+        (content.startsWith('data:image/') || content.startsWith('blob:')) && !attachment?.searchMode;
 
-          return {
-            ...attachment,
-            content:
-              isTransientImage
-                ? ''
-                : content,
-          };
-        },
-      );
+      return {
+        ...attachment,
+        content: isTransientImage ? '' : content,
+      };
+    });
   }
 
   if (sanitized.attachment) {
-    const content =
-      typeof sanitized.attachment
-        .content === 'string'
-        ? sanitized.attachment.content
-        : '';
+    const content = typeof sanitized.attachment.content === 'string' ? sanitized.attachment.content : '';
+    const isTransientImage =
+      (content.startsWith('data:image/') || content.startsWith('blob:')) && !sanitized.attachment?.searchMode;
 
     sanitized.attachment = {
       ...sanitized.attachment,
-      content:
-        content.startsWith(
-          'data:image/',
-        ) ||
-        content.startsWith(
-          'blob:',
-        )
-          ? ''
-          : content,
+      content: isTransientImage ? '' : content,
     };
   }
 

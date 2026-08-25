@@ -35,14 +35,14 @@ num-source-bins=0
 # Set use-nvmultiurisrcbin to 1 to enable sensor provisioning/update feature
 use-nvmultiurisrcbin=1
 stream-name-display=1
-max-batch-size=16
+max-batch-size=8
 http-ip=localhost
 http-port=9000
 extract-sei-type5-data=1
 sei-uuid=NVDS_CUSTOMMETA
 #sgie batch size is number of sources * fair fraction of number of objects detected per frame per source
 #the fair fraction of number of object detected is assumed to be 4
-sgie-batch-size=4
+sgie-batch-size=1
 
 [source-attr-all]
 enable=1
@@ -69,6 +69,7 @@ nvbuf-memory-type=0
 enable=1
 #Type - 1=FakeSink 2=EglSink 3=File 4=UDPSink 5=nvoverlaysink 6=MsgConvBroker
 type=6
+msg-conv-msg2p-lib=/opt/nvidia/deepstream/deepstream/lib/libnvds_msgconv_mega2d.so
 #msg-conv-config=ds-msgconv-config.txt
 #(0): PAYLOAD_DEEPSTREAM - Deepstream schema payload
 #(1): PAYLOAD_DEEPSTREAM_MINIMAL - Deepstream schema payload minimal
@@ -161,16 +162,18 @@ nvbuf-memory-type=0
 gpu-id=0
 ##Boolean property to inform muxer that sources are live
 live-source=1
-batch-size=16
+batch-size=8
+##nvstreammux의 배치 크기(현재 4)가 활성 소스 수(업로드 비디오 1개)보다 큰 상태에서 sync-inputs가 꺼져 있어, 동일 소스의 연속 프레임이 한 배치에 들어가
+sync-inputs=0
 ##time out in usec, to wait after the first buffer is available
 ##to push the batch even if the complete batch is not formed
-batched-push-timeout=33000
+batched-push-timeout=3000
 ## Set muxer output width and height
 width=1920
 height=1080
 ##Enable to maintain aspect ratio wrt source, and allow black borders, works
 ##along with width, height properties
-enable-padding=0
+enable-padding=1
 nvbuf-memory-type=0
 ## If set to TRUE, system timestamp will be attached as ntp timestamp
 ## If set to FALSE, ntp timestamp from rtspsrc, if available, will be attached
@@ -188,7 +191,7 @@ enable=1
 gpu-id=0
 #Required to display the PGIE labels, should be added even when using config-file
 #property
-batch-size=16
+batch-size=8
 #Required by the app for OSD, not a plugin property
 bbox-border-color0=1;0;0;1
 bbox-border-color1=0;1;1;1
@@ -221,11 +224,14 @@ tensorrt-engine=/opt/storage/model_batch16.plan
 onnx-model=/opt/storage/radio-clip_v1.0.onnx
 batch-size=128
 min-crop-size=32
+embedding-classes=person;car;wheelchair;stroller;heavy_machine
 verbose=1
 gpu-id=0
 skip-interval=0
 smart-infer=1
-ofa-predict=1
+# OFA retains decoder-backed surfaces across dynamic source removal and can
+# stall or poison the next nvv4l2decoder. Keep smart-infer caching without OFA.
+ofa-predict=0
 
 [secondary-gie0]
 enable=0
@@ -236,5 +242,17 @@ operate-on-class-ids=0
 batch-size=8
 config-file=ppl_analytics_sgie_config.txt
 
+# Korean license-plate character recognition. RT-DETR PGIE class 5 is
+# license_plate. Validation starts with batch-size=1 because this ONNX model
+# emits a padded end-to-end NMS tensor [1,100,7] containing a batch_id column.
+[secondary-gie1]
+enable=1
+gpu-id=0
+gie-unique-id=3
+operate-on-gie-id=1
+operate-on-class-ids=5
+batch-size=1
+config-file=ds-sgie-lpr-config.yml
+
 [tests]
-file-loop=1
+file-loop=0

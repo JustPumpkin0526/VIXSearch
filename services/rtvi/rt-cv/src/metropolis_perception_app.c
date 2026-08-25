@@ -43,6 +43,7 @@
 #include "nvds_version.h"
 #include "nvdsmeta_schema.h"
 #include "nvds_tracker_meta.h"
+#include "korean_plate.h"
 
 /* External reference to global error capture buffer */
 extern gchar *g_nvds_last_error_message;
@@ -122,6 +123,17 @@ typedef enum {
 #define SECONDARY_GIE_VEHICLE_TYPE_UNIQUE_ID (4)
 #define SECONDARY_GIE_VEHICLE_COLOR_UNIQUE_ID (5)
 #define SECONDARY_GIE_VEHICLE_MAKE_UNIQUE_ID (6)
+
+/* RT-DETR and Korean LPR identifiers used by dev-profile-search. */
+#define RTDETR_CLASS_ID_CAR (1)
+#define RTDETR_CLASS_ID_LICENSE_PLATE (5)
+#define RTDETR_CLASS_ID_HEAVY_MACHINE (6)
+#define LPR_CHARACTER_GIE_UNIQUE_ID (3)
+#define LPR_VEHICLE_CLASSIFIER_UNIQUE_ID (103)
+#define LPR_MAX_CHARACTERS (20)
+#define LPR_TEXT_MAX (64)
+#define LPR_STABLE_OBSERVATIONS (3)
+#define LPR_STATE_MAX_AGE_FRAMES (3600)
 
 #define RESNET10_PGIE_3SGIE_TYPE_COLOR_MAKECLASS_ID_CAR (0)
 #ifdef GENERATE_DUMMY_META_EXT
@@ -254,6 +266,9 @@ GOptionEntry entries[] = {
  */
 static void schema_fill_sample_sgie_vehicle_metadata(NvDsObjectMeta *obj_params,
                                                      NvDsVehicleObject *obj);
+static gchar *get_first_result_label(NvDsClassifierMeta *classifierMeta);
+static gchar *lpr_get_accepted_plate(guint source_id, guint64 tracking_id,
+                                     gboolean *first_event);
 
 /**
  * @brief  Performs model update OTA operation
@@ -399,6 +414,10 @@ static gpointer meta_copy_func(gpointer data, gpointer user_data) {
     dstMeta->sensorStr = g_strdup(srcMeta->sensorStr);
   }
 
+  if (srcMeta->otherAttrs) {
+    dstMeta->otherAttrs = g_strdup(srcMeta->otherAttrs);
+  }
+
   if (srcMeta->extMsgSize > 0) {
     if (srcMeta->objType == NVDS_OBJECT_TYPE_VEHICLE) {
       NvDsVehicleObject *srcObj = (NvDsVehicleObject *)srcMeta->extMsg;
@@ -490,6 +509,10 @@ static void meta_free_func(gpointer data, gpointer user_data) {
 
   if (srcMeta->sensorStr) {
     g_free(srcMeta->sensorStr);
+  }
+
+  if (srcMeta->otherAttrs) {
+    g_free(srcMeta->otherAttrs);
   }
 
   if (srcMeta->extMsgSize > 0) {
@@ -856,6 +879,38 @@ static void generate_event_msg_meta(AppCtx *appCtx, gpointer data,
     meta->type = NVDS_EVENT_MOVING;
     meta->objType = NVDS_OBJECT_TYPE_UNKNOWN;
     // Keep the default objectId that was already set from obj_params->obj_label
+
+  }
+
+  /* Pass the track-stable validated LPR result to the custom protobuf
+   * converter. Read from the source/track state directly because synthetic
+   * classifier metadata is not preserved reliably across every pipeline path.
+   * Match by detector label to avoid treating unrelated class IDs as vehicles. */
+  if (g_strcmp0(obj_params->obj_label, "car") == 0 ||
+      g_strcmp0(obj_params->obj_label, "heavy_machine") == 0) {
+    gboolean first_lpr_event = FALSE;
+    meta->otherAttrs = lpr_get_accepted_plate(
+        stream_id, obj_params->object_id, &first_lpr_event);
+
+    /* Backward-compatible fallback for externally attached LPR metadata. */
+    if (meta->otherAttrs == NULL) {
+      for (NvDsMetaList *item = obj_params->classifier_meta_list;
+           item != NULL; item = item->next) {
+        NvDsClassifierMeta *classifier = (NvDsClassifierMeta *)item->data;
+        if (classifier != NULL && classifier->unique_component_id ==
+            LPR_VEHICLE_CLASSIFIER_UNIQUE_ID) {
+          meta->otherAttrs = get_first_result_label(classifier);
+          break;
+        }
+      }
+    }
+
+    if (first_lpr_event && meta->otherAttrs != NULL) {
+      g_printerr("[LPR_EVENT] plate=\"%s\" source=%d frame=%d "
+          "vehicle_class=%s vehicle_track=%" G_GUINT64_FORMAT "\n",
+          meta->otherAttrs, stream_id, frame_meta->frame_num,
+          obj_params->obj_label, obj_params->object_id);
+    }
   }
 }
 
@@ -887,6 +942,411 @@ generate_event_msg_meta_dummy (AppCtx * appCtx, gpointer data, gint stream_id,
     meta->sensorStr = g_strdup (sensorInfo->sensor_id);
   }
   (void) ts_generated;
+}
+
+typedef struct {
+  NvDsObjectMeta *meta;
+  const gchar *label;
+  gfloat left;
+  gfloat top;
+  gfloat width;
+  gfloat height;
+  gfloat confidence;
+} LprCharacter;
+
+typedef struct {
+  guint source_id;
+  guint64 last_frame;
+  gchar candidate[LPR_TEXT_MAX];
+  guint observations;
+  gchar accepted[LPR_TEXT_MAX];
+  gfloat accepted_confidence;
+  gboolean event_emitted;
+} LprVehicleState;
+
+typedef struct {
+  guint source_id;
+  guint64 frame_num;
+} LprPruneContext;
+
+G_LOCK_DEFINE_STATIC(lpr_state_lock);
+static GHashTable *lpr_vehicle_states = NULL;
+static GHashTable *lpr_rejected_results = NULL;
+
+static gchar *lpr_get_accepted_plate(guint source_id, guint64 tracking_id,
+                                     gboolean *first_event) {
+  if (first_event != NULL) *first_event = FALSE;
+  if (tracking_id == UNTRACKED_OBJECT_ID) return NULL;
+
+  gchar *key = g_strdup_printf("%u:%" G_GUINT64_FORMAT, source_id,
+                               tracking_id);
+  gchar *plate = NULL;
+  G_LOCK(lpr_state_lock);
+  if (lpr_vehicle_states != NULL) {
+    LprVehicleState *state =
+        (LprVehicleState *)g_hash_table_lookup(lpr_vehicle_states, key);
+    if (state != NULL && state->accepted[0] != '\0') {
+      plate = g_strdup(state->accepted);
+      if (!state->event_emitted) {
+        state->event_emitted = TRUE;
+        if (first_event != NULL) *first_event = TRUE;
+      }
+    }
+  }
+  G_UNLOCK(lpr_state_lock);
+  g_free(key);
+  return plate;
+}
+
+static gint lpr_compare_x(gconstpointer lhs, gconstpointer rhs) {
+  const LprCharacter *a = (const LprCharacter *)lhs;
+  const LprCharacter *b = (const LprCharacter *)rhs;
+  return a->left < b->left ? -1 : (a->left > b->left ? 1 : 0);
+}
+
+static gint lpr_compare_y(gconstpointer lhs, gconstpointer rhs) {
+  const LprCharacter *a = (const LprCharacter *)lhs;
+  const LprCharacter *b = (const LprCharacter *)rhs;
+  const gfloat ay = a->top + a->height * 0.5F;
+  const gfloat by = b->top + b->height * 0.5F;
+  return ay < by ? -1 : (ay > by ? 1 : 0);
+}
+
+static gboolean lpr_debug_enabled(void) {
+  const gchar *value = g_getenv("LPR_DEBUG");
+  return value != NULL && g_strcmp0(value, "0") != 0 &&
+         g_ascii_strcasecmp(value, "false") != 0;
+}
+
+/* SGIE detector children retain their PGIE license-plate object in parent.
+ * DeepStream has already mapped child rectangles back to mux coordinates. */
+static gboolean lpr_assemble_plate(NvDsFrameMeta *frame_meta,
+                                   NvDsObjectMeta *plate_meta,
+                                   gchar *text, gsize text_size,
+                                   const gchar **layout,
+                                   guint *character_count,
+                                   gfloat *average_confidence) {
+  LprCharacter characters[LPR_MAX_CHARACTERS];
+  guint count = 0;
+  guint spatial_fallback_count = 0;
+  gfloat height_sum = 0.0F;
+  gfloat confidence_sum = 0.0F;
+
+  for (NvDsMetaList *item = frame_meta->obj_meta_list;
+       item != NULL && count < LPR_MAX_CHARACTERS; item = item->next) {
+    NvDsObjectMeta *child = (NvDsObjectMeta *)item->data;
+    if (child == NULL || child->obj_label[0] == '\0') continue;
+
+    /* Some DeepStream detector-SGIE paths do not preserve the parent pointer
+     * after tracker/metadata transforms. Recover the relationship only when
+     * the character center is spatially inside this PGIE plate box. */
+    const gfloat child_center_x = child->rect_params.left +
+                                  child->rect_params.width * 0.5F;
+    const gfloat child_center_y = child->rect_params.top +
+                                  child->rect_params.height * 0.5F;
+    const gboolean inside_plate =
+        child_center_x >= plate_meta->rect_params.left &&
+        child_center_x <= plate_meta->rect_params.left + plate_meta->rect_params.width &&
+        child_center_y >= plate_meta->rect_params.top &&
+        child_center_y <= plate_meta->rect_params.top + plate_meta->rect_params.height;
+    const gboolean direct_child = child->parent == plate_meta;
+    const gboolean orphan_sgie_inside =
+        child->parent == NULL &&
+        child->unique_component_id == LPR_CHARACTER_GIE_UNIQUE_ID &&
+        inside_plate;
+    if (!direct_child && !orphan_sgie_inside) continue;
+    if (orphan_sgie_inside) ++spatial_fallback_count;
+    characters[count].meta = child;
+    characters[count].label = child->obj_label;
+    characters[count].left = child->rect_params.left;
+    characters[count].top = child->rect_params.top;
+    characters[count].width = child->rect_params.width;
+    characters[count].height = child->rect_params.height;
+    characters[count].confidence = child->confidence;
+    height_sum += child->rect_params.height;
+    confidence_sum += child->confidence;
+    ++count;
+  }
+
+  if (lpr_debug_enabled() && spatial_fallback_count > 0 &&
+      frame_meta->frame_num % 30 == 0) {
+    g_printerr("[LPR_META] spatial-fallback chars=%u/%u source=%u frame=%d "
+               "plate_track=%" G_GUINT64_FORMAT "\n",
+               spatial_fallback_count, count, frame_meta->source_id,
+               frame_meta->frame_num, plate_meta->object_id);
+  }
+
+  if (character_count != NULL) *character_count = count;
+  if (average_confidence != NULL) {
+    *average_confidence = count > 0 ? confidence_sum / (gfloat)count : 0.0F;
+  }
+  if (count < 5) return FALSE;
+
+  LprCharacter by_y[LPR_MAX_CHARACTERS];
+  memcpy(by_y, characters, sizeof(LprCharacter) * count);
+  qsort(by_y, count, sizeof(LprCharacter), lpr_compare_y);
+  const gfloat average_height = height_sum / (gfloat)count;
+  const gfloat first_y = by_y[0].top + by_y[0].height * 0.5F;
+  const gfloat last_y = by_y[count - 1].top + by_y[count - 1].height * 0.5F;
+  const gboolean two_rows = count >= 4 &&
+      (last_y - first_y) > average_height * 0.75F;
+
+  LprCharacter upper[LPR_MAX_CHARACTERS];
+  LprCharacter lower[LPR_MAX_CHARACTERS];
+  guint upper_count = 0;
+  guint lower_count = 0;
+  if (two_rows) {
+    const gfloat split = by_y[count / 2].top + by_y[count / 2].height * 0.5F;
+    for (guint i = 0; i < count; ++i) {
+      const gfloat center = characters[i].top + characters[i].height * 0.5F;
+      if (center < split) upper[upper_count++] = characters[i];
+      else lower[lower_count++] = characters[i];
+    }
+    /* A false two-row split is worse than a one-row fallback. */
+    if (upper_count == 0 || lower_count == 0) {
+      memcpy(upper, characters, sizeof(LprCharacter) * count);
+      upper_count = count;
+      lower_count = 0;
+    }
+  } else {
+    memcpy(upper, characters, sizeof(LprCharacter) * count);
+    upper_count = count;
+  }
+
+  qsort(upper, upper_count, sizeof(LprCharacter), lpr_compare_x);
+  qsort(lower, lower_count, sizeof(LprCharacter), lpr_compare_x);
+  text[0] = '\0';
+  for (guint i = 0; i < upper_count; ++i) {
+    g_strlcat(text, upper[i].label, text_size);
+  }
+  for (guint i = 0; i < lower_count; ++i) {
+    g_strlcat(text, lower[i].label, text_size);
+  }
+  if (layout != NULL) *layout = lower_count > 0 ? "two-row" : "one-row";
+  return text[0] != '\0';
+}
+
+static gfloat lpr_intersection_area(const NvOSD_RectParams *a,
+                                    const NvOSD_RectParams *b) {
+  const gfloat left = MAX(a->left, b->left);
+  const gfloat top = MAX(a->top, b->top);
+  const gfloat right = MIN(a->left + a->width, b->left + b->width);
+  const gfloat bottom = MIN(a->top + a->height, b->top + b->height);
+  return MAX(0.0F, right - left) * MAX(0.0F, bottom - top);
+}
+
+static NvDsObjectMeta *lpr_find_vehicle(AppCtx *appCtx,
+                                        NvDsFrameMeta *frame_meta,
+                                        NvDsObjectMeta *plate_meta) {
+  NvDsObjectMeta *best = NULL;
+  gfloat best_area = G_MAXFLOAT;
+  const gfloat plate_area = plate_meta->rect_params.width *
+                            plate_meta->rect_params.height;
+  const gfloat center_x = plate_meta->rect_params.left +
+                          plate_meta->rect_params.width * 0.5F;
+  const gfloat center_y = plate_meta->rect_params.top +
+                          plate_meta->rect_params.height * 0.5F;
+
+  for (NvDsMetaList *item = frame_meta->obj_meta_list; item != NULL;
+       item = item->next) {
+    NvDsObjectMeta *candidate = (NvDsObjectMeta *)item->data;
+    if (candidate == NULL || candidate->parent != NULL ||
+        candidate->unique_component_id !=
+            (gint)appCtx->config.primary_gie_config.unique_id ||
+        (candidate->class_id != RTDETR_CLASS_ID_CAR &&
+         candidate->class_id != RTDETR_CLASS_ID_HEAVY_MACHINE)) {
+      continue;
+    }
+    const NvOSD_RectParams *box = &candidate->rect_params;
+    const gboolean contains_center = center_x >= box->left &&
+        center_x <= box->left + box->width && center_y >= box->top &&
+        center_y <= box->top + box->height;
+    const gfloat coverage = plate_area > 0.0F
+        ? lpr_intersection_area(&plate_meta->rect_params, box) / plate_area
+        : 0.0F;
+    if (!contains_center && coverage < 0.5F) continue;
+    const gfloat area = box->width * box->height;
+    if (area < best_area) {
+      best = candidate;
+      best_area = area;
+    }
+  }
+  return best;
+}
+
+static gboolean lpr_prune_old_state(gpointer key, gpointer value,
+                                    gpointer user_data) {
+  (void)key;
+  LprVehicleState *state = (LprVehicleState *)value;
+  const LprPruneContext *context = (const LprPruneContext *)user_data;
+  return state->source_id == context->source_id &&
+      state->last_frame + LPR_STATE_MAX_AGE_FRAMES < context->frame_num;
+}
+
+static void lpr_attach_to_vehicle(NvDsBatchMeta *batch_meta,
+                                  NvDsObjectMeta *vehicle,
+                                  const gchar *plate,
+                                  gfloat confidence) {
+  for (NvDsMetaList *item = vehicle->classifier_meta_list; item != NULL;
+       item = item->next) {
+    NvDsClassifierMeta *existing = (NvDsClassifierMeta *)item->data;
+    if (existing != NULL && existing->unique_component_id ==
+        LPR_VEHICLE_CLASSIFIER_UNIQUE_ID) return;
+  }
+
+  NvDsClassifierMeta *classifier =
+      nvds_acquire_classifier_meta_from_pool(batch_meta);
+  NvDsLabelInfo *label = nvds_acquire_label_info_meta_from_pool(batch_meta);
+  if (classifier == NULL || label == NULL) return;
+  classifier->unique_component_id = LPR_VEHICLE_CLASSIFIER_UNIQUE_ID;
+  label->result_class_id = 0;
+  label->result_prob = confidence;
+  g_strlcpy(label->result_label, plate, sizeof(label->result_label));
+  nvds_add_label_info_meta_to_classifier(classifier, label);
+  nvds_add_classifier_meta_to_object(vehicle, classifier);
+}
+
+static void lpr_log_rejection_once(NvDsFrameMeta *frame_meta,
+                                   NvDsObjectMeta *plate_meta,
+                                   NvDsObjectMeta *vehicle,
+                                   const gchar *text, const gchar *layout,
+                                   guint chars, gfloat confidence,
+                                   const gchar *reason) {
+  gchar *key = g_strdup_printf("%u:%" G_GUINT64_FORMAT ":%s:%s",
+      frame_meta->source_id, plate_meta->object_id, text, reason);
+  gboolean should_log = FALSE;
+  G_LOCK(lpr_state_lock);
+  if (lpr_rejected_results == NULL) {
+    lpr_rejected_results = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                  g_free, NULL);
+  }
+  if (!g_hash_table_contains(lpr_rejected_results, key)) {
+    if (g_hash_table_size(lpr_rejected_results) >= 4096)
+      g_hash_table_remove_all(lpr_rejected_results);
+    g_hash_table_add(lpr_rejected_results, key);
+    should_log = TRUE;
+  }
+  G_UNLOCK(lpr_state_lock);
+  if (!should_log) g_free(key);
+  if (!should_log || !lpr_debug_enabled()) return;
+
+  g_printerr("[LPR_REJECT] reason=%s candidate=\"%s\" layout=%s "
+      "chars=%u avg_conf=%.4f source=%u frame=%d "
+      "plate_track=%" G_GUINT64_FORMAT " plate_bbox=[%.1f,%.1f,%.1f,%.1f] "
+      "vehicle_class=%s vehicle_track=%" G_GUINT64_FORMAT "\n",
+      reason, text, layout, chars, confidence, frame_meta->source_id,
+      frame_meta->frame_num, plate_meta->object_id,
+      plate_meta->rect_params.left, plate_meta->rect_params.top,
+      plate_meta->rect_params.width, plate_meta->rect_params.height,
+      vehicle != NULL ? vehicle->obj_label : "none",
+      vehicle != NULL ? vehicle->object_id : UNTRACKED_OBJECT_ID);
+}
+
+static void lpr_process_frame(AppCtx *appCtx, NvDsBatchMeta *batch_meta,
+                              NvDsFrameMeta *frame_meta) {
+  for (NvDsMetaList *item = frame_meta->obj_meta_list; item != NULL;
+       item = item->next) {
+    NvDsObjectMeta *plate_meta = (NvDsObjectMeta *)item->data;
+    if (plate_meta == NULL || plate_meta->parent != NULL ||
+        plate_meta->unique_component_id !=
+            (gint)appCtx->config.primary_gie_config.unique_id ||
+        plate_meta->class_id != RTDETR_CLASS_ID_LICENSE_PLATE) continue;
+
+    gchar text[LPR_TEXT_MAX] = {0};
+    const gchar *layout = "unknown";
+    guint chars = 0;
+    gfloat confidence = 0.0F;
+    const gboolean assembled = lpr_assemble_plate(
+        frame_meta, plate_meta, text, sizeof(text), &layout, &chars,
+        &confidence);
+    if (!assembled) continue;
+
+    NvDsObjectMeta *vehicle = lpr_find_vehicle(appCtx, frame_meta, plate_meta);
+    KoreanPlateKind kind = KOREAN_PLATE_INVALID;
+    if (!korean_plate_validate(text, &kind)) {
+      lpr_log_rejection_once(frame_meta, plate_meta, vehicle, text, layout,
+                             chars, confidence, "invalid-korean-format");
+      continue;
+    }
+    if (vehicle == NULL) {
+      lpr_log_rejection_once(frame_meta, plate_meta, NULL, text, layout,
+                             chars, confidence, "no-parent-vehicle");
+      continue;
+    }
+
+    const guint64 association_id = vehicle->object_id != UNTRACKED_OBJECT_ID
+        ? vehicle->object_id : plate_meta->object_id;
+    gchar *state_key = g_strdup_printf("%u:%" G_GUINT64_FORMAT,
+                                        frame_meta->source_id, association_id);
+    gchar accepted[LPR_TEXT_MAX] = {0};
+    gfloat accepted_confidence = 0.0F;
+    gboolean newly_accepted = FALSE;
+    guint observations = 0;
+
+    G_LOCK(lpr_state_lock);
+    if (lpr_vehicle_states == NULL) {
+      lpr_vehicle_states = g_hash_table_new_full(
+          g_str_hash, g_str_equal, g_free, g_free);
+    }
+    LprVehicleState *state =
+        (LprVehicleState *)g_hash_table_lookup(lpr_vehicle_states, state_key);
+    if (state == NULL) {
+      state = g_new0(LprVehicleState, 1);
+      state->source_id = frame_meta->source_id;
+      g_hash_table_insert(lpr_vehicle_states, state_key, state);
+      state_key = NULL;
+    }
+    state->last_frame = frame_meta->frame_num;
+    if (g_strcmp0(state->candidate, text) == 0) ++state->observations;
+    else {
+      g_strlcpy(state->candidate, text, sizeof(state->candidate));
+      state->observations = 1;
+    }
+    observations = state->observations;
+    if (state->observations >= LPR_STABLE_OBSERVATIONS &&
+        g_strcmp0(state->accepted, text) != 0) {
+      g_strlcpy(state->accepted, text, sizeof(state->accepted));
+      state->accepted_confidence = confidence;
+      newly_accepted = TRUE;
+    }
+    g_strlcpy(accepted, state->accepted, sizeof(accepted));
+    accepted_confidence = state->accepted_confidence;
+    if (frame_meta->frame_num % 300 == 0) {
+      LprPruneContext context = {frame_meta->source_id, frame_meta->frame_num};
+      g_hash_table_foreach_remove(lpr_vehicle_states, lpr_prune_old_state,
+                                  &context);
+    }
+    G_UNLOCK(lpr_state_lock);
+    g_free(state_key);
+
+    if (lpr_debug_enabled() && observations < LPR_STABLE_OBSERVATIONS) {
+      g_printerr("[LPR_CANDIDATE] plate=\"%s\" observations=%u/%u "
+          "layout=%s avg_conf=%.4f source=%u frame=%d "
+          "plate_track=%" G_GUINT64_FORMAT " vehicle_class=%s "
+          "vehicle_track=%" G_GUINT64_FORMAT "\n", text, observations,
+          LPR_STABLE_OBSERVATIONS, layout, confidence, frame_meta->source_id,
+          frame_meta->frame_num, plate_meta->object_id, vehicle->obj_label,
+          vehicle->object_id);
+    }
+    if (accepted[0] != '\0') {
+      lpr_attach_to_vehicle(batch_meta, vehicle, accepted,
+                            accepted_confidence);
+    }
+    if (newly_accepted) {
+      g_printerr("[LPR] status=accepted plate=\"%s\" format=%s layout=%s "
+          "chars=%u avg_conf=%.4f source=%u frame=%d "
+          "plate_track=%" G_GUINT64_FORMAT " plate_bbox=[%.1f,%.1f,%.1f,%.1f] "
+          "vehicle_class=%s vehicle_track=%" G_GUINT64_FORMAT " "
+          "vehicle_bbox=[%.1f,%.1f,%.1f,%.1f]\n", accepted,
+          korean_plate_kind_name(kind), layout, chars, accepted_confidence,
+          frame_meta->source_id, frame_meta->frame_num, plate_meta->object_id,
+          plate_meta->rect_params.left, plate_meta->rect_params.top,
+          plate_meta->rect_params.width, plate_meta->rect_params.height,
+          vehicle->obj_label, vehicle->object_id, vehicle->rect_params.left,
+          vehicle->rect_params.top, vehicle->rect_params.width,
+          vehicle->rect_params.height);
+    }
+  }
 }
 
 /**
@@ -945,6 +1405,8 @@ static void bbox_generated_probe_after_analytics(AppCtx *appCtx, GstBuffer *buf,
       valid_class_id=0;
       stream_id = frame_meta->source_id;
 
+      lpr_process_frame(appCtx, batch_meta, frame_meta);
+
       //! DEBUGGER_START for ending at 5mins
       if (log_level >= 100) {
         if (frame_meta->frame_num >= 9000) {
@@ -984,6 +1446,14 @@ static void bbox_generated_probe_after_analytics(AppCtx *appCtx, GstBuffer *buf,
           * be displayed on top of the bounding box, so lets form it here. */
 
           obj_meta = (NvDsObjectMeta *)(l->data);
+
+          /* SGIE character detections are implementation details. Only PGIE
+           * objects, with validated LPR attached to their vehicle, are sent
+           * to the downstream event/embedding path. */
+          if (obj_meta->parent != NULL || obj_meta->unique_component_id !=
+              (gint)appCtx->config.primary_gie_config.unique_id) {
+            continue;
+          }
           
           // MODIFIED: Allow all classes in MTMC mode, not just target_class
           // Comment out the restrictive filtering for multi-class detection
@@ -2464,6 +2934,9 @@ static void schema_fill_sample_sgie_vehicle_metadata(NvDsObjectMeta *obj_params,
         break;
       case SECONDARY_GIE_VEHICLE_MAKE_UNIQUE_ID:
         obj->make = get_first_result_label(classifierMeta);
+        break;
+      case LPR_VEHICLE_CLASSIFIER_UNIQUE_ID:
+        obj->license = get_first_result_label(classifierMeta);
         break;
       default:
         break;
