@@ -4,6 +4,7 @@ export type UserRole = 'admin' | 'user';
 
 export type AuthUser = {
   username: string;
+  fullName: string | null;
   role: UserRole;
 };
 

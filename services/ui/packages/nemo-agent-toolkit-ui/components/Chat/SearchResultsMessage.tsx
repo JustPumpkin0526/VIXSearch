@@ -721,12 +721,7 @@ export const SearchResultsMessage: React.FC<
 
   const { streams } = useFilter({ vstApiUrl });
 
-  const agentApiUrl =
-    env('NEXT_PUBLIC_AGENT_API_URL') ||
-    (typeof process !== 'undefined'
-      ? process.env.NEXT_PUBLIC_AGENT_API_URL
-      : '') ||
-    '';
+  const agentApiUrl = env('NEXT_PUBLIC_AGENT_API_URL_BASE') || (typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_AGENT_API_URL_BASE : '') || '';
 
   const [criticDescriptions, setCriticDescriptions] = React.useState<Record<string, string>>({});
   const [criticDescriptionLoading, setCriticDescriptionLoading] = React.useState(false);
@@ -1567,6 +1562,31 @@ export const SearchResultsMessage: React.FC<
     },
   );
 
+  const defaultReportTitle = React.useMemo(() => {
+    const normalizedQuery =
+      typeof sourceQuery === 'string'
+        ? sourceQuery
+            .replace(/\s+/g, ' ')
+            .trim()
+        : '';
+
+    if (!normalizedQuery) {
+      return '영상 검색 결과 분석 보고서';
+    }
+
+    const reportSubject =
+      normalizedQuery.length > 40
+        ? `${normalizedQuery.slice(0, 40)}…`
+        : normalizedQuery;
+
+    return (
+      `${reportSubject} ` +
+      '영상 분석 결과보고서'
+    );
+  }, [
+    sourceQuery,
+  ]);
+
   return (
     <div className="not-prose mt-4 w-full min-w-0">
       <VideoSearchList
@@ -1616,6 +1636,7 @@ export const SearchResultsMessage: React.FC<
         }))}
         loadingReports={loadingReports}
         creatingReport={creatingReport}
+        defaultReportTitle={defaultReportTitle}
       />
     </div>
   );

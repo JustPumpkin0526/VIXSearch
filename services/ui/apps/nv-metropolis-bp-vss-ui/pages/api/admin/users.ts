@@ -11,6 +11,7 @@ import {
 
 type CreateUserBody = {
   username?: string;
+  fullName?: string;
   password?: string;
   role?: UserRole;
 };
@@ -50,19 +51,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         `
           SELECT
             username,
+            full_name,
             role,
             is_active,
             created_by,
             created_at,
             updated_at
           FROM ui_auth_users
-          ORDER BY created_at DESC, username ASC
         `,
       );
 
       return res.status(200).json({
         users: result.rows.map((row) => ({
           username: row.username,
+          fullName: row.full_name,
           role: row.role,
           isActive: row.is_active,
           createdBy: row.created_by,
@@ -76,6 +78,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const body = req.body as CreateUserBody;
 
       const username = sanitizeUsername(String(body?.username || ''));
+      const fullName = String(body?.fullName || '').replace(/\s+/g, ' ').trim();
       const password = String(body?.password || '');
       const role = normalizeRole(body?.role);
 
@@ -84,25 +87,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ error: validationError });
       }
 
+      if (!fullName) {
+        return res.status(400).json({
+          error: '이름을 입력해 주세요.',
+        });
+      }
+
+      if (fullName.length > 100) {
+        return res.status(400).json({
+          error:
+            '이름은 100자 이하로 입력해 주세요.',
+        });
+      }
+
       const { hash, salt } = hashPassword(password);
 
       const result = await pool.query(
         `
-          INSERT INTO ui_auth_users (
-            username,
-            password_hash,
-            salt,
-            role,
-            is_active,
-            created_by,
-            created_at,
-            updated_at
-          )
-          VALUES ($1, $2, $3, $4, TRUE, $5, NOW(), NOW())
-          ON CONFLICT (username) DO NOTHING
-          RETURNING username, role, is_active, created_by, created_at, updated_at
+          INSERT INTO ui_auth_users (username, full_name, password_hash, salt, role, is_active, created_by, created_at, updated_at)
+          VALUES ($1, $2, $3, $4, $5, TRUE, $6, NOW(), NOW())
+          ON CONFLICT (username) DO NOTHING 
+          RETURNING username, full_name, role, is_active, created_by, created_at, updated_at
         `,
-        [username, hash, salt, role, admin.username],
+        [username, fullName, hash, salt, role, admin.username],
       );
 
       if (result.rowCount === 0) {
@@ -114,6 +121,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(201).json({
         user: {
           username: row.username,
+          fullName: row.full_name,
           role: row.role,
           isActive: row.is_active,
           createdBy: row.created_by,

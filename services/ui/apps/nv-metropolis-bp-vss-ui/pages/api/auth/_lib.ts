@@ -10,6 +10,7 @@ export const REFRESH_TOKEN_COOKIE_NAME = 'vss.refresh.token';
 
 export type StoredUser = {
   username: string;
+  fullName: string | null;
   passwordHash: string;
   salt: string;
   role: UserRole;
@@ -20,6 +21,7 @@ export type StoredUser = {
 
 export type AuthUser = {
   username: string;
+  fullName: string | null;
   role: UserRole;
 };
 
@@ -214,6 +216,7 @@ export async function ensureUiAuthSchema(): Promise<void> {
       await getPool().query(`
         CREATE TABLE IF NOT EXISTS ui_auth_users (
           username TEXT PRIMARY KEY,
+          full_name TEXT NULL,
           password_hash TEXT NOT NULL,
           salt TEXT NOT NULL,
           role TEXT NOT NULL DEFAULT 'user',
@@ -225,6 +228,9 @@ export async function ensureUiAuthSchema(): Promise<void> {
 
         ALTER TABLE ui_auth_users
           ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
+        
+          ALTER TABLE ui_auth_users
+          ADD COLUMN IF NOT EXISTS full_name TEXT NULL;
 
         ALTER TABLE ui_auth_users
           ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
@@ -360,6 +366,7 @@ export async function findUserByUsername(
     `
       SELECT
         username,
+        full_name,
         password_hash,
         salt,
         role,
@@ -378,6 +385,7 @@ export async function findUserByUsername(
 
   const row = result.rows[0] as {
     username: string;
+    full_name: string | null;
     password_hash: string;
     salt: string;
     role: UserRole;
@@ -388,6 +396,7 @@ export async function findUserByUsername(
 
   return {
     username: row.username,
+    fullName: row.full_name,
     passwordHash: row.password_hash,
     salt: row.salt,
     role: row.role,
@@ -672,6 +681,7 @@ export async function getAuthenticatedUserFromAuthHeader(
 
   return {
     username: user.username,
+    fullName: user.fullName,
     role: user.role,
   };
 }
@@ -727,6 +737,7 @@ export async function findUserByRefreshToken(
     `
       SELECT
         u.username,
+        u.full_name,
         u.role,
         u.is_active
       FROM ui_auth_refresh_tokens rt
@@ -746,6 +757,7 @@ export async function findUserByRefreshToken(
 
   const row = result.rows[0] as {
     username: string;
+    full_name: string | null;
     role: UserRole;
     is_active: boolean;
   };
@@ -756,6 +768,7 @@ export async function findUserByRefreshToken(
 
   return {
     username: row.username,
+    fullName: row.full_name,
     role: row.role,
   };
 }

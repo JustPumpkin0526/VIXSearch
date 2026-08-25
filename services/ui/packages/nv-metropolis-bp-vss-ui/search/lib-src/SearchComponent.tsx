@@ -1004,6 +1004,29 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
       searchResults,
       groupSearchSensorIdSet,
     ]);
+
+  const defaultReportTitle = React.useMemo(() => {
+    const normalizedQuery =
+      filterParams.query
+        ?.replace(/\s+/g, ' ')
+        .trim() ?? '';
+
+    if (!normalizedQuery) {
+      return '영상 검색 결과 분석 보고서';
+    }
+
+    const reportSubject =
+      normalizedQuery.length > 40
+        ? `${normalizedQuery.slice(0, 40)}…`
+        : normalizedQuery;
+
+    return (
+      `${reportSubject} ` +
+      '영상 분석 결과보고서'
+    );
+  }, [
+    filterParams.query,
+  ]);
   
   return (
     <div 
@@ -1064,6 +1087,7 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
         videoUrl={videoModal.videoUrl}
         title={modalTitle}
         onClose={handleCloseVideoModal}
+        defaultReportTitle={defaultReportTitle}
         searchByImageEnabled={mediaWithObjectsBbox}
         onSearchByImageRequest={handleSearchByImageRequest}
         searchByImageTargetOffsetSeconds={searchByImageTargetOffsetSeconds}

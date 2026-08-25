@@ -80,6 +80,7 @@ export interface SearchVideoModalProps {
   title: React.ReactNode | string;
   onClose: () => void;
 
+  defaultReportTitle?: string;
   defaultSituationDescription?: string;
 
   searchByImageEnabled?: boolean;
@@ -106,8 +107,6 @@ export interface SearchVideoModalProps {
   loadingReports?: boolean;
   creatingReport?: boolean;
 
-  defaultReportAuthor?: string;
-
   /** Face detector rectangle in source-video pixel coordinates. */
   faceMatchBbox?: BboxCoords;
 
@@ -118,12 +117,42 @@ export interface SearchVideoModalProps {
   requestedClipDurationSeconds?: number;
 }
 
+type StoredAuthUser = {
+  fullName?: string | null;
+};
+
+function resolveDefaultReportAuthor(): string {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  try {
+    const rawUser =
+      window.localStorage.getItem(
+        'vss.auth.user',
+      );
+
+    if (!rawUser) {
+      return '';
+    }
+
+    const storedUser = JSON.parse(rawUser) as StoredAuthUser;
+
+    return typeof storedUser.fullName === 'string'
+      ? storedUser.fullName.trim()
+      : '';
+  } catch {
+    return '';
+  }
+}
 
 export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
     isOpen,
     videoUrl,
     title,
     onClose,
+
+    defaultReportTitle = '영상 검색 결과 분석 보고서',
 
     defaultSituationDescription = '',
 
@@ -139,7 +168,6 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
     existingReports = [],
     loadingReports = false,
     creatingReport = false,
-    defaultReportAuthor = '',
 
     faceMatchBbox,
     faceMatchOffsetSeconds,
@@ -348,7 +376,9 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
       setShowExistingReports(false);
 
       setReportTitle('');
-      setReportAuthor('');
+      setReportAuthor(
+        resolveDefaultReportAuthor(),
+      );
 
       setReportSituationDescription(
         defaultSituationDescription.trim(),
@@ -505,25 +535,20 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
          * 그대로 유지합니다.
          */
         if (!reportTitle.trim()) {
-          setReportTitle(
-            typeof title === 'string'
-              ? `${title} 보고서`
-              : '검색 결과 보고서',
-          );
+          const normalizedDefaultTitle = defaultReportTitle.trim();                
+          setReportTitle(normalizedDefaultTitle || '영상 검색 결과 분석 보고서');
         }
       
         if (!reportAuthor.trim()) {
           setReportAuthor(
-            defaultReportAuthor,
+            resolveDefaultReportAuthor(),
           );
         }
       },
       [
-        title,
+        defaultReportTitle,
         reportTitle,
         reportAuthor,
-        defaultReportAuthor,
-      
         faceMatchBbox,
         resolvedFaceMatchOffsetSeconds,
         videoElement,
@@ -892,7 +917,7 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
                 dark:text-gray-100
               "
             >
-              Report
+              보고서 생성
             </h3>
           </div>
 
@@ -1013,7 +1038,7 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
                   dark:text-gray-300
                 "
               >
-                발생 장소
+                장소명
               </label>
 
               <input

@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 
 type AdminUser = {
   username: string;
+  fullName?: string | null;
   role: 'admin' | 'user';
   isActive: boolean;
   createdBy?: string | null;
@@ -16,6 +17,7 @@ export default function AdminUsersPanel() {
 
   const [users, setUsers] = React.useState<AdminUser[]>([]);
   const [username, setUsername] = React.useState('');
+  const [fullName, setFullName] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [role, setRole] = React.useState<'admin' | 'user'>('user');
   const [loading, setLoading] = React.useState(false);
@@ -70,6 +72,7 @@ export default function AdminUsersPanel() {
         },
         body: JSON.stringify({
           username,
+          fullName,
           password,
           role,
         }),
@@ -82,6 +85,7 @@ export default function AdminUsersPanel() {
       }
 
       setUsername('');
+      setFullName('');
       setPassword('');
       setRole('user');
       setMessage(`계정이 생성되었습니다: ${payload.user.username}`);
@@ -214,7 +218,7 @@ export default function AdminUsersPanel() {
         >
           <h2 className="text-lg font-semibold">사용자 계정 생성</h2>
 
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="mt-4 grid gap-4 md:grid-cols-4">
             <div>
               <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">
                 아이디
@@ -225,6 +229,22 @@ export default function AdminUsersPanel() {
                 className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-blue-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-white dark:placeholder:text-gray-500"
                 placeholder="user01"
                 autoComplete="off"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">
+                이름
+              </label>
+
+              <input
+                value={fullName}
+                onChange={(event) => setFullName(event.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-blue-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-white dark:placeholder:text-gray-500"
+                placeholder="홍길동"
+                autoComplete="name"
+                maxLength={100}
                 required
               />
             </div>
@@ -304,6 +324,9 @@ export default function AdminUsersPanel() {
                     아이디
                   </th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-gray-300">
+                    이름
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-gray-300">
                     권한
                   </th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-gray-300">
@@ -329,6 +352,10 @@ export default function AdminUsersPanel() {
                   >
                     <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
                       {item.username}
+                    </td>
+
+                    <td className="px-4 py-3 text-gray-700 dark:text-gray-300">
+                      {item.fullName || '-'}
                     </td>
 
                     <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
@@ -397,7 +424,7 @@ export default function AdminUsersPanel() {
                 {users.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-4 py-8 text-center text-gray-500 dark:text-gray-500"
                     >
                       {loading ? '불러오는 중...' : '생성된 계정이 없습니다.'}

@@ -130,18 +130,12 @@ function buildDocumentNumber(report: ReportPayload): string {
   return `VIX-${datePart}-${safeText(report.id, "REPORT").slice(0, 8)}`;
 }
 
-function buildReportQuestion(
-  report: ReportPayload,
-  item?: ReportSceneItem,
-): string {
-  return safeText(
-    item?.query || report.query || report.description || report.title,
-    "검색어가 제공되지 않았습니다.",
-  );
+function buildReportQuestion(report: ReportPayload, item?: ReportSceneItem): string {
+  return safeText(item?.query || report.query || report.description || report.title, "검색 대상 정보가 제공되지 않았습니다.");
 }
 
 function buildLocationName(item: ReportSceneItem): string {
-  return safeText(item.locationName || item.videoName, "장소명 없음");
+  return safeText(item.locationName || item.videoName, "촬영 위치 정보 없음");
 }
 
 function buildAdditionalComment(item: ReportSceneItem): string {
@@ -282,7 +276,7 @@ function buildInfoTable(report: ReportPayload): Table {
       [
         "생성일시",
         formatDateTime(report.createdAt),
-        "검색 결과",
+        "결과 장면",
         `${report.items.length}건`,
       ],
     ].map(
@@ -462,22 +456,27 @@ async function buildWordSceneTable(report: ReportPayload): Promise<Table> {
           }),
         ],
       }),
-      new TableRow({
-        cantSplit: true,
-        children: [labelCell("발생 시각"), valueCell(buildSceneTimestamp(item))],
-      }),
-      new TableRow({
-        cantSplit: true,
-        children: [labelCell("발생 장소"), valueCell(buildLocationName(item))],
-      }),
-      new TableRow({
-        cantSplit: true,
-        children: [labelCell("질의 내용"), valueCell(buildReportQuestion(report, item))],
-      }),
-      new TableRow({
-        cantSplit: true,
+      new TableRow({cantSplit: true,
         children: [
-          labelCell("상세 내용"),
+          labelCell("영상 구간"),
+          valueCell(buildSceneTimestamp(item)),
+        ],
+      }),
+      new TableRow({cantSplit: true,
+        children: [
+          labelCell("촬영 위치"),
+          valueCell(buildLocationName(item)),
+        ],
+      }),
+      new TableRow({cantSplit: true,
+        children: [
+          labelCell("검색 대상"),
+          valueCell(buildReportQuestion(report, item)),
+        ],
+      }),
+      new TableRow({cantSplit: true,
+        children: [
+          labelCell("분석 내용"),
           valueCell(buildAdditionalComment(item)),
         ],
       }),
@@ -526,10 +525,10 @@ function buildReportTitle(report: ReportPayload): Paragraph {
   return new Paragraph({
     alignment: AlignmentType.CENTER,
     keepNext: true,
-    spacing: { before: 0, after: 140 },
+    spacing: { before: 140, after: 140 },
     children: [
       new TextRun({
-        text: safeText(report.title, "검색 결과 보고서"),
+        text: safeText(report.title, "영상 분석 결과보고서"),
         bold: true,
         size: 28,
         color: "52616B",
@@ -699,11 +698,9 @@ export async function buildAccidentReportWordBuffer(
           },
         },
         children: [
-          buildReportTitle(report),
-
           buildReportHeader(),
 
-          new Paragraph({ spacing: { after: 120 } }),
+          buildReportTitle(report),
 
           buildInfoTable(report),
 
@@ -723,7 +720,7 @@ export async function buildAccidentReportWordBuffer(
             },
             children: [
               new TextRun({
-                text: "본 보고서는 VIXSearch 검색 결과를 기반으로 자동 생성되었습니다.",
+                text: "본 보고서는 VIXSearch의 영상 검색 및 분석 결과를 기반으로 자동 생성되었습니다.",
                 size: 17,
                 color: "6B7780",
               }),
@@ -873,7 +870,7 @@ export async function buildAccidentReportPdfBuffer(
   let page = pdfDoc.addPage([595.28, 841.89]);
   let y = 812;
   const left = 48;
-  const headerTitle = safeText(report.title, "검색 결과 보고서");
+  const headerTitle = safeText(report.title, "영상 분석 결과보고서")
   let headerTitleSize = 14;
   while (
     headerTitleSize > 9 &&
@@ -885,14 +882,6 @@ export async function buildAccidentReportPdfBuffer(
     headerTitle,
     headerTitleSize,
   );
-  page.drawText(headerTitle, {
-    x: left + (499 - headerTitleWidth) / 2,
-    y,
-    size: headerTitleSize,
-    font: boldFont,
-    color: rgb(0.32, 0.38, 0.42),
-  });
-  y -= 34;
   page.drawText("VIXSearch", {
     x: left,
     y,
@@ -908,10 +897,18 @@ export async function buildAccidentReportPdfBuffer(
     color: rgb(0.09, 0.42, 0.32),
   });
   y -= 30;
+  page.drawText(headerTitle, {
+    x: left + (499 - headerTitleWidth) / 2,
+    y,
+    size: headerTitleSize,
+    font: boldFont,
+    color: rgb(0.32, 0.38, 0.42),
+  });
+  y -= 34;
 
   const infoRows = [
     `문서번호  ${buildDocumentNumber(report)}     작성자  ${safeText(report.author, "VSS 시스템")}`,
-    `생성일시  ${formatDateTime(report.createdAt)}     검색 결과  ${report.items.length}건`,
+    `생성일시  ${formatDateTime(report.createdAt)}     결과 장면  ${report.items.length}건`,
   ];
   for (const row of infoRows) {
     ({ page, y } = drawWrappedText(
@@ -939,10 +936,10 @@ export async function buildAccidentReportPdfBuffer(
     const textSize = 9.5;
     const lineHeight = 13;
     const detailRows = [
-      { label: "발생 시각", value: buildSceneTimestamp(item) },
-      { label: "발생 장소", value: buildLocationName(item) },
-      { label: "질의 내용", value: buildReportQuestion(report, item) },
-      { label: "상세 내용", value: buildAdditionalComment(item) },
+      {label: "영상 구간", value: buildSceneTimestamp(item)},
+      {label: "촬영 위치", value: buildLocationName(item)},
+      {label: "검색 대상", value: buildReportQuestion(report, item)},
+      {label: "분석 내용", value: buildAdditionalComment(item)},
     ].map((detail) => {
       const lines = wrapPdfText(
         detail.value,
@@ -1083,7 +1080,7 @@ export async function buildAccidentReportPdfBuffer(
       thickness: 0.5,
       color: rgb(0.82, 0.87, 0.85),
     });
-    reportPage.drawText("VIXSearch 검색 결과 기반 자동 생성 보고서", {
+    reportPage.drawText("VIXSearch 영상 검색·분석 결과 기반 자동 생성 보고서", {
       x: 48,
       y: 23,
       size: 7.5,
