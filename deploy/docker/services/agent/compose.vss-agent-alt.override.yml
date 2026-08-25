@@ -1,4 +1,0 @@
-version: '3.8'
-services:
-  vss-agent:
-    container_name: vss-agent-alt
