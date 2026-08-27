@@ -7,12 +7,14 @@ interface SearchByImageOverlayProps {
   frameData: SearchByImageFrameData;
   selectedObjectId?: string | null;
   onSelectObject?: (objectId: string | null) => void;
+  stageRef?: React.RefObject<any>;
 }
 
 export const SearchByImageOverlay: React.FC<SearchByImageOverlayProps> = ({
   frameData,
   selectedObjectId: controlledSelectedObjectId,
   onSelectObject,
+  stageRef,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageContainerRef = useRef<HTMLDivElement>(null);
@@ -154,9 +156,9 @@ export const SearchByImageOverlay: React.FC<SearchByImageOverlayProps> = ({
         className="relative flex flex-1 items-center justify-center overflow-hidden bg-black min-h-0 min-w-0"
         style={{ minHeight: 0 }}
       >
-        <div ref={stageContainerRef} style={{ position: 'relative' }}>
+        <div ref={stageContainerRef} style={{ position: 'relative' }} className="search-by-image-konva-container">
           {scaleFactor > 0 && (
-            <Stage width={stageWidth} height={stageHeight}>
+            <Stage ref={stageRef as any} width={stageWidth} height={stageHeight}>
               <Layer>
                 <KonvaImage
                   image={frameData.frameImage}

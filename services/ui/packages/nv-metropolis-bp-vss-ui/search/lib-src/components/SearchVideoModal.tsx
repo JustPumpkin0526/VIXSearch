@@ -90,14 +90,27 @@ export interface SearchVideoModalProps {
   searchByImageTargetOffsetSeconds?: number;
   searchByImageFooter?: React.ReactNode;
   searchByImageOverlay?: React.ReactNode;
+  /** Ref to the Konva Stage used by SearchByImageOverlay, if present. */
+  searchByImageStageRef?: React.RefObject<any>;
 
   onCreateReport?: (
     values: NewReportFormValues,
   ) => void | Promise<void>;
 
+  /** Optional callback receiving a dataURL of the result image (with overlays) when creating a new report. */
+  onCreateReportImage?: (
+    dataUrl: string | null,
+  ) => void | Promise<void>;
+
   onAddToExistingReport?: (
     reportId: string,
     values: AddToExistingReportFormValues,
+  ) => void | Promise<void>;
+
+  /** Optional callback receiving a dataURL of the result image (with overlays) when adding to existing report. */
+  onAddToExistingReportImage?: (
+    reportId: string,
+    dataUrl: string | null,
   ) => void | Promise<void>;
 
   onLoadExistingReports?:
@@ -161,9 +174,12 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
     searchByImageTargetOffsetSeconds,
     searchByImageFooter,
     searchByImageOverlay,
+    searchByImageStageRef,
 
     onCreateReport,
+    onCreateReportImage,
     onAddToExistingReport,
+    onAddToExistingReportImage,
     onLoadExistingReports,
     existingReports = [],
     loadingReports = false,
@@ -641,6 +657,75 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
 
     const handleSubmitNewReport =
       useCallback(async () => {
+        async function captureResultImage(): Promise<string | null> {
+          try {
+            // If a Konva Stage ref was provided, prefer using its API to capture.
+            try {
+              if (searchByImageStageRef?.current && typeof searchByImageStageRef.current.toDataURL === 'function') {
+                return searchByImageStageRef.current.toDataURL({ mimeType: 'image/png', pixelRatio: window.devicePixelRatio || 1 });
+              }
+
+              // Fallback: look up canvas in overlay container (for cases where stageRef isn't passed)
+              const host = videoOverlayHost ?? document.body;
+              const overlayContainer = host.querySelector('.search-by-image-konva-container');
+              if (overlayContainer) {
+                const canvas = overlayContainer.querySelector('canvas');
+                if (canvas && typeof (canvas as HTMLCanvasElement).toDataURL === 'function') {
+                  return (canvas as HTMLCanvasElement).toDataURL('image/png');
+                }
+              }
+            } catch (e) {
+              // ignore and fallback to video capture
+            }
+
+            if (!videoElement) return null;
+
+            const w = videoElement.videoWidth || videoElement.clientWidth;
+            const h = videoElement.videoHeight || videoElement.clientHeight;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return null;
+
+            // draw video frame
+            ctx.drawImage(videoElement, 0, 0, w, h);
+
+            // draw face bbox if available (faceMatchBbox is in source pixels)
+            if (faceMatchBbox && videoElement.videoWidth && videoElement.videoHeight) {
+              const scaleX = w / videoElement.videoWidth;
+              const scaleY = h / videoElement.videoHeight;
+
+              ctx.lineWidth = Math.max(2, Math.min(w, h) * 0.01);
+              ctx.strokeStyle = '#76b900';
+              ctx.fillStyle = 'rgba(118,185,0,0.15)';
+
+              const left = faceMatchBbox.leftX * scaleX;
+              const top = faceMatchBbox.topY * scaleY;
+              const width = (faceMatchBbox.rightX - faceMatchBbox.leftX) * scaleX;
+              const height = (faceMatchBbox.bottomY - faceMatchBbox.topY) * scaleY;
+
+              ctx.fillRect(left, top, width, height);
+              ctx.strokeRect(left, top, width, height);
+
+              // label
+              ctx.font = `${Math.max(12, Math.round(ctx.lineWidth * 6))}px sans-serif`;
+              ctx.fillStyle = '#000';
+              const text = 'Face';
+              const textW = ctx.measureText(text).width;
+              const textH = Math.max(12, Math.round(ctx.lineWidth * 6));
+              ctx.fillRect(left, Math.max(0, top - textH - 4), textW + 8, textH + 4);
+              ctx.fillStyle = '#fff';
+              ctx.fillText(text, left + 4, Math.max(textH, top - 4));
+            }
+
+            return canvas.toDataURL('image/png');
+          } catch (e) {
+            console.error('[SearchVideoModal] captureResultImage failed', e);
+            return null;
+          }
+        }
         const normalizedTitle = reportTitle.trim();
         const normalizedAuthor = reportAuthor.trim();
         const normalizedPlace = reportPlace.trim();
@@ -657,6 +742,25 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
         }
       
         try {
+          const dataUrl = await captureResultImage();
+          console.log('[SearchVideoModal] captureResultImage produced dataUrl length:', dataUrl?.length);
+          // expose the captured image globally and dispatch an event so parent can include it in the report payload.
+          try {
+            try {
+              // store for synchronous access
+              (window as any).__vss_last_captured_screenshot = dataUrl ?? null;
+              window.dispatchEvent(new CustomEvent('vss-captured-screenshot', { detail: { dataUrl } }));
+            } catch (e) {
+              // ignore
+            }
+
+            if (onCreateReportImage) {
+              try { await onCreateReportImage(dataUrl); } catch (e) { console.error('[SearchVideoModal] onCreateReportImage failed', e); }
+            }
+          } catch (e) {
+            console.error('[SearchVideoModal] error handling captured image', e);
+          }
+
           await onCreateReport({
             title: normalizedTitle,
             author: normalizedAuthor,
@@ -692,6 +796,51 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
       async (
         reportId: string,
       ) => {
+        async function captureResultImage(): Promise<string | null> {
+          try {
+            if (!videoElement) return null;
+
+            const w = videoElement.videoWidth || videoElement.clientWidth;
+            const h = videoElement.videoHeight || videoElement.clientHeight;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return null;
+
+            ctx.drawImage(videoElement, 0, 0, w, h);
+
+            if (faceMatchBbox && videoElement.videoWidth && videoElement.videoHeight) {
+              const scaleX = w / videoElement.videoWidth;
+              const scaleY = h / videoElement.videoHeight;
+              ctx.lineWidth = Math.max(2, Math.min(w, h) * 0.01);
+              ctx.strokeStyle = '#76b900';
+              ctx.fillStyle = 'rgba(118,185,0,0.15)';
+
+              const left = faceMatchBbox.leftX * scaleX;
+              const top = faceMatchBbox.topY * scaleY;
+              const width = (faceMatchBbox.rightX - faceMatchBbox.leftX) * scaleX;
+              const height = (faceMatchBbox.bottomY - faceMatchBbox.topY) * scaleY;
+
+              ctx.fillRect(left, top, width, height);
+              ctx.strokeRect(left, top, width, height);
+              ctx.font = `${Math.max(12, Math.round(ctx.lineWidth * 6))}px sans-serif`;
+              ctx.fillStyle = '#000';
+              const text = 'Face';
+              const textW = ctx.measureText(text).width;
+              const textH = Math.max(12, Math.round(ctx.lineWidth * 6));
+              ctx.fillRect(left, Math.max(0, top - textH - 4), textW + 8, textH + 4);
+              ctx.fillStyle = '#fff';
+              ctx.fillText(text, left + 4, Math.max(textH, top - 4));
+            }
+
+            return canvas.toDataURL('image/png');
+          } catch (e) {
+            console.error('[SearchVideoModal] captureResultImage failed', e);
+            return null;
+          }
+        }
         const normalizedPlace = reportPlace.trim();
 
         const normalizedSituationDescription = reportSituationDescription.trim();
@@ -705,6 +854,11 @@ export const SearchVideoModal: React.FC<SearchVideoModalProps> = ({
           return;
         }
         try {
+          const dataUrl = await captureResultImage();
+          if (onAddToExistingReportImage) {
+            try { await onAddToExistingReportImage(reportId, dataUrl); } catch (e) { console.error('[SearchVideoModal] onAddToExistingReportImage failed', e); }
+          }
+
           await onAddToExistingReport(
             reportId,
             {

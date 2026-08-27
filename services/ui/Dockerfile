@@ -9,6 +9,18 @@ ARG GROUP_ID
 
 WORKDIR /repo
 
+# Install native build dependencies for native node modules (@napi-rs/canvas etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  build-essential \
+  python3 \
+  pkg-config \
+  libcairo2-dev \
+  libpango1.0-dev \
+  libjpeg-dev \
+  libgif-dev \
+  libpng-dev \
+  && rm -rf /var/lib/apt/lists/*
+
 # Copy source files
 COPY services/ui/ services/ui/
 
@@ -19,7 +31,7 @@ ENV NEXT_BUILD_TRACES false
 # which is where `package.json` and `package-lock.json` live after the COPY above.
 WORKDIR /repo/services/ui
 
-RUN npm ci
+RUN npm ci --prefer-offline --no-audit --no-fund
 # Matches CI: run `bundle` after `build` where defined (e.g. nv-metropolis-bp-vss-ui). The runner
 # stage still COPYs standalone, `.next/static`, and `public` explicitly for custom-server.js, so this
 # mainly keeps Docker builds aligned with `turbo run build bundle` and validates those tasks.

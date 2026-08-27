@@ -19,25 +19,27 @@
     "@aiqtoolkit-ui/common": "*",
     "@nemo-agent-toolkit/ui": "0.1.1",
     "@nv-metropolis-bp-vss-ui/all": "*",
+    "@pdf-lib/fontkit": "^1.1.1",
     "@tabler/icons-react": "^2.9.0",
+    "docx": "^9.7.1",
     "jsdom": "27.0.1",
     "next": "15.5.18",
     "next-i18next": "^13.2.2",
     "next-runtime-env": "^1.3.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "rsuite": "^6.0.0",
-    "@pdf-lib/fontkit": "^1.1.1",
-    "docx": "^9.7.1",
     "nodemailer": "^7.0.13",
     "pdf-lib": "^1.17.1",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "puppeteer-core": "^24.18.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "rsuite": "^6.0.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.1.4",
     "@testing-library/react": "^16.3.2",
     "@types/jest": "^30.0.0",
     "@types/node": "18.15.0",
+    "@types/pg": "^8.11.10",
     "@types/react": "18.0.28",
     "@types/react-dom": "18.0.11",
     "autoprefixer": "^10.4.14",
@@ -47,7 +49,6 @@
     "postcss": "8.5.10",
     "tailwindcss": "^3.3.3",
     "ts-jest": "^29.4.9",
-    "typescript": "4.9.5",
-    "@types/pg": "^8.11.10"
+    "typescript": "4.9.5"
   }
 }

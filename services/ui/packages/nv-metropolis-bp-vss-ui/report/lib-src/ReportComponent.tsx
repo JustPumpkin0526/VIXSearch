@@ -206,6 +206,9 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
   const [pdfPreviewError, setPdfPreviewError] = useState<string | null>(null);
   const [isDeletingReport, setIsDeletingReport] = useState(false);
   const [openReportMenuId, setOpenReportMenuId] = useState<string | null>(null);
+  const [editorMode, setEditorMode] = useState<boolean>(false);
+  const lastSavedReportRef = useRef<ReportListItem | null>(null);
+  const [isSavingReport, setIsSavingReport] = useState(false);
 
   useEffect(() => {
     if (initialReports.length > 0) {
@@ -366,7 +369,63 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
     setPdfDocumentVersion(0);
     setPdfPreviewError(null);
     setOpenReportMenuId(null);
+    // track last-saved snapshot for undo
+    lastSavedReportRef.current = selectedReport ? { ...selectedReport } : null;
   }, [selectedReport?.id]);
+
+  const persistReportPatch = React.useCallback(async (reportId: string, patchBody: Record<string, unknown>) => {
+    if (typeof window === 'undefined') return null;
+    const token = window.localStorage.getItem('vss.auth.token');
+    if (!token) throw new Error('Missing auth token');
+
+    const response = await fetch('/api/reports', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ id: reportId, ...patchBody }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to persist report: ${response.status}`);
+    }
+
+    const payload = await response.json();
+    return payload.report as ReportListItem | null;
+  }, []);
+
+  const saveReportEdits = React.useCallback(async () => {
+    if (!selectedReport) return;
+    const current = storedReports.find((r) => r.id === selectedReport.id);
+    if (!current) return;
+    setIsSavingReport(true);
+    try {
+      const patchBody: Record<string, unknown> = {
+        title: current.title,
+        description: current.description,
+        items: current.items ?? [],
+      };
+
+      const updated = await persistReportPatch(current.id, patchBody);
+      if (updated) {
+        setStoredReports((s) => s.map((r) => (r.id === updated.id ? updated : r)));
+        lastSavedReportRef.current = updated;
+        window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
+      }
+    } catch (err) {
+      console.warn('Failed to save report edits:', err);
+      window.alert('저장에 실패했습니다. 다시 시도해주세요.');
+    } finally {
+      setIsSavingReport(false);
+    }
+  }, [selectedReport, storedReports, persistReportPatch]);
+
+  const undoReportEdits = React.useCallback(() => {
+    if (!selectedReport || !lastSavedReportRef.current) return;
+    const snapshot = lastSavedReportRef.current;
+    setStoredReports((s) => s.map((r) => (r.id === snapshot.id ? snapshot : r)));
+  }, [selectedReport]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || openReportMenuId === null) {
@@ -676,6 +735,55 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
       setIsDeletingReport(false);
     }
   }, [isDeletingReport]);
+  
+  const handleUpdateBlock = React.useCallback(async (blockId: string, changes: Partial<ReportSceneItem>) => {
+    if (!selectedReport) return;
+    const nextItems = (selectedReport.items || []).map((it) => (it.id === blockId ? { ...it, ...changes } : it));
+    // optimistic update
+    setStoredReports((current) => current.map((r) => (r.id === selectedReport.id ? { ...r, items: nextItems } : r)));
+
+    try {
+      const updated = await persistReportPatch(selectedReport.id, { items: nextItems });
+      if (updated) {
+        setStoredReports((current) => current.map((r) => (r.id === updated.id ? updated : r)));
+        window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
+      }
+    } catch (error) {
+      console.warn('Failed to persist block update:', error);
+      // rollback by reloading reports from API
+      try {
+        const reloaded = await loadReportsFromApi();
+        setStoredReports(reloaded);
+      } catch (e) {
+        console.warn('Failed to reload reports after failed patch:', e);
+      }
+    }
+  }, [selectedReport, persistReportPatch]);
+
+  const handleDeleteBlock = React.useCallback(async (blockId: string) => {
+    if (!selectedReport) return;
+    const confirmed = typeof window !== 'undefined' ? window.confirm('이 블록을 삭제하시겠습니까?') : true;
+    if (!confirmed) return;
+
+    const nextItems = (selectedReport.items || []).filter((it) => it.id !== blockId);
+    setStoredReports((current) => current.map((r) => (r.id === selectedReport.id ? { ...r, items: nextItems } : r)));
+
+    try {
+      const updated = await persistReportPatch(selectedReport.id, { items: nextItems });
+      if (updated) {
+        setStoredReports((current) => current.map((r) => (r.id === updated.id ? updated : r)));
+        window.dispatchEvent(new CustomEvent(REPORTS_UPDATED_EVENT));
+      }
+    } catch (error) {
+      console.warn('Failed to persist block delete:', error);
+      try {
+        const reloaded = await loadReportsFromApi();
+        setStoredReports(reloaded);
+      } catch (e) {
+        console.warn('Failed to reload reports after failed delete:', e);
+      }
+    }
+  }, [selectedReport, persistReportPatch]);
 
   const handlePreviewPrevPage = React.useCallback(() => {
     setPdfCurrentPage((current) => Math.max(1, current - 1));
@@ -690,33 +798,6 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
       <div className="min-h-full p-6 lg:p-8">
         <div className="grid min-h-[calc(100vh-10rem)] gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <section className="flex min-h-0 flex-col rounded-3xl border border-gray-200 bg-white/80 p-6 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/80">
-            <header className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-gray-200 pb-4 dark:border-neutral-700">
-              <div className="flex flex-col gap-2">
-                <div className="inline-flex w-fit items-center gap-2 rounded-full border border-green-400/50 bg-green-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-green-700 dark:bg-green-900/20 dark:text-green-300">
-                  <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                  Report Viewer
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
-                    {selectedReport?.title || '리포트를 선택하세요'}
-                  </p>
-                  {selectedReport ? (
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-neutral-400">
-                      <span>{formatCreatedAt(selectedReport.createdAt)}</span>
-
-                      {selectedReport.author ? (
-                        <>
-                          <span>·</span>
-                          <span>{selectedReport.author}</span>
-                        </>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-
-              {/* 페이지 전환 버튼은 미리보기 섹션 하단 중앙으로 이동되었습니다. */}
-            </header>
 
             {!selectedReport ? (
               <div className="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-gray-300 bg-gray-50/70 dark:border-neutral-600 dark:bg-neutral-950/40">
@@ -728,6 +809,48 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
               <>
                 <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-gray-200 bg-gray-100/80 p-4 shadow-inner dark:border-neutral-700 dark:bg-neutral-950/60">
                   <div className="min-h-0 flex-1 overflow-hidden">
+                    {/* Top bar: title + editor toggle (switch) */}
+                    <div className="mb-4 flex items-center justify-between">
+                      <div className="min-w-0">
+                        {/* Title, createdAt, and author are intentionally hidden in preview */}
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        {/* Editor switch hidden visually but kept in DOM for logic */}
+                        <label htmlFor="editor-mode-switch" className="hidden">
+                          <span className="hidden sm:inline">Editor</span>
+                          <button
+                            id="editor-mode-switch"
+                            type="button"
+                            role="switch"
+                            aria-checked={editorMode}
+                            onClick={() => setEditorMode((v) => !v)}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${editorMode ? 'bg-green-600' : 'bg-gray-300 dark:bg-neutral-700'}`}
+                          >
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${editorMode ? 'translate-x-5' : 'translate-x-1'}`} />
+                          </button>
+                        </label>
+                        {editorMode ? (
+                          <div className="ml-2 flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={saveReportEdits}
+                              disabled={isSavingReport}
+                              className="rounded-md bg-green-600 px-3 py-1 text-xs text-white disabled:opacity-60"
+                            >
+                              {isSavingReport ? '저장 중...' : '저장'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={undoReportEdits}
+                              className="rounded-md border border-gray-300 bg-white px-3 py-1 text-xs text-gray-700"
+                            >
+                              되돌리기
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
                     <div className="mx-auto flex h-full w-full max-w-[1040px] flex-col bg-transparent p-0 shadow-none">
                       {selectedReport.pdfFileUrl ? (
                         <div className="flex h-full min-h-0 flex-col">
@@ -737,7 +860,7 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                           {pdfPreviewData && !pdfPreviewError ? (
                             <div
                                   ref={pdfPreviewContainerRef}
-                                  className="relative flex h-[min(72vh,960px)] min-h-[540px] w-full items-center justify-center overflow-hidden rounded-2xl bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(243,244,246,0.98))] p-4 dark:bg-neutral-950"
+                                  className="relative flex h-[min(80vh,1200px)] min-h-[720px] w-full items-center justify-center overflow-hidden rounded-2xl bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(243,244,246,0.98))] p-4 dark:bg-neutral-950"
                                 >
                                   <canvas
                                     ref={pdfCanvasRef}
@@ -790,11 +913,9 @@ export const ReportComponent: React.FC<ReportComponentProps> = ({ reports }) => 
                     </div>
 
                   </div>
-                </div>
+                      
 
-                <div className="mt-4 flex items-center justify-between text-xs text-gray-500 dark:text-neutral-400">
-                  <span>리포트 미리보기</span>
-                  <span>{selectedReport.items?.length ?? 0}개 장면</span>
+                      
                 </div>
               </>
             )}

@@ -368,6 +368,12 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
       setCreatingReport(true);
 
       try {
+        // If a captured screenshot was provided by the modal, prefer it.
+        const captured = typeof window !== 'undefined' ? (window as any).__vss_last_captured_screenshot : null;
+        if (captured && typeof captured === 'string') {
+          // attach to values via a side-channel: we'll include it into the report items below
+          (values as any).__vss_captured_screenshot = captured;
+        }
         const item = activeVideoData;
         if (!vstApiUrl || !item.sensor_id) {
           throw new Error(
@@ -379,7 +385,11 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
 
         const reportStreamId = videoModal.streamId || item.sensor_id;
 
-        const frameDataUrl = await fetchReportFrameDataUrl(
+        // prefer the captured screenshot if available, otherwise fetch frame image from VST
+        const frameDataUrlFromCaptured = (values as any).__vss_captured_screenshot;
+        const frameDataUrl = frameDataUrlFromCaptured
+          ? frameDataUrlFromCaptured
+          : await fetchReportFrameDataUrl(
             vstApiUrl,
             reportStreamId,
             clipStartTime,
@@ -410,7 +420,34 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
               sensorId: item.sensor_id,
               similarity: item.similarity,
               pauseTime: values.pauseTime,
-              screenshotUrl: frameDataUrl,
+                screenshotUrl: frameDataUrl,
+                // originalFileName: prefer original clip filename (storage/show/video name)
+                originalFileName: ((): string | undefined => {
+                  const cand = (item as any).storageFilename || (item as any).storage_filename || (item as any).show_filename || item.video_name || displayVideoName || undefined;
+                  if (cand && typeof cand === 'string' && cand.trim()) {
+                    try { return decodeURIComponent(String(cand).split('/').pop() || cand); } catch { return String(cand); }
+                  }
+                  return undefined;
+                })(),
+                fileName: ((): string => {
+                  try {
+                    if (!frameDataUrl) return '파일명 없음';
+                    // If this is a captured data URL, prefer the original clip's filename (video_name)
+                    if (frameDataUrl.startsWith('data:image/')) {
+                      const original = (item as any).storageFilename || (item as any).storage_filename || item.video_name || displayVideoName || '';
+                      if (original) {
+                        try { return decodeURIComponent(String(original).split('/').pop() || original); } catch { return String(original); }
+                      }
+                      const ext = frameDataUrl.startsWith('data:image/png') ? 'png' : 'jpg';
+                      return `capture_${Date.now()}.${ext}`;
+                    }
+                    const u = new URL(frameDataUrl);
+                    const base = decodeURIComponent(u.pathname.split('/').pop() || 'file');
+                    return base || '파일명 없음';
+                  } catch (e) {
+                    try { return String(frameDataUrl).split('/').pop() || '파일명 없음'; } catch { return '파일명 없음'; }
+                  }
+                })(),
             },
           ],
         };
@@ -490,6 +527,18 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
       videoModal.actualStartTime,
       videoModal.streamId,
     ]);
+
+  const handleCreateReportImageDebug = React.useCallback((dataUrl: string | null) => {
+    try {
+      console.log('[SearchComponent] onCreateReportImage received length:', dataUrl?.length);
+      if (dataUrl) {
+        const w = window.open();
+        if (w) w.document.write(`<img src="${dataUrl}" style="max-width:100%;height:auto;"/>`);
+      }
+    } catch (e) {
+      console.error('[SearchComponent] Failed to open debug image tab', e);
+    }
+  }, []);
 
   // Search by Image hook
   const {
@@ -807,6 +856,8 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
     );
   }, [searchByImageActive, searchByImageFrameData, searchByImageSelectedObjectId, handleSearchByImageConfirm, cancelSearchByImage, isDark]);
 
+  const searchByImageStageRef = React.useRef<any>(null);
+
   
 
   // Build Search by Image overlay element when Search by Image is active
@@ -844,6 +895,7 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
           frameData={searchByImageFrameData}
           selectedObjectId={searchByImageSelectedObjectId}
           onSelectObject={setSearchByImageSelectedObjectId}
+          stageRef={searchByImageStageRef}
         />
       );
     }
@@ -1093,7 +1145,9 @@ export const SearchComponent: React.FC<SearchComponentProps> = ({
         searchByImageTargetOffsetSeconds={searchByImageTargetOffsetSeconds}
         searchByImageFooter={videoModalFooter}
         searchByImageOverlay={searchByImageOverlayElement}
+        searchByImageStageRef={searchByImageStageRef}
         onCreateReport={handleCreateReportFromActiveVideo}
+        onCreateReportImage={handleCreateReportImageDebug}
         creatingReport={creatingReport}
       />
     </div>

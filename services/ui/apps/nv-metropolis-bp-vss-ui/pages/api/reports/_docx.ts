@@ -66,6 +66,7 @@ let cachedPdfFontBytes: {
 export type ReportSceneItem = {
   id: string;
   videoName: string;
+  fileName?: string;
   locationName?: string;
   description: string;
   comment?: string;
@@ -353,6 +354,19 @@ async function buildWordSceneTable(report: ReportPayload): Promise<Table> {
   const rows: TableRow[] = [];
 
   for (const [index, item] of report.items.entries()) {
+    const fileNameValue =
+      (item.fileName && String(item.fileName).trim()) ||
+      (typeof item.screenshotUrl === 'string'
+        ? (() => {
+            try {
+              const u = new URL(item.screenshotUrl);
+              return decodeURIComponent(path.basename(u.pathname)) || '파일명 없음';
+            } catch {
+              return String(item.screenshotUrl).split('/').pop() || '파일명 없음';
+            }
+          })()
+        : '파일명 없음');
+
     const image = await fetchRemoteImage(item.screenshotUrl);
 
     const imageChildren = image
@@ -420,6 +434,49 @@ async function buildWordSceneTable(report: ReportPayload): Promise<Table> {
         ],
       });
 
+    // 파일명 행 추가
+    rows.push(
+      new TableRow({
+        cantSplit: true,
+        children: [
+          new TableCell({
+            width: {
+              size: SCENE_LABEL_COLUMN_WIDTH_PERCENT,
+              type: WidthType.PERCENTAGE,
+            },
+            shading: { fill: "E8F5EF" },
+            margins: { top: 120, bottom: 120, left: 80, right: 80 },
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [
+                  new TextRun({
+                    text: "파일명",
+                    bold: true,
+                    size: 20,
+                    color: "176B52",
+                  }),
+                ],
+              }),
+            ],
+          }),
+          new TableCell({
+            width: {
+              size: SCENE_VALUE_COLUMN_WIDTH_PERCENT,
+              type: WidthType.PERCENTAGE,
+            },
+            margins: { top: 140, bottom: 140, left: 140, right: 140 },
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: fileNameValue, size: 20, color: "24313A" })],
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+
+    // 기존 이미지/내용 블록 추가
     rows.push(
       new TableRow({
         cantSplit: true,
@@ -994,6 +1051,34 @@ export async function buildAccidentReportPdfBuffer(
 
     const image = await fetchRemoteImage(item.screenshotUrl);
     let imageDrawn = false;
+    // determine filename to draw above image
+    const pdfFileName =
+      (item.fileName && String(item.fileName).trim()) ||
+      (typeof item.screenshotUrl === 'string'
+        ? (() => {
+            try {
+              const u = new URL(item.screenshotUrl);
+              return decodeURIComponent(path.basename(u.pathname)) || '파일명 없음';
+            } catch {
+              return String(item.screenshotUrl).split('/').pop() || '파일명 없음';
+            }
+          })()
+        : '파일명 없음');
+
+    // draw filename above image area
+    try {
+      const fileNameSize = 9.5;
+      const fileNameWidth = regularFont.widthOfTextAtSize(pdfFileName, fileNameSize);
+      page.drawText(pdfFileName, {
+        x: left + idWidth + 10,
+        y: y - 12,
+        size: fileNameSize,
+        font: regularFont,
+        color: rgb(0.42, 0.47, 0.5),
+      });
+    } catch {
+      // ignore drawing errors
+    }
     if (image) {
       try {
         const embedded =

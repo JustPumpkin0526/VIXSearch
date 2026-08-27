@@ -10,9 +10,9 @@ import {
   ReportSceneItem,
 } from './_docx';
 
-function countWords(value: string): number {
-  return value.trim() ? value.trim().split(/\s+/).length : 0;
-}
+ 
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const username = getUsernameFromAuthHeader(req.headers.authorization);
 
 function normalizeReportItems(raw: unknown): ReportSceneItem[] {
   if (!Array.isArray(raw)) {
@@ -20,53 +20,75 @@ function normalizeReportItems(raw: unknown): ReportSceneItem[] {
   }
 
   return raw.map((item, index) => {
-    const candidate = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
-    return {
-      id: typeof candidate.id === 'string'
-        ? candidate.id
-        : `scene-${index}`,
-      videoName: typeof candidate.videoName === 'string'
-          ? candidate.videoName
-          : '검색 결과',
-      locationName: typeof candidate.locationName === 'string'
-          ? candidate.locationName
-          : undefined,
-      description: typeof candidate.description === 'string'
-          ? candidate.description
-          : '',
-      comment: typeof candidate.comment === 'string'
-          ? candidate.comment
-          : undefined,
-      query: typeof candidate.query === 'string'
-          ? candidate.query
-          : undefined,
-      startTime: typeof candidate.startTime === 'string'
-          ? candidate.startTime
-          : '',
-      endTime: typeof candidate.endTime === 'string'
-          ? candidate.endTime
-          : '',
-      sensorId: typeof candidate.sensorId === 'string'
-          ? candidate.sensorId
-          : '',
-      similarity: typeof candidate.similarity === 'number'
-          ? candidate.similarity
-          : 0,
-      pauseTime: typeof candidate.pauseTime === 'number'
-          ? candidate.pauseTime
-          : undefined,
-      screenshotUrl: typeof candidate.screenshotUrl === 'string'
-          ? candidate.screenshotUrl
-          : '',
-    };
+  const candidate = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+  return {
+    id: typeof candidate.id === 'string'
+    ? candidate.id
+    : `scene-${index}`,
+    videoName: typeof candidate.videoName === 'string'
+      ? candidate.videoName
+      : '검색 결과',
+    locationName: typeof candidate.locationName === 'string'
+      ? candidate.locationName
+      : undefined,
+    description: typeof candidate.description === 'string'
+      ? candidate.description
+      : '',
+    comment: typeof candidate.comment === 'string'
+      ? candidate.comment
+      : undefined,
+    query: typeof candidate.query === 'string'
+      ? candidate.query
+      : undefined,
+    startTime: typeof candidate.startTime === 'string'
+      ? candidate.startTime
+      : '',
+    endTime: typeof candidate.endTime === 'string'
+      ? candidate.endTime
+      : '',
+    sensorId: typeof candidate.sensorId === 'string'
+      ? candidate.sensorId
+      : '',
+    similarity: typeof candidate.similarity === 'number'
+      ? candidate.similarity
+      : 0,
+    pauseTime: typeof candidate.pauseTime === 'number'
+      ? candidate.pauseTime
+      : undefined,
+    screenshotUrl: typeof candidate.screenshotUrl === 'string'
+      ? candidate.screenshotUrl
+      : '',
+    // Prefer originalFileName (client-provided) -> fileName -> derive from screenshotUrl
+    fileName: ((): string | undefined => {
+      if (typeof candidate.originalFileName === 'string' && candidate.originalFileName.trim()) return candidate.originalFileName.trim();
+      if (typeof candidate.fileName === 'string' && candidate.fileName.trim()) return candidate.fileName.trim();
+      const ss = typeof candidate.screenshotUrl === 'string' ? candidate.screenshotUrl : '';
+      if (!ss) return undefined;
+      try {
+        if (ss.startsWith('data:image/')) {
+          const ext = ss.startsWith('data:image/png') ? 'png' : 'jpg';
+          return `capture_${Date.now()}.${ext}`;
+        }
+        const u = new URL(ss);
+        const base = decodeURIComponent(u.pathname.split('/').pop() || 'file');
+        return base || undefined;
+      } catch {
+        try { return String(ss).split('/').pop() || undefined; } catch { return undefined; }
+      }
+    })(),
+    originalFileName: typeof candidate.originalFileName === 'string' ? candidate.originalFileName : undefined,
+  };
   });
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const username = getUsernameFromAuthHeader(req.headers.authorization);
-  if (!username) {
-    return res.status(401).json({ error: 'Missing or invalid Authorization Bearer token' });
-  }
+// Utility: count words in a string (used for wordCount fallback)
+function countWords(value: string): number {
+  if (!value || typeof value !== 'string') return 0;
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).filter(Boolean).length;
+}
+ 
 
   try {
     const pool = await getUiAuthPool();
@@ -104,6 +126,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     if (req.method === 'POST') {
       const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+      // DEBUG: log incoming fileName values for diagnosis
+      try {
+        console.debug('[api/reports] incoming POST report items fileNames:',
+          Array.isArray((body as any).items) ? (body as any).items.map((it: any) => it?.fileName) : null,
+        );
+      } catch (e) {
+        console.debug('[api/reports] failed to log incoming fileNames', e);
+      }
       const reportId =
         typeof body.id === 'string' && body.id.trim()
           ? body.id.trim()
