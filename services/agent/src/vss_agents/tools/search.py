@@ -76,7 +76,7 @@ Extract the following parameters from the user query:
 - license_plate: A Korean vehicle license plate normalized without spaces or hyphens. Keep it out of query and attributes because it is searched by exact match.
 - timestamp_start: Start time in ISO format (e.g., "2025-01-01T13:00:00Z"). Use 2025-01-01 as the base date.
 - timestamp_end: End time in ISO format (e.g., "2025-01-01T14:00:00Z"). Use 2025-01-01 as the base date.
-- attributes: List of visual descriptions for objects from the RT-CV detector classes "person", "car", "head", "wheelchair", "stroller", "license_plate", and "heavy_machine". Include the object class and visible attributes such as color, shape, clothing, size, subtype, and apparent gender for persons. Preserve a specific car subtype (for example, "hatchback car") instead of replacing it with only "car". Do not include actions or scene context, and do not return a generic object class without a visible attribute.
+- attributes: List of visual descriptions for ONE detected object at a time from the RT-CV detector classes "person", "car", "head", "wheelchair", "stroller", "license_plate", and "heavy_machine". Include the object class and visible attributes such as color, shape, clothing, size, subtype, apparent age, and apparent gender for persons. Preserve a specific car subtype (for example, "hatchback car") instead of replacing it with only "car". Do not include actions, interactions, relationships, or scene context. In particular, never emit phrases such as "woman talking to child" or "woman with child" as an attribute; those belong only in query. Do not return a generic object class without a visible attribute.
 - has_action: REQUIRED boolean. Set to True if the query explicitly mentions an action/event/activity (e.g., running, walking, carrying, pushing, entering, leaving, moving). Set to False if the query only describes visual/physical attributes (what someone/something LOOKS LIKE) without any action. Examples: "person" → false, "person walking" → true, "red car" → false, "person carrying box" → true, "forklift" → false.
 - object_ids: List of integer object IDs if explicitly mentioned in the query (e.g., "find object 5" → [5], "search for objects 10, 20" → [10, 20]). null if no object IDs are mentioned.
 - top_k: Number of results to return (integer, only if explicitly mentioned, e.g., "top 5", "first 10")
@@ -127,7 +127,11 @@ Output: {{"query": "object ids 5, 6", "object_ids": [5, 6], "has_action": false}
 
 Example 10:
 User query: "find more objects like object 42 near warehouse entrance"
-Output: {{"query": "objects like object 42 near warehouse entrance", "object_ids": [42], "video_sources": [], "has_action": false}}"""
+Output: {{"query": "objects like object 42 near warehouse entrance", "object_ids": [42], "video_sources": [], "has_action": false}}
+
+Example 11:
+User query: "A grown woman talking to a child"
+Output: {{"query": "a grown woman talking to a child", "video_sources": [], "source_type": "video_file", "attributes": ["adult woman"], "has_action": true}}"""
 
 
 class DecomposedQuery(BaseModel):
@@ -152,6 +156,7 @@ class DecomposedQuery(BaseModel):
     )
     top_k: int | None = Field(default=None, description="Number of results to return")
 
+
 class ActionQueryPlan(BaseModel):
     """Search-oriented representation of an action/event query.
 
@@ -163,6 +168,53 @@ class ActionQueryPlan(BaseModel):
 
     canonical_query: str
     alternate_queries: list[str] = Field(default_factory=list)
+
+
+_ATTRIBUTE_ACTION_PATTERN = re.compile(
+    r"\b(talk(?:ing|s|ed)?|speak(?:ing|s)?|run(?:ning|s)?|walk(?:ing|s|ed)?|carry(?:ing|ies|ied)?|"
+    r"push(?:ing|es|ed)?|pull(?:ing|s|ed)?|enter(?:ing|s|ed)?|leav(?:ing|es|ed)|fight(?:ing|s)?|"
+    r"attack(?:ing|s|ed)?|assault(?:ing|s|ed)?|play(?:ing|s|ed)?|stand(?:ing|s)?|sit(?:ting|s)?)\b",
+    re.IGNORECASE,
+)
+_PERSON_TERMS_PATTERN = re.compile(
+    r"\b(person|people|man|men|woman|women|child|children|kid|kids|girl|girls|boy|boys)\b",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_attributes(attributes: list[str], *, has_action: bool) -> list[str]:
+    """Keep only single-object visual descriptions suitable for object reranking.
+
+    Query decomposition is probabilistic. In particular, an LLM may return a
+    relationship such as "woman talking to child" as one object attribute.
+    Passing that phrase to per-object embeddings rewards unrelated clips and can
+    overwhelm a correct scene match, so action/relationship phrases are removed
+    defensively here.
+    """
+    sanitized: list[str] = []
+    seen: set[str] = set()
+
+    for raw_attribute in attributes:
+        attribute = " ".join(str(raw_attribute).split()).strip()
+        if not attribute:
+            continue
+
+        if has_action and _ATTRIBUTE_ACTION_PATTERN.search(attribute):
+            logger.info("Dropped action phrase from object attributes: %r", attribute)
+            continue
+
+        person_terms = _PERSON_TERMS_PATTERN.findall(attribute)
+        if has_action and len(person_terms) >= 2:
+            logger.info("Dropped multi-person relationship from object attributes: %r", attribute)
+            continue
+
+        key = attribute.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        sanitized.append(attribute)
+
+    return sanitized
 
 
 ACTION_QUERY_REWRITE_PROMPT = """You rewrite a video-search query for semantic embedding retrieval.
@@ -412,15 +464,23 @@ def _fuse_expanded_embed_results(result_lists: list[list["SearchResult"]]) -> li
 
 
 _ACTION_CRITIC_WINDOW_PADDING_SECONDS = 10
+_MAX_ACTION_CRITIC_WINDOW_SECONDS = 30
+
 
 def _expand_action_critic_window(result: "SearchResult") -> tuple[str, str]:
-    """Return a wider temporal context for compound actions such as push→fall→assault."""
+    """Return bounded temporal context for compound actions such as push→fall→assault."""
     try:
-        start_dt = iso8601_to_datetime(result.start_time) - timedelta(seconds=_ACTION_CRITIC_WINDOW_PADDING_SECONDS)
-        end_dt = iso8601_to_datetime(result.end_time) + timedelta(seconds=_ACTION_CRITIC_WINDOW_PADDING_SECONDS)
+        result_start = iso8601_to_datetime(result.start_time)
+        result_end = iso8601_to_datetime(result.end_time)
+        result_duration = max(0.0, (result_end - result_start).total_seconds())
+        available_context = max(0.0, _MAX_ACTION_CRITIC_WINDOW_SECONDS - result_duration)
+        padding_seconds = min(_ACTION_CRITIC_WINDOW_PADDING_SECONDS, available_context / 2.0)
+        start_dt = result_start - timedelta(seconds=padding_seconds)
+        end_dt = result_end + timedelta(seconds=padding_seconds)
         return datetime_to_iso8601(start_dt), datetime_to_iso8601(end_dt)
     except (ValueError, TypeError):
         return result.start_time, result.end_time
+
 
 async def _run_attribute_only_search(
     attribute_list: list[str],
@@ -441,14 +501,19 @@ async def _run_attribute_only_search(
     try:
         # 소유권 제한이 있는데 UUID→sensor name 변환 결과가 없으면
         # video_sources=None으로 전체 영상을 검색하면 안 됩니다.
-        if (search_input.source_type == "video_file" and search_input.owned_video_ids is not None and attribute_video_sources == []):
+        if (
+            search_input.source_type == "video_file"
+            and search_input.owned_video_ids is not None
+            and attribute_video_sources == []
+        ):
             logger.warning(
-                "Attribute search skipped because no owned video UUID "
-                "could be resolved to a behavior sensor name."
+                "Attribute search skipped because no owned video UUID could be resolved to a behavior sensor name."
             )
             return []
 
-        effective_video_sources = (attribute_video_sources if attribute_video_sources is not None else search_input.video_sources)
+        effective_video_sources = (
+            attribute_video_sources if attribute_video_sources is not None else search_input.video_sources
+        )
 
         attr_params = {
             "query": attribute_list,
@@ -457,18 +522,13 @@ async def _run_attribute_only_search(
             "timestamp_start": search_input.timestamp_start,
             "timestamp_end": search_input.timestamp_end,
             "top_k": top_k,
-            "min_similarity": (
-                min_similarity
-                if min_similarity is not None
-                else 0.3
-            ),
+            "min_similarity": (min_similarity if min_similarity is not None else 0.3),
             "fuse_multi_attribute": False,
             "exclude_videos": exclude_videos,
         }
 
         logger.info(
-            "Attribute search request: "
-            "uuid_sources=%s, attribute_sources=%s",
+            "Attribute search request: uuid_sources=%s, attribute_sources=%s",
             search_input.video_sources,
             effective_video_sources,
         )
@@ -856,6 +916,51 @@ def _apply_rrf_fusion_with_attribute_rank(
     return [result for _, result in reranked_results]
 
 
+_ACTION_ATTRIBUTE_BOOST_CAP = 0.03
+
+
+def _apply_scene_primary_fusion(
+    video_data: list[dict[str, Any]],
+    attribute_boost_cap: float = _ACTION_ATTRIBUTE_BOOST_CAP,
+) -> list["SearchResult"]:
+    """Use object attributes as a bounded tie-breaker for action/relationship queries."""
+    reranked_results: list[tuple[float, SearchResult]] = []
+
+    for video in video_data:
+        embed_score = float(video["embed_score"])
+        attribute_score = min(1.0, max(0.0, float(video["normalised_attribute_score"])))
+        fusion_score = embed_score + attribute_boost_cap * attribute_score
+        embed_result = video["embed_result"]
+
+        logger.info(
+            "Scene-primary fusion: %s - embed=%.3f, attribute=%.3f, bounded_boost=%.3f, final=%.3f",
+            embed_result.video_name,
+            embed_score,
+            attribute_score,
+            attribute_boost_cap * attribute_score,
+            fusion_score,
+        )
+
+        reranked_results.append(
+            (
+                fusion_score,
+                SearchResult(
+                    video_name=embed_result.video_name,
+                    description=embed_result.description,
+                    start_time=embed_result.start_time,
+                    end_time=embed_result.end_time,
+                    sensor_id=embed_result.sensor_id,
+                    screenshot_url=video["screenshot_url"],
+                    similarity=fusion_score,
+                    object_ids=video["object_ids"],
+                ),
+            )
+        )
+
+    reranked_results.sort(key=lambda item: item[0], reverse=True)
+    return [result for _, result in reranked_results]
+
+
 async def fusion_search_rerank(
     embed_results: list["SearchResult"],
     attributes: list[str],
@@ -867,6 +972,7 @@ async def fusion_search_rerank(
     rrf_w: float = 0.5,
     w_attribute: float = 0.55,
     w_embed: float = 0.35,
+    scene_primary: bool = False,
 ) -> list["SearchResult"]:
     """
     Rerank embed_search results using either Weighted Linear Fusion or Reciprocal Rank Fusion (RRF).
@@ -1011,7 +1117,9 @@ async def fusion_search_rerank(
         )
 
     # Second pass: Apply fusion method
-    if fusion_method == "weighted_linear":
+    if scene_primary:
+        final_results = _apply_scene_primary_fusion(video_data)
+    elif fusion_method == "weighted_linear":
         final_results = _apply_weighted_linear_fusion(video_data, w_embed, w_attribute)
     elif fusion_method == "rrf":
         final_results = _apply_rrf_fusion(video_data, rrf_k, rrf_w)
@@ -1031,8 +1139,13 @@ _SIMILARITY_RATIO_THRESHOLD = 0.8
 # makes the search-result preview and the Search by Image target agree at
 # clip time 0 instead of showing several seconds of lead-in first.
 _MATCH_CLIP_POSTROLL_SECONDS = 5
+_MAX_ACTION_RESULT_CLIP_SECONDS = 30
 
-def _merge_consecutive_results(results: list["SearchResult"]) -> list["SearchResult"]:
+
+def _merge_consecutive_results(
+    results: list["SearchResult"],
+    max_clip_seconds: float | None = None,
+) -> list["SearchResult"]:
     """Merge consecutive/overlapping SearchResult chunks from the same sensor.
 
     Merging rules:
@@ -1041,6 +1154,8 @@ def _merge_consecutive_results(results: list["SearchResult"]) -> list["SearchRes
     - similarity: mean across merged chunks
     - object_ids: concatenated (preserving order, deduplicating)
     - critic_result: always None (merge runs before the critic)
+    - max_clip_seconds: when set, start a new group before the merged span
+      exceeds this duration
     """
     if not results:
         return results
@@ -1078,6 +1193,7 @@ def _merge_consecutive_results(results: list["SearchResult"]) -> list["SearchRes
         # Build contiguous groups of overlapping/adjacent chunks
         groups: list[list[SearchResult]] = []
         group_chunks: list[SearchResult] = [sorted_results[0]]
+        group_start_dt = iso8601_to_datetime(sorted_results[0].start_time)
         group_end_dt = iso8601_to_datetime(sorted_results[0].end_time)
 
         for result in sorted_results[1:]:
@@ -1087,15 +1203,21 @@ def _merge_consecutive_results(results: list["SearchResult"]) -> list["SearchRes
             pair_min = min(group_avg_sim, result.similarity)
             sim_compatible = pair_max == 0 or (pair_min / pair_max) >= _SIMILARITY_RATIO_THRESHOLD
 
-            if result_start_dt <= group_end_dt and sim_compatible:
+            result_end_dt = iso8601_to_datetime(result.end_time)
+            candidate_end_dt = max(group_end_dt, result_end_dt)
+            within_duration_limit = (
+                max_clip_seconds is None or (candidate_end_dt - group_start_dt).total_seconds() <= max_clip_seconds
+            )
+
+            if result_start_dt <= group_end_dt and sim_compatible and within_duration_limit:
                 # Overlapping or adjacent with compatible similarity — extend the current group
-                result_end_dt = iso8601_to_datetime(result.end_time)
                 if result_end_dt > group_end_dt:
                     group_end_dt = result_end_dt
                 group_chunks.append(result)
             else:
                 groups.append(group_chunks)
                 group_chunks = [result]
+                group_start_dt = result_start_dt
                 group_end_dt = iso8601_to_datetime(result.end_time)
         groups.append(group_chunks)
 
@@ -1202,7 +1324,7 @@ async def execute_core_search(
         if contains_hangul(semantic_query):
             semantic_query = await translate_query_if_korean(semantic_query)
         search_input.query = " ".join(value for value in (license_plate, semantic_query) if value)
-        
+
     decomposed: DecomposedQuery | None = None
     original_query = search_input.query
 
@@ -1218,8 +1340,7 @@ async def execute_core_search(
     if search_input.owned_video_ids is not None:
         owned_video_ids = {
             video_id.strip()
-            for video_id
-            in search_input.owned_video_ids
+            for video_id in search_input.owned_video_ids
             if (
                 isinstance(
                     video_id,
@@ -1230,31 +1351,17 @@ async def execute_core_search(
         }
 
         logger.info(
-            "Applying video ownership filter: "
-            "source_type=%s, "
-            "allowed_count=%d, "
-            "allowed_ids=%s",
+            "Applying video ownership filter: source_type=%s, allowed_count=%d, allowed_ids=%s",
             search_input.source_type,
             len(owned_video_ids),
             sorted(owned_video_ids),
         )
 
-        if (
-            search_input.source_type
-            == "video_file"
-            and not owned_video_ids
-        ):
-            message = (
-                "No uploaded videos are "
-                "available for the current "
-                "user or selected group."
-            )
+        if search_input.source_type == "video_file" and not owned_video_ids:
+            message = "No uploaded videos are available for the current user or selected group."
 
             yield AgentMessageChunk(
-                type=(
-                    AgentMessageChunkType
-                    .THOUGHT
-                ),
+                type=(AgentMessageChunkType.THOUGHT),
                 content=message,
             )
 
@@ -1286,17 +1393,13 @@ async def execute_core_search(
                     for stream_id, stream_info in streams_info.items():
                         stream_uuid = str(stream_id).strip()
 
-                        name = str(
-                            stream_info.get("name", "")
-                        ).strip()
+                        name = str(stream_info.get("name", "")).strip()
 
-                        url = str(
-                            stream_info.get("url", "")
-                        ).strip()
+                        url = str(stream_info.get("url", "")).strip()
 
                         if not stream_uuid or not name:
                             continue
-                        
+
                         is_rtsp = url.startswith("rtsp://")
 
                         # video_file 검색에서는 현재 사용자/그룹 소유 영상만 매핑
@@ -1306,17 +1409,17 @@ async def execute_core_search(
                             and stream_uuid not in owned_video_ids
                         ):
                             continue
-                        
+
                         if source_type == "rtsp":
                             if not is_rtsp:
                                 continue
-                            
+
                             video_stream_names.append(name)
 
                         elif source_type == "video_file":
                             if is_rtsp:
                                 continue
-                            
+
                             video_file_names.append(name)
 
                         else:
@@ -1330,17 +1433,12 @@ async def execute_core_search(
                         uuid_to_name[stream_uuid] = name
 
                     # 혹시 모를 중복 제거
-                    video_file_names = list(
-                        dict.fromkeys(video_file_names)
-                    )
+                    video_file_names = list(dict.fromkeys(video_file_names))
 
-                    video_stream_names = list(
-                        dict.fromkeys(video_stream_names)
-                    )
+                    video_stream_names = list(dict.fromkeys(video_stream_names))
 
                     logger.info(
-                        "Fetched sensor names from VST "
-                        "(source_type=%s): %d video files, %d streams",
+                        "Fetched sensor names from VST (source_type=%s): %d video files, %d streams",
                         source_type,
                         len(video_file_names),
                         len(video_stream_names),
@@ -1426,28 +1524,23 @@ async def execute_core_search(
                 content=f"Decomposition failed, using original query: {e!s}",
             )
 
-    if (search_input.source_type == "video_file" and owned_video_ids is not None):
+    if search_input.source_type == "video_file" and owned_video_ids is not None:
         if search_input.video_sources:
             requested_sources = list(search_input.video_sources)
 
             search_input.video_sources = [source for source in search_input.video_sources if source in owned_video_ids]
 
             logger.info(
-                "Filtered requested sources: "
-                "requested=%s, allowed=%s",
+                "Filtered requested sources: requested=%s, allowed=%s",
                 requested_sources,
                 search_input.video_sources,
             )
 
             if not search_input.video_sources:
-                message = (
-                    "The requested video "
-                    "sources are outside the "
-                    "current user or group scope."
-                )
+                message = "The requested video sources are outside the current user or group scope."
 
                 yield AgentMessageChunk(
-                    type=(AgentMessageChunkType .THOUGHT),
+                    type=(AgentMessageChunkType.THOUGHT),
                     content=message,
                 )
 
@@ -1459,21 +1552,15 @@ async def execute_core_search(
                 return
 
         else:
-            search_input.video_sources = (
-                sorted(owned_video_ids)
-            )
+            search_input.video_sources = sorted(owned_video_ids)
 
             logger.info(
-                "Using ownership-scoped "
-                "video sources: %s",
+                "Using ownership-scoped video sources: %s",
                 search_input.video_sources,
             )
 
         # UUID 기반 video_sources를 mdx-behavior의 sensor.id 이름으로 변환
-        if (
-            search_input.source_type == "video_file"
-            and search_input.video_sources
-        ):
+        if search_input.source_type == "video_file" and search_input.video_sources:
             resolved_attribute_sources: list[str] = []
             unresolved_sources: list[str] = []
 
@@ -1482,33 +1569,22 @@ async def execute_core_search(
 
                 if not source_value:
                     continue
-                
+
                 # VST UUID → mdx-behavior sensor name
                 if source_value in uuid_to_name:
-                    resolved_attribute_sources.append(
-                        uuid_to_name[source_value]
-                    )
+                    resolved_attribute_sources.append(uuid_to_name[source_value])
 
                 # 이미 이름 형식이라면 그대로 사용
                 elif source_value in name_to_uuid:
-                    resolved_attribute_sources.append(
-                        source_value
-                    )
+                    resolved_attribute_sources.append(source_value)
 
                 else:
-                    unresolved_sources.append(
-                        source_value
-                    )
+                    unresolved_sources.append(source_value)
 
-            attribute_video_sources = list(
-                dict.fromkeys(
-                    resolved_attribute_sources
-                )
-            )
+            attribute_video_sources = list(dict.fromkeys(resolved_attribute_sources))
 
             logger.info(
-                "Resolved Attribute Search sources: "
-                "uuid_sources=%s, sensor_names=%s, unresolved=%s",
+                "Resolved Attribute Search sources: uuid_sources=%s, sensor_names=%s, unresolved=%s",
                 search_input.video_sources,
                 attribute_video_sources,
                 unresolved_sources,
@@ -1542,7 +1618,11 @@ async def execute_core_search(
             type=AgentMessageChunkType.THOUGHT,
             content=(
                 "Action query normalized for recall"
-                + (f" with {len(action_query_plan.alternate_queries)} equivalent variants" if action_query_plan.alternate_queries else "")
+                + (
+                    f" with {len(action_query_plan.alternate_queries)} equivalent variants"
+                    if action_query_plan.alternate_queries
+                    else ""
+                )
             ),
         )
 
@@ -1569,46 +1649,31 @@ async def execute_core_search(
         if search_input.source_type == "video_file":
             # 번호판 데이터는 mdx-behavior의 sensor.id에
             # VST sensor name(파일명)으로 저장됩니다.
-            plate_video_sources = list(
-                dict.fromkeys(
-                    attribute_video_sources or []
-                )
-            )
+            plate_video_sources = list(dict.fromkeys(attribute_video_sources or []))
         else:
-            plate_video_sources = list(
-                dict.fromkeys(
-                    search_input.video_sources or []
-                )
+            plate_video_sources = list(dict.fromkeys(search_input.video_sources or []))
+
+        if search_input.source_type == "video_file" and owned_video_ids is not None and not plate_video_sources:
+            message = (
+                "License plate search skipped because the owned video UUIDs could not be resolved to VST sensor names."
             )
 
-        if (
-            search_input.source_type == "video_file"
-            and owned_video_ids is not None
-            and not plate_video_sources
-        ):
-            message = (
-                "License plate search skipped because "
-                "the owned video UUIDs could not be resolved "
-                "to VST sensor names."
-            )
-        
             logger.warning(message)
-        
+
             yield AgentMessageChunk(
                 type=AgentMessageChunkType.THOUGHT,
                 content=message,
             )
-        
+
             yield SearchOutput(
                 data=[],
                 search_messages=[message],
             )
-        
+
             return
-        
+
         logger.info(
-            "License plate search request: "
-            "plate=%s, video_sources=%s",
+            "License plate search request: plate=%s, video_sources=%s",
             license_plate,
             plate_video_sources,
         )
@@ -1649,15 +1714,8 @@ async def execute_core_search(
 
     # ===== OBJECT_ID PATH: Direct behavior KNN (bypasses embed_search + fusion) =====
     if decomposed and decomposed.object_ids:
-        if (
-            search_input.source_type == "video_file"
-            and owned_video_ids is not None
-            and attribute_video_sources == []
-        ):
-            message = (
-                "Owned video UUIDs could not be resolved "
-                "to behavior sensor names."
-            )
+        if search_input.source_type == "video_file" and owned_video_ids is not None and attribute_video_sources == []:
+            message = "Owned video UUIDs could not be resolved to behavior sensor names."
 
             logger.warning(message)
 
@@ -1678,10 +1736,7 @@ async def execute_core_search(
             "behavior_es_endpoint",
             None,
         ):
-            raise ValueError(
-                "behavior_es_endpoint config is required "
-                "for object_id re-search"
-            )
+            raise ValueError("behavior_es_endpoint config is required for object_id re-search")
 
         top_k = search_input.top_k if search_input.top_k is not None else config.default_max_results
 
@@ -1725,9 +1780,7 @@ async def execute_core_search(
         # UI has not yet populated its stream-id-to-name map.
         if _object_sensor_id and getattr(config, "vst_internal_url", None):
             try:
-                resolved_sensor_id = await get_sensor_id_from_stream_id(
-                    _object_sensor_id, config.vst_internal_url
-                )
+                resolved_sensor_id = await get_sensor_id_from_stream_id(_object_sensor_id, config.vst_internal_url)
                 if resolved_sensor_id != _object_sensor_id:
                     logger.info(
                         "Resolved Search-by-Image stream_id %r to behavior sensor_id %r",
@@ -1740,18 +1793,14 @@ async def execute_core_search(
                 # is intentionally keyed by stream UUIDs.
                 logger.warning("Could not resolve Search-by-Image sensor ID %r: %s", _object_sensor_id, e)
         if _object_sensor_id or _object_timestamp:
-            logger.info(
-                f"Object-id search hint: sensor_id={_object_sensor_id!r} timestamp={_object_timestamp!r}"
-            )
+            logger.info(f"Object-id search hint: sensor_id={_object_sensor_id!r} timestamp={_object_timestamp!r}")
 
         async def _safe_object_search(
             oid: int,
         ) -> list[AttributeSearchResult]:
             try:
                 behavior_video_sources = (
-                    attribute_video_sources
-                    if attribute_video_sources is not None
-                    else search_input.video_sources
+                    attribute_video_sources if attribute_video_sources is not None else search_input.video_sources
                 )
 
                 return await search_by_object_embedding(
@@ -1800,33 +1849,29 @@ async def execute_core_search(
         vst_internal_url = getattr(config, "vst_internal_url", None)
         vst_external_url = getattr(config, "vst_external_url", None)
         await enrich_attribute_results(attr_results, vst_internal_url, vst_external_url)
-        
+
         search_results = [attribute_result_to_search_result(r) for r in attr_results]
-        
+
         # Object ID 검색에도 Settings의 최소 유사도 적용
         min_similarity = search_input.result_min_similarity
-        
+
         if min_similarity > 0.0:
             before_count = len(search_results)
-        
+
             search_results = [result for result in search_results if result.similarity >= min_similarity]
-        
+
             logger.info(
-                "[Search][Object ID] Similarity filter: "
-                "kept %d/%d result(s), threshold=%.4f",
+                "[Search][Object ID] Similarity filter: kept %d/%d result(s), threshold=%.4f",
                 len(search_results),
                 before_count,
                 min_similarity,
             )
-        
+
         result_count = len(search_results)
-        
+
         yield AgentMessageChunk(
             type=AgentMessageChunkType.THOUGHT,
-            content=(
-                f"Found {result_count} similar "
-                f"object{'s' if result_count != 1 else ''}"
-            ),
+            content=(f"Found {result_count} similar object{'s' if result_count != 1 else ''}"),
         )
         yield SearchOutput(data=search_results, search_messages=[])
         return
@@ -1862,7 +1907,10 @@ async def execute_core_search(
     attribute_list = []
     is_attribute_only = False
     if search_input.agent_mode and agent_llm and decomposed and decomposed.attributes:
-        attribute_list = decomposed.attributes
+        attribute_list = _sanitize_attributes(
+            decomposed.attributes,
+            has_action=decomposed.has_action is True,
+        )
 
         # Prune single-word attributes (keep multi-word attributes even if connected with hyphens or dots)
         def _is_single_word(attr: str) -> bool:
@@ -1900,9 +1948,7 @@ async def execute_core_search(
 
     critic_analysis_limit = min(100, max(1, int(search_input.critic_max_results)))
 
-    critic_attempted_keys: set[
-        tuple[str, str, str]
-    ] = set()
+    critic_attempted_keys: set[tuple[str, str, str]] = set()
 
     while do_search and iteration_num < config.search_max_iterations:
         iteration_num += 1
@@ -1965,6 +2011,7 @@ async def execute_core_search(
             )
 
             try:
+
                 async def _run_embed_query(query: str) -> Any:
                     params = dict(query_params)
                     params["query"] = query
@@ -1972,7 +2019,9 @@ async def execute_core_search(
                     return await embed_search.ainvoke(request_json)
 
                 with TimeMeasure("search: embed search"):
-                    embed_search_outputs = await asyncio.gather(*[_run_embed_query(query) for query in expanded_queries])
+                    embed_search_outputs = await asyncio.gather(
+                        *[_run_embed_query(query) for query in expanded_queries]
+                    )
             except ValueError as e:
                 error_msg = str(e)
                 logger.error(f"Embed search failed: {error_msg}")
@@ -2034,7 +2083,7 @@ async def execute_core_search(
             # Check embed confidence threshold: if all results below threshold, fallback to pure attribute search (like PATH 1)
             if search_results and attribute_list and config.attribute_search_tool:
                 max_embed_score = max((r.similarity for r in search_results), default=0.0)
-                if max_embed_score < config.embed_confidence_threshold:
+                if max_embed_score < config.embed_confidence_threshold and action_query_plan is None:
                     logger.info(
                         f"Embed search confidence low (max_score={max_embed_score:.3f} < threshold={config.embed_confidence_threshold:.3f}). "
                         f"Falling back to pure attribute-only search (like PATH 1)."
@@ -2098,6 +2147,7 @@ async def execute_core_search(
                                 rrf_k=config.rrf_k,
                                 rrf_w=config.rrf_w,
                                 w_attribute=config.w_attribute,
+                                scene_primary=action_query_plan is not None,
                                 w_embed=config.w_embed,
                             )
 
@@ -2118,21 +2168,16 @@ async def execute_core_search(
                         )
                         # Fall through to return original embed_search results
 
-        if (search_input.source_type == "video_file" and owned_video_ids is not None):
+        if search_input.source_type == "video_file" and owned_video_ids is not None:
             before_count = len(search_results)
 
             search_results = [result for result in search_results if result.sensor_id in owned_video_ids]
 
-            removed_count = (
-                before_count
-                - len(search_results)
-            )
+            removed_count = before_count - len(search_results)
 
             if removed_count > 0:
                 logger.warning(
-                    "Removed %d result(s) "
-                    "outside the current "
-                    "user/group scope",
+                    "Removed %d result(s) outside the current user/group scope",
                     removed_count,
                 )
 
@@ -2148,14 +2193,16 @@ async def execute_core_search(
                 f"(similarity >= {sim_threshold:.4f}, i.e. {top_pct * 100:.0f}% of max {max_sim:.4f})"
             )
 
-        # Preserve original (pre-merge) results for downstream verification
-        # because merging can collapse multiple distinct clips into one
-        # merged result and unintentionally reduce the number of clips
-        # submitted to the Critic. Keep both views: `raw_search_results`
-        # and `search_results` (merged for UI display).
+        # Preserve original (pre-merge) results for diagnostics and scoring.
+        # Critic verification must use the post-merge search_results below:
+        # those are the exact clips shown in the UI, so every visible card can
+        # receive the verdict for the clip the user actually sees.
         raw_search_results = list(search_results)
         # Merge consecutive chunks from the same sensor into single results
-        search_results = _merge_consecutive_results(search_results)
+        search_results = _merge_consecutive_results(
+            search_results,
+            max_clip_seconds=(_MAX_ACTION_RESULT_CLIP_SECONDS if action_query_plan else None),
+        )
 
         # Apply the absolute minimum similarity threshold configured
         # from the Search settings dialog.
@@ -2164,15 +2211,10 @@ async def execute_core_search(
         if min_similarity > 0.0 and search_results:
             before_count = len(search_results)
 
-            search_results = [
-                result
-                for result in search_results
-                if result.similarity >= min_similarity
-            ]
+            search_results = [result for result in search_results if result.similarity >= min_similarity]
 
             logger.info(
-                "[Search] Final similarity filter: "
-                "kept %d/%d result(s), threshold=%.4f",
+                "[Search] Final similarity filter: kept %d/%d result(s), threshold=%.4f",
                 len(search_results),
                 before_count,
                 min_similarity,
@@ -2206,45 +2248,58 @@ async def execute_core_search(
                 # UI에 출력될 결과는 모두 Critic 검증 대상으로 포함합니다.
                 # 검색 요청 전체에서 남아 있는
                 # Critic 분석 가능 개수를 계산합니다.
-                remaining_critic_budget = (critic_analysis_limit - len(critic_attempted_keys))
-                
-                critic_candidates = []
-                
-                if remaining_critic_budget > 0:
-                    for result in search_results:
-                        result_key = (str(result.sensor_id), str(result.start_time), str(result.end_time))
-                
-                        # 이전 검색 반복에서 이미 분석을
-                        # 시도한 클립은 다시 선택하지 않습니다.
-                        if (result_key in critic_attempted_keys):
-                            continue
-                        
-                        critic_candidates.append(result)
-                
-                        if (len(critic_candidates) >= remaining_critic_budget):
-                            break
-                else:
+                remaining_critic_budget = critic_analysis_limit - len(critic_attempted_keys)
+
+                # Verify the exact post-merge clips returned to the UI. Using
+                # raw action chunks here can spend the Critic budget on a clip
+                # that is not displayed while leaving a displayed clip without
+                # any verdict.
+                critic_source_results = search_results
+
+                if min_similarity > 0.0:
+                    critic_source_results = [
+                        result for result in critic_source_results if result.similarity >= min_similarity
+                    ]
+
+                critic_candidates = _select_critic_candidates(
+                    critic_source_results,
+                    attempted_keys=critic_attempted_keys,
+                    limit=remaining_critic_budget,
+                    # Spend the initial budget across different videos and
+                    # non-adjacent windows, then refill from remaining rank.
+                    deduplicate_temporal_overlaps=bool(action_query_plan),
+                    max_per_sensor_before_refill=2 if action_query_plan else None,
+                )
+
+                if action_query_plan:
                     logger.info(
-                        "[Search] Critic analysis budget "
-                        "exhausted: attempted=%d, limit=%d",
+                        "[Search] Action Critic uses displayed clips: raw=%d, display=%d, selected=%d",
+                        len(raw_search_results),
+                        len(search_results),
+                        len(critic_candidates),
+                    )
+                elif remaining_critic_budget <= 0:
+                    logger.info(
+                        "[Search] Critic analysis budget exhausted: attempted=%d, limit=%d",
                         len(critic_attempted_keys),
                         critic_analysis_limit,
                     )
-                
+
                 search_videos: list[VideoInfo] = []
-                
+
                 critic_to_result_info: dict[VideoInfo, VideoInfo] = {}
 
                 for result in critic_candidates:
                     result_key = (str(result.sensor_id), str(result.start_time), str(result.end_time))
 
-                    result_info = VideoInfo(sensor_id=result.sensor_id, start_timestamp=result.start_time, end_timestamp=result.end_time)
+                    result_info = VideoInfo(
+                        sensor_id=result.sensor_id, start_timestamp=result.start_time, end_timestamp=result.end_time
+                    )
 
                     # 행동 검색은 Critic이 앞뒤 문맥을 함께 볼 수 있도록
                     # 분석 구간만 확장합니다.
                     critic_start, critic_end = (
                         _expand_action_critic_window(result)
-
                         if action_query_plan
                         else (
                             result.start_time,
@@ -2252,13 +2307,15 @@ async def execute_core_search(
                         )
                     )
 
-                    critic_info = VideoInfo(sensor_id=result.sensor_id, start_timestamp=critic_start, end_timestamp=critic_end)
+                    critic_info = VideoInfo(
+                        sensor_id=result.sensor_id, start_timestamp=critic_start, end_timestamp=critic_end
+                    )
 
                     # 이전 반복에서 이미 판정된 결과는 다시 분석하지 않고
                     # persistent_critic_results에 저장된 판정을 재사용합니다.
-                    if (result_info in confirmed_results or result_info in rejected_results):
+                    if result_info in confirmed_results or result_info in rejected_results:
                         continue
-                    
+
                     search_videos.append(critic_info)
 
                     critic_to_result_info[critic_info] = result_info
@@ -2278,11 +2335,7 @@ async def execute_core_search(
                 )
                 if len(search_videos) > 0:
                     critic_input = {
-                        "query": (
-                            action_query_plan.canonical_query
-                            if action_query_plan
-                            else original_query
-                        ),
+                        "query": (action_query_plan.canonical_query if action_query_plan else original_query),
                         "videos": search_videos,
                         "evaluation_count": len(search_videos),
                     }
@@ -2336,13 +2389,31 @@ async def execute_core_search(
 
                 # Annotate each search result with its critic verdict
                 for result in search_results:
-                    info = VideoInfo(
-                        sensor_id=result.sensor_id,
-                        start_timestamp=result.start_time,
-                        end_timestamp=result.end_time,
+                    result.critic_result = _resolve_display_critic_result(
+                        result,
+                        persistent_critic_results,
                     )
-                    if info in persistent_critic_results:
-                        result.critic_result = persistent_critic_results[info]
+                    if result.critic_result is None:
+                        # Keep the UI contract explicit when the request-level
+                        # Critic budget is smaller than the displayed result set
+                        # or a VLM response omits a clip.
+                        result.critic_result = CriticResult(result="unverified", criteria_met={})
+
+                if critic_results and not all(
+                    result.result == CriticAgentResult.UNVERIFIED for result in critic_results.values()
+                ):
+                    before_critic_filter = len(search_results)
+                    search_results = [
+                        result
+                        for result in search_results
+                        if result.critic_result is not None
+                        and result.critic_result.result == CriticAgentResult.CONFIRMED.value
+                    ]
+                    logger.info(
+                        "[Search] Critic final filter: kept %d/%d confirmed result(s)",
+                        len(search_results),
+                        before_critic_filter,
+                    )
 
                 # Yield critic results summary
                 verified_count = sum(1 for vr in critic_results.values() if vr.result == CriticAgentResult.CONFIRMED)
@@ -2352,7 +2423,6 @@ async def execute_core_search(
                     type=AgentMessageChunkType.THOUGHT,
                     content=f"Critic verification complete: {verified_count}/{len(critic_results)} results verified, {unverified_count}/{len(critic_results)} results unverified",
                 )
-
 
             except Exception as e:
                 logger.error(f"[Search] Error calling critic agent: {e}", exc_info=True)
@@ -2366,20 +2436,15 @@ async def execute_core_search(
     # Yield final results summary
     # Apply final user-facing result limit.
     if original_top_k is not None:
-        search_results = search_results[
-            :original_top_k
-        ]
-    
+        search_results = search_results[:original_top_k]
+
     result_count = len(search_results)
-    
+
     yield AgentMessageChunk(
         type=AgentMessageChunkType.THOUGHT,
-        content=(
-            f"Found {result_count} "
-            f"result{'s' if result_count != 1 else ''}"
-        ),
+        content=(f"Found {result_count} result{'s' if result_count != 1 else ''}"),
     )
-    
+
     yield SearchOutput(
         data=search_results,
         search_messages=search_messages,
@@ -2598,20 +2663,14 @@ class SearchInput(BaseModel):
         default=0.1,
         ge=0.0,
         le=1.0,
-        description=(
-            "Minimum final similarity score required for a "
-            "search result to be displayed."
-        ),
+        description=("Minimum final similarity score required for a search result to be displayed."),
     )
 
     critic_max_results: int = Field(
         default=5,
         ge=1,
         le=100,
-        description=(
-            "Maximum number of search results submitted to "
-            "the critic agent."
-        ),
+        description=("Maximum number of search results submitted to the critic agent."),
     )
 
 
@@ -2643,9 +2702,7 @@ class SearchResult(BaseModel):
     matched_object_timestamp: str | None = Field(
         default=None, description="Exact frame timestamp for the matched object embedding"
     )
-    matched_object_type: str | None = Field(
-        default=None, description="Detector class of the matched object"
-    )
+    matched_object_type: str | None = Field(default=None, description="Detector class of the matched object")
     matched_object_bbox: dict[str, Any] | None = Field(
         default=None, description="Bounding box from the exact matched source frame"
     )
@@ -2653,6 +2710,147 @@ class SearchResult(BaseModel):
         default=None,
         description="Critic agent verdict for this result. None if the critic was not run.",
     )
+
+
+def _select_critic_candidates(
+    source_results: list[SearchResult],
+    attempted_keys: set[tuple[str, str, str]],
+    limit: int,
+    *,
+    deduplicate_temporal_overlaps: bool = False,
+    overlap_threshold: float = 0.6,
+    max_per_sensor_before_refill: int | None = None,
+) -> list[SearchResult]:
+    """Select diverse Critic candidates while preserving rank order.
+
+    Action retrieval produces adjacent raw chunks whose padded Critic windows can
+    describe the same event. Treat windows as duplicates when their intersection
+    covers most of the shorter window. Cluster bounds are expanded transitively so
+    three chained chunks are evaluated only once.
+    """
+    if limit <= 0:
+        return []
+
+    candidates: list[SearchResult] = []
+    temporal_clusters: list[tuple[str, datetime, datetime]] = []
+    deferred_candidates: list[SearchResult] = []
+    selected_per_sensor: dict[str, int] = {}
+
+    for result in source_results:
+        result_key = (
+            str(result.sensor_id),
+            str(result.start_time),
+            str(result.end_time),
+        )
+
+        if result_key in attempted_keys:
+            continue
+
+        candidate_window: tuple[datetime, datetime] | None = None
+        if deduplicate_temporal_overlaps:
+            start_value, end_value = _expand_action_critic_window(result)
+            try:
+                candidate_window = (iso8601_to_datetime(start_value), iso8601_to_datetime(end_value))
+            except (TypeError, ValueError):
+                candidate_window = None
+
+        is_duplicate = False
+        if candidate_window is not None:
+            candidate_start, candidate_end = candidate_window
+            candidate_duration = (candidate_end - candidate_start).total_seconds()
+            for index, (sensor_id, cluster_start, cluster_end) in enumerate(temporal_clusters):
+                if sensor_id != str(result.sensor_id):
+                    continue
+
+                intersection = (min(candidate_end, cluster_end) - max(candidate_start, cluster_start)).total_seconds()
+                cluster_duration = (cluster_end - cluster_start).total_seconds()
+                shorter_duration = min(candidate_duration, cluster_duration)
+                overlap_ratio = intersection / shorter_duration if shorter_duration > 0.0 else 0.0
+                if overlap_ratio < overlap_threshold:
+                    continue
+
+                temporal_clusters[index] = (
+                    sensor_id,
+                    min(candidate_start, cluster_start),
+                    max(candidate_end, cluster_end),
+                )
+                logger.info(
+                    "[Search] Skipping overlapping Critic window: sensor=%s, start=%s, end=%s, overlap=%.3f",
+                    result.sensor_id,
+                    start_value,
+                    end_value,
+                    overlap_ratio,
+                )
+                is_duplicate = True
+                break
+
+        if is_duplicate:
+            continue
+
+        sensor_key = str(result.sensor_id)
+        if (
+            max_per_sensor_before_refill is not None
+            and selected_per_sensor.get(sensor_key, 0) >= max_per_sensor_before_refill
+        ):
+            deferred_candidates.append(result)
+            continue
+
+        candidates.append(result)
+        selected_per_sensor[sensor_key] = selected_per_sensor.get(sensor_key, 0) + 1
+        if candidate_window is not None:
+            temporal_clusters.append((str(result.sensor_id), candidate_window[0], candidate_window[1]))
+
+        if len(candidates) >= limit:
+            break
+
+    # If there are fewer distinct videos than the Critic budget, refill from
+    # the deferred ranked candidates instead of leaving capacity unused.
+    for result in deferred_candidates:
+        if len(candidates) >= limit:
+            break
+        candidates.append(result)
+
+    return candidates
+
+
+def _resolve_display_critic_result(
+    display_result: SearchResult,
+    critic_results: dict[object, CriticResult],
+) -> CriticResult | None:
+    """Project raw-chunk Critic verdicts onto an overlapping displayed clip."""
+    try:
+        display_start = iso8601_to_datetime(display_result.start_time)
+        display_end = iso8601_to_datetime(display_result.end_time)
+    except (TypeError, ValueError):
+        return None
+
+    overlapping: list[CriticResult] = []
+
+    for video_info, critic_result in critic_results.items():
+        if getattr(video_info, "sensor_id", None) != display_result.sensor_id:
+            continue
+
+        critic_start_value = getattr(video_info, "start_timestamp", None)
+        critic_end_value = getattr(video_info, "end_timestamp", None)
+
+        if not isinstance(critic_start_value, str) or not isinstance(critic_end_value, str):
+            continue
+
+        try:
+            critic_start = iso8601_to_datetime(critic_start_value)
+            critic_end = iso8601_to_datetime(critic_end_value)
+        except (TypeError, ValueError):
+            continue
+
+        if critic_start < display_end and critic_end > display_start:
+            overlapping.append(critic_result)
+
+    for verdict in ("confirmed", "unverified", "rejected"):
+        for critic_result in overlapping:
+            if critic_result.result == verdict:
+                return critic_result
+
+    return None
 
 
 class SearchOutput(BaseModel):

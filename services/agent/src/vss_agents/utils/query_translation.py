@@ -19,17 +19,20 @@ import os
 from pathlib import Path
 import re
 import threading
-from vss_agents.utils.license_plate import extract_korean_license_plate
 
 import sentencepiece as spm
 import torch
 from transformers import MarianMTModel
+
+from vss_agents.utils.license_plate import extract_korean_license_plate
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_KO_EN_MODEL_ID = "Helsinki-NLP/opus-mt-tc-big-ko-en"
 DEFAULT_CONTAINER_MODEL_PATH = "/vss-agent/models/opus-mt-tc-big-ko-en"
 _HANGUL_PATTERN = re.compile(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3]")
+_NEUTRAL_PERSON_PATTERN = re.compile(r"\b(man|woman|men|women)\b", re.IGNORECASE)
+_EXPLICIT_GENDER_PATTERN = re.compile(r"(남자|남성|여자|여성|소년|소녀)")
 
 
 def contains_hangul(text: str) -> bool:
@@ -127,6 +130,12 @@ async def translate_query_if_korean(query: str) -> str:
     except Exception:
         logger.exception("Korean-to-English query translation failed; using the original query")
         return query
+
+    if "사람" in query and not _EXPLICIT_GENDER_PATTERN.search(query):
+        translated = _NEUTRAL_PERSON_PATTERN.sub(
+            lambda match: "people" if match.group(0).lower() in {"men", "women"} else "person",
+            translated,
+        )
 
     logger.info("Translated Korean search query: original=%r translated=%r", query, translated)
     return translated
