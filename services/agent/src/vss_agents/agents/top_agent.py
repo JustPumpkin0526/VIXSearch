@@ -702,7 +702,7 @@ class TopAgent(AsyncMixin):
         thread_id: str | None = None
         previous_state: dict[str, Any] = {}
 
-        if (self.max_history > 0 and self.checkpointer is not None):
+        if self.max_history > 0 and getattr(self, "checkpointer", None) is not None:
             thread_id = (ContextState.get().conversation_id.get())
             previous_state = (self.graph.get_state({"configurable": {"thread_id":thread_id}}).values)
 
@@ -974,6 +974,29 @@ class TopAgent(AsyncMixin):
         license_plate, semantic_query = split_korean_license_plate(question_text)
         if (
             not state.agent_scratchpad
+            and state.options.user_mode == "search"
+            and "search_agent" in self.tools_dict
+        ):
+            # The search UI always expects the search sub-agent. Asking the top
+            # LLM to rediscover that route adds latency and can produce a
+            # truncated/repeated text tool call for long Korean queries.
+            logger.info("Routing search-mode request directly to search_agent")
+            state.agent_scratchpad.append(
+                AIMessage(
+                    content="Routing the request directly to video search.",
+                    tool_calls=[
+                        {
+                            "name": "search_agent",
+                            "args": {"query": question_text, "agent_mode": True},
+                            "id": f"direct-search-{uuid4()}",
+                        }
+                    ],
+                )
+            )
+            return state
+
+        if (
+            not state.agent_scratchpad
             and license_plate
             and not semantic_query
             and "search_agent" in self.tools_dict
@@ -1182,13 +1205,13 @@ class TopAgent(AsyncMixin):
                         tool_args["request_options"] = (
                             state.options.model_dump(mode="json")
                         )
-                    
+
                         logger.info(
                             "Passing request_options to %s: %s",
                             tool_name,
                             tool_args["request_options"],
                         )
-                    
+
                     else:
                         # Legacy tools that do not support request_options
                         if self._tool_accepts_param(
@@ -1198,7 +1221,7 @@ class TopAgent(AsyncMixin):
                             tool_args["llm_reasoning"] = (
                                 state.options.llm_reasoning
                             )
-                    
+
                         if self._tool_accepts_param(
                             tool_name,
                             "vlm_reasoning",
@@ -1206,7 +1229,7 @@ class TopAgent(AsyncMixin):
                             tool_args["vlm_reasoning"] = (
                                 state.options.vlm_reasoning
                             )
-                    
+
                         if self._tool_accepts_param(
                             tool_name,
                             "use_critic",
@@ -1214,6 +1237,12 @@ class TopAgent(AsyncMixin):
                             tool_args["use_critic"] = (
                                 state.options.use_critic
                             )
+
+                    if self._tool_accepts_param(tool_name, "use_critic"):
+                        # Keep the explicit field for existing search-agent
+                        # schemas while request_options carries the full state.
+                        tool_args["use_critic"] = state.options.use_critic
+
                     # Use native streaming for configured sub-agents
                     final_chunks = []
                     if is_subagent:
@@ -1979,7 +2008,7 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                         )
 
                         options_payload["owned_video_ids"] = []
-                        
+
                 if "max_results" in payload:
                     options_payload["max_results"] = (
                         _parse_optional_int(
@@ -2100,7 +2129,7 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                         chunk.content,
                     )
                     continue
-                
+
                 if (
                     chunk.type ==
                     AgentMessageChunkType.ERROR
@@ -2125,10 +2154,10 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                         )
 
                     continue
-                
+
                 if not debug_mode:
                     continue
-                
+
                 if (
                     chunk.type ==
                     AgentMessageChunkType.THOUGHT
@@ -2185,18 +2214,18 @@ async def top_agent(config: TopAgentConfig, builder: Builder) -> AsyncGenerator[
                 steps_content = "\n".join(
                     steps,
                 )
-            
+
                 agent_think_block = (
                     "\n\n<agent-think>\n"
                     f"{steps_content}\n"
                     "</agent-think>\n\n"
                 )
-            
+
                 logger.debug(
                     "Agent debug trace: %s",
                     agent_think_block,
                 )
-            
+
                 yield agent_think_block
 
             # Yield final content
